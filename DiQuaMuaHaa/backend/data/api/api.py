@@ -1,6 +1,7 @@
 from __future__ import annotations
 from flask_socketio import SocketIO, emit
 import base64
+import os
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -10,7 +11,8 @@ import mediapipe as mp
 import numpy as np
 import pymysql
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+from urllib import parse, request as urlrequest
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
@@ -24,6 +26,14 @@ except Exception:  # ImportError, RuntimeError, ...
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# Tránh lỗi server khi client gửi base64 ảnh quá lớn
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25MB
+
+
+@app.errorhandler(413)
+def too_large(_err):
+    return jsonify({"error": "Request payload too large"}), 413
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]  # .../backend
@@ -44,7 +54,12 @@ MYSQL_CONFIG = {
     "cursorclass": pymysql.cursors.DictCursor,
 }
 
-IDENTITY_SIM_THRESHOLD = 0.90
+IDENTITY_SIM_THRESHOLD = float(os.getenv("IDENTITY_SIM_THRESHOLD", "0.975"))
+IDENTITY_MIN_REGISTER_SAMPLES = int(os.getenv("IDENTITY_MIN_REGISTER_SAMPLES", "3"))
+IDENTITY_MIN_VERIFY_SAMPLES = int(os.getenv("IDENTITY_MIN_VERIFY_SAMPLES", "2"))
+IDENTITY_DECISION_TIMEOUT_SEC = int(os.getenv("IDENTITY_DECISION_TIMEOUT_SEC", "30"))
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
 
 
 artifact: Dict[str, Any] | None = None
@@ -69,6 +84,119 @@ phone_yolo_model = None
 
 def get_mysql_conn():
     return pymysql.connect(**MYSQL_CONFIG)
+
+
+def _ensure_identity_tables(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS driver_identity (
+            driver_id      VARCHAR(64) PRIMARY KEY,
+            name           VARCHAR(255),
+            embedding_json LONGTEXT NOT NULL,
+            image_base64   LONGTEXT,
+            created_at     DATETIME NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS driver_telegram_owner (
+            driver_id         VARCHAR(64) PRIMARY KEY,
+            telegram_chat_id  BIGINT NOT NULL,
+            telegram_user_id  BIGINT NULL,
+            created_at        DATETIME NOT NULL,
+            updated_at        DATETIME NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS identity_decision_requests (
+            request_id           BIGINT AUTO_INCREMENT PRIMARY KEY,
+            driver_id            VARCHAR(64) NOT NULL,
+            status               VARCHAR(16) NOT NULL,
+            reason               VARCHAR(64) NULL,
+            similarity           DOUBLE NULL,
+            threshold            DOUBLE NULL,
+            requested_at         DATETIME NOT NULL,
+            expires_at           DATETIME NOT NULL,
+            decided_at           DATETIME NULL,
+            decided_by_chat_id   BIGINT NULL,
+            telegram_chat_id     BIGINT NULL,
+            telegram_message_id  BIGINT NULL,
+            INDEX idx_identity_driver (driver_id),
+            INDEX idx_identity_status (status),
+            INDEX idx_identity_expires (expires_at)
+        )
+        """
+    )
+
+
+def _telegram_call(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("Missing TELEGRAM_BOT_TOKEN")
+    api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
+    body = parse.urlencode(payload).encode("utf-8")
+    req = urlrequest.Request(api_url, data=body, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    with urlrequest.urlopen(req, timeout=10) as resp:
+        raw = resp.read().decode("utf-8")
+        data = json.loads(raw)
+        if not data.get("ok"):
+            raise RuntimeError(f"Telegram API error: {data}")
+        return data
+
+
+def _telegram_send_decision_message(
+    chat_id: int,
+    driver_id: str,
+    request_id: int,
+    similarity: float | None,
+    threshold: float | None,
+    timeout_sec: int,
+) -> int:
+    sim_txt = f"{(similarity or 0) * 100:.2f}%" if similarity is not None else "--"
+    thr_txt = f"{(threshold or 0) * 100:.2f}%" if threshold is not None else "--"
+    text = (
+        "CANH BAO XE KHONG CHINH CHU\n"
+        f"Driver ID: {driver_id}\n"
+        f"Similarity: {sim_txt}\n"
+        f"Threshold: {thr_txt}\n"
+        f"Thoi gian cho phep phan hoi: {timeout_sec}s\n\n"
+        "Chon Accept de cho phep xe di chuyen, Reject de khoa may."
+    )
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "Accept", "callback_data": f"idr:accept:{request_id}"},
+                {"text": "Reject", "callback_data": f"idr:reject:{request_id}"},
+            ]
+        ]
+    }
+    data = _telegram_call(
+        "sendMessage",
+        {
+            "chat_id": str(chat_id),
+            "text": text,
+            "reply_markup": json.dumps(keyboard, ensure_ascii=True),
+        },
+    )
+    msg = data.get("result") or {}
+    msg_id = msg.get("message_id")
+    if not isinstance(msg_id, int):
+        raise RuntimeError("Telegram response missing message_id")
+    return msg_id
+
+
+def _telegram_answer_callback(callback_query_id: str, text: str) -> None:
+    _telegram_call(
+        "answerCallbackQuery",
+        {"callback_query_id": callback_query_id, "text": text, "show_alert": "false"},
+    )
+
+
+def _telegram_send_text(chat_id: int, text: str) -> None:
+    _telegram_call("sendMessage", {"chat_id": str(chat_id), "text": text})
 
 
 def load_model() -> None:
@@ -242,13 +370,82 @@ def _cosine_similarity(a: List[float], b: List[float]) -> float:
     return float(np.dot(va, vb) / (na * nb))
 
 
+def _normalize_face_embedding(vec: List[float]) -> List[float]:
+    """
+    Chuẩn hoá embedding landmark để giảm false-positive:
+    - dịch tâm về gốc (x,y)
+    - scale theo kích thước mặt trung bình
+    - chuẩn hoá L2 toàn vector
+    """
+    if not vec:
+        return []
+
+    arr = np.asarray(vec, dtype=np.float32).reshape(-1, 3)
+    center_xy = np.mean(arr[:, :2], axis=0)
+    arr[:, 0] -= center_xy[0]
+    arr[:, 1] -= center_xy[1]
+
+    scale = float(np.mean(np.linalg.norm(arr[:, :2], axis=1)))
+    if scale > 1e-6:
+        arr[:, :2] /= scale
+
+    flat = arr.reshape(-1)
+    norm = float(np.linalg.norm(flat))
+    if norm > 1e-6:
+        flat /= norm
+
+    return flat.tolist()
+
+
+def _extract_images_from_payload(payload: Dict[str, Any]) -> List[str]:
+    images: List[str] = []
+
+    image_one = payload.get("image")
+    if isinstance(image_one, str) and image_one.strip():
+        images.append(image_one.strip())
+
+    image_many = payload.get("images")
+    if isinstance(image_many, list):
+        for it in image_many:
+            if isinstance(it, str) and it.strip():
+                images.append(it.strip())
+
+    # unique + strip data URL prefix
+    out: List[str] = []
+    seen = set()
+    for img in images:
+        cleaned = img.split(",", 1)[-1] if img.startswith("data:") else img
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            out.append(cleaned)
+    return out
+
+
+def _collect_face_embeddings(images: List[str]) -> List[List[float]]:
+    embeddings: List[List[float]] = []
+    for image_b64 in images:
+        emb = _get_face_embedding_from_image(image_b64)
+        if emb is not None:
+            embeddings.append(emb)
+    return embeddings
+
+
+def _mean_embedding(embeddings: List[List[float]]) -> List[float]:
+    if not embeddings:
+        return []
+    arr = np.asarray(embeddings, dtype=np.float32)
+    return np.mean(arr, axis=0).tolist()
+
+
 def _get_face_embedding_from_image(image_b64: str) -> List[float] | None:
     """
     Lấy embedding khuôn mặt dùng trực tiếp vector landmark (1434 số).
     Nếu sau này muốn thay bằng model embedding khác thì chỉ cần đổi hàm này.
     """
     vec = _image_base64_to_landmarks(image_b64)
-    return vec
+    if vec is None:
+        return None
+    return _normalize_face_embedding(vec)
 
 
 @app.get("/health")
@@ -888,23 +1085,33 @@ def identity_register() -> Any:
 
     driver_id = str(payload.get("driver_id", "")).strip()
     name = str(payload.get("name") or "").strip()
-    image_b64 = payload.get("image")
-
     if not driver_id:
         return jsonify({"error": "Thiếu 'driver_id'."}), 400
-    if not image_b64 or not isinstance(image_b64, str):
-        return jsonify({"error": "Thiếu trường 'image' (base64) trong JSON body."}), 400
 
-    if image_b64.startswith("data:"):
-        image_b64 = image_b64.split(",", 1)[-1]
+    images = _extract_images_from_payload(payload)
+    if not images:
+        return jsonify({"error": "Thiếu 'image' hoặc 'images' trong JSON body."}), 400
 
     try:
-        embedding = _get_face_embedding_from_image(image_b64)
+        embeddings = _collect_face_embeddings(images)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
-    if embedding is None:
-        return jsonify({"error": "Không detect được khuôn mặt để đăng ký."}), 400
+    if len(embeddings) < IDENTITY_MIN_REGISTER_SAMPLES:
+        return (
+            jsonify(
+                {
+                    "error": (
+                        "Không đủ frame khuôn mặt hợp lệ để đăng ký. "
+                        f"Cần >= {IDENTITY_MIN_REGISTER_SAMPLES}, hiện có {len(embeddings)}."
+                    )
+                }
+            ),
+            400,
+        )
+
+    embedding = _mean_embedding(embeddings)
+    image_b64 = images[0]
 
     embedding_json = json.dumps(embedding)
     created_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -912,17 +1119,7 @@ def identity_register() -> Any:
     conn = get_mysql_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS driver_identity (
-                    driver_id      VARCHAR(64) PRIMARY KEY,
-                    name           VARCHAR(255),
-                    embedding_json LONGTEXT NOT NULL,
-                    image_base64   LONGTEXT,
-                    created_at     DATETIME NOT NULL
-                )
-                """
-            )
+            _ensure_identity_tables(cur)
             cur.execute(
                 """
                 INSERT INTO driver_identity (driver_id, name, embedding_json, image_base64, created_at)
@@ -945,6 +1142,7 @@ def identity_register() -> Any:
             "driver_id": driver_id,
             "name": name,
             "created_at": created_at,
+            "samples_used": len(embeddings),
         }
     )
 
@@ -968,29 +1166,38 @@ def identity_verify() -> Any:
         return jsonify({"error": "Không đọc được JSON body."}), 400
 
     driver_id = str(payload.get("driver_id", "")).strip()
-    image_b64 = payload.get("image")
-
     if not driver_id:
         return jsonify({"error": "Thiếu 'driver_id'."}), 400
-    if not image_b64 or not isinstance(image_b64, str):
-        return jsonify({"error": "Thiếu trường 'image' (base64) trong JSON body."}), 400
 
-    if image_b64.startswith("data:"):
-        image_b64 = image_b64.split(",", 1)[-1]
+    images = _extract_images_from_payload(payload)
+    if not images:
+        return jsonify({"error": "Thiếu 'image' hoặc 'images' trong JSON body."}), 400
 
-    # Lấy embedding hiện tại
     try:
-        embedding_now = _get_face_embedding_from_image(image_b64)
+        current_embeddings = _collect_face_embeddings(images)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
-    if embedding_now is None:
-        return jsonify({"error": "Không detect được khuôn mặt hiện tại."}), 400
+    if len(current_embeddings) < IDENTITY_MIN_VERIFY_SAMPLES:
+        return (
+            jsonify(
+                {
+                    "error": (
+                        "Không detect được khuôn mặt ổn định để xác thực. "
+                        f"Cần >= {IDENTITY_MIN_VERIFY_SAMPLES} frame hợp lệ."
+                    )
+                }
+            ),
+            400,
+        )
+
+    embedding_now = _mean_embedding(current_embeddings)
 
     # Lấy embedding đã đăng ký
     conn = get_mysql_conn()
     try:
         with conn.cursor() as cur:
+            _ensure_identity_tables(cur)
             cur.execute(
                 "SELECT embedding_json FROM driver_identity WHERE driver_id = %s",
                 (driver_id,),
@@ -1029,11 +1236,411 @@ def identity_verify() -> Any:
             "is_owner": bool(similarity >= threshold),
             "similarity": float(similarity),
             "threshold": float(threshold),
+            "samples_used": len(current_embeddings),
         }
     )
 
 
+@app.post("/api/identity/telegram/bind")
+def bind_driver_telegram_owner() -> Any:
+    try:
+        payload = request.get_json(force=True, silent=False)
+        if payload is None:
+            raise ValueError("Body phải là JSON hợp lệ.")
+    except Exception:
+        return jsonify({"error": "Không đọc được JSON body."}), 400
+
+    driver_id = str(payload.get("driver_id", "")).strip()
+    chat_id_raw = payload.get("telegram_chat_id")
+    user_id_raw = payload.get("telegram_user_id")
+    if not driver_id:
+        return jsonify({"error": "Thiếu 'driver_id'."}), 400
+    if chat_id_raw is None:
+        return jsonify({"error": "Thiếu 'telegram_chat_id'."}), 400
+
+    try:
+        chat_id = int(chat_id_raw)
+    except Exception:
+        return jsonify({"error": "'telegram_chat_id' phải là số."}), 400
+
+    user_id = None
+    if user_id_raw is not None:
+        try:
+            user_id = int(user_id_raw)
+        except Exception:
+            user_id = None
+
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            _ensure_identity_tables(cur)
+            cur.execute(
+                """
+                INSERT INTO driver_telegram_owner
+                    (driver_id, telegram_chat_id, telegram_user_id, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    telegram_chat_id = VALUES(telegram_chat_id),
+                    telegram_user_id = VALUES(telegram_user_id),
+                    updated_at = VALUES(updated_at)
+                """,
+                (driver_id, chat_id, user_id, now, now),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify(
+        {
+            "status": "ok",
+            "driver_id": driver_id,
+            "telegram_chat_id": chat_id,
+            "telegram_user_id": user_id,
+        }
+    )
+
+
+@app.post("/api/identity/request_decision")
+def request_identity_decision() -> Any:
+    try:
+        payload = request.get_json(force=True, silent=False)
+        if payload is None:
+            raise ValueError("Body phải là JSON hợp lệ.")
+    except Exception:
+        return jsonify({"error": "Không đọc được JSON body."}), 400
+
+    driver_id = str(payload.get("driver_id", "")).strip()
+    if not driver_id:
+        return jsonify({"error": "Thiếu 'driver_id'."}), 400
+
+    similarity = payload.get("similarity")
+    threshold = payload.get("threshold")
+    reason = str(payload.get("reason", "intruder")).strip() or "intruder"
+    timeout_sec = int(payload.get("timeout_sec") or IDENTITY_DECISION_TIMEOUT_SEC)
+    timeout_sec = max(10, min(timeout_sec, 300))
+
+    similarity_val = None
+    threshold_val = None
+    try:
+        if similarity is not None:
+            similarity_val = float(similarity)
+    except Exception:
+        similarity_val = None
+    try:
+        if threshold is not None:
+            threshold_val = float(threshold)
+    except Exception:
+        threshold_val = None
+
+    now_dt = datetime.utcnow()
+    now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    expires_dt = now_dt + timedelta(seconds=timeout_sec)
+    expires = expires_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            _ensure_identity_tables(cur)
+            cur.execute(
+                """
+                SELECT request_id, expires_at
+                FROM identity_decision_requests
+                WHERE driver_id = %s AND status = 'pending'
+                ORDER BY request_id DESC
+                LIMIT 1
+                """,
+                (driver_id,),
+            )
+            pending_row = cur.fetchone()
+
+            if pending_row:
+                req_id = int(pending_row["request_id"])
+                exp = pending_row["expires_at"]
+                exp_dt = exp if isinstance(exp, datetime) else datetime.strptime(exp, "%Y-%m-%d %H:%M:%S")
+                if exp_dt > now_dt:
+                    remaining = int((exp_dt - now_dt).total_seconds())
+                    return jsonify(
+                        {
+                            "status": "pending",
+                            "request_id": req_id,
+                            "driver_id": driver_id,
+                            "remaining_sec": remaining,
+                        }
+                    )
+                cur.execute(
+                    """
+                    UPDATE identity_decision_requests
+                    SET status = 'expired', decided_at = %s
+                    WHERE request_id = %s
+                    """,
+                    (now, req_id),
+                )
+
+            cur.execute(
+                """
+                SELECT telegram_chat_id
+                FROM driver_telegram_owner
+                WHERE driver_id = %s
+                LIMIT 1
+                """,
+                (driver_id,),
+            )
+            owner_row = cur.fetchone()
+            if not owner_row:
+                return jsonify({"error": "Chưa bind Telegram chat_id cho driver_id này."}), 400
+
+            chat_id = int(owner_row["telegram_chat_id"])
+            cur.execute(
+                """
+                INSERT INTO identity_decision_requests
+                    (driver_id, status, reason, similarity, threshold, requested_at, expires_at, telegram_chat_id)
+                VALUES (%s, 'pending', %s, %s, %s, %s, %s, %s)
+                """,
+                (driver_id, reason, similarity_val, threshold_val, now, expires, chat_id),
+            )
+            request_id = int(cur.lastrowid)
+
+            try:
+                msg_id = _telegram_send_decision_message(
+                    chat_id=chat_id,
+                    driver_id=driver_id,
+                    request_id=request_id,
+                    similarity=similarity_val,
+                    threshold=threshold_val,
+                    timeout_sec=timeout_sec,
+                )
+            except Exception as exc:
+                cur.execute(
+                    """
+                    UPDATE identity_decision_requests
+                    SET status = 'expired', decided_at = %s, reason = %s
+                    WHERE request_id = %s
+                    """,
+                    (now, f"telegram_error:{exc}", request_id),
+                )
+                conn.commit()
+                return jsonify({"error": f"Không gửi được Telegram: {exc}"}), 500
+
+            cur.execute(
+                """
+                UPDATE identity_decision_requests
+                SET telegram_message_id = %s
+                WHERE request_id = %s
+                """,
+                (msg_id, request_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify(
+        {
+            "status": "pending",
+            "request_id": request_id,
+            "driver_id": driver_id,
+            "remaining_sec": timeout_sec,
+        }
+    )
+
+
+@app.get("/api/identity/decision_status")
+def identity_decision_status() -> Any:
+    request_id_raw = request.args.get("request_id", "").strip()
+    if not request_id_raw:
+        return jsonify({"error": "Thiếu query 'request_id'."}), 400
+    try:
+        request_id = int(request_id_raw)
+    except Exception:
+        return jsonify({"error": "'request_id' phải là số."}), 400
+
+    now_dt = datetime.utcnow()
+    now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            _ensure_identity_tables(cur)
+            cur.execute(
+                """
+                SELECT request_id, driver_id, status, reason, requested_at, expires_at, decided_at
+                FROM identity_decision_requests
+                WHERE request_id = %s
+                LIMIT 1
+                """,
+                (request_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return jsonify({"error": "request_id không tồn tại."}), 404
+
+            status = str(row["status"])
+            expires_at = row["expires_at"]
+            exp_dt = (
+                expires_at
+                if isinstance(expires_at, datetime)
+                else datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+            )
+            if status == "pending" and exp_dt <= now_dt:
+                cur.execute(
+                    """
+                    UPDATE identity_decision_requests
+                    SET status = 'expired', decided_at = %s
+                    WHERE request_id = %s
+                    """,
+                    (now, request_id),
+                )
+                conn.commit()
+                status = "expired"
+
+            remaining_sec = max(0, int((exp_dt - now_dt).total_seconds()))
+            return jsonify(
+                {
+                    "request_id": int(row["request_id"]),
+                    "driver_id": row["driver_id"],
+                    "status": status,
+                    "reason": row.get("reason"),
+                    "remaining_sec": remaining_sec,
+                }
+            )
+    finally:
+        conn.close()
+
+
+@app.post("/api/telegram/webhook")
+def telegram_webhook() -> Any:
+    if TELEGRAM_WEBHOOK_SECRET:
+        got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if got != TELEGRAM_WEBHOOK_SECRET:
+            return jsonify({"ok": False, "error": "Invalid secret"}), 403
+
+    payload = request.get_json(silent=True) or {}
+
+    callback = payload.get("callback_query")
+    if isinstance(callback, dict):
+        callback_id = str(callback.get("id") or "")
+        data = str(callback.get("data") or "")
+        message = callback.get("message") or {}
+        chat = message.get("chat") or {}
+        chat_id = int(chat.get("id") or 0)
+
+        parts = data.split(":")
+        if len(parts) == 3 and parts[0] == "idr" and parts[1] in ("accept", "reject"):
+            action = parts[1]
+            try:
+                req_id = int(parts[2])
+            except Exception:
+                _telegram_answer_callback(callback_id, "Yeu cau khong hop le.")
+                return jsonify({"ok": True})
+
+            now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            now_dt = datetime.utcnow()
+            conn = get_mysql_conn()
+            try:
+                with conn.cursor() as cur:
+                    _ensure_identity_tables(cur)
+                    cur.execute(
+                        """
+                        SELECT request_id, status, expires_at, telegram_chat_id
+                        FROM identity_decision_requests
+                        WHERE request_id = %s
+                        LIMIT 1
+                        """,
+                        (req_id,),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        _telegram_answer_callback(callback_id, "Yeu cau khong ton tai.")
+                        return jsonify({"ok": True})
+
+                    if int(row.get("telegram_chat_id") or 0) != chat_id:
+                        _telegram_answer_callback(callback_id, "Ban khong co quyen xu ly yeu cau nay.")
+                        return jsonify({"ok": True})
+
+                    status = str(row.get("status") or "")
+                    exp = row.get("expires_at")
+                    exp_dt = exp if isinstance(exp, datetime) else datetime.strptime(exp, "%Y-%m-%d %H:%M:%S")
+                    if status != "pending" or exp_dt <= now_dt:
+                        if exp_dt <= now_dt and status == "pending":
+                            cur.execute(
+                                """
+                                UPDATE identity_decision_requests
+                                SET status = 'expired', decided_at = %s
+                                WHERE request_id = %s
+                                """,
+                                (now, req_id),
+                            )
+                            conn.commit()
+                        _telegram_answer_callback(callback_id, "Yeu cau da het han hoac da xu ly.")
+                        return jsonify({"ok": True})
+
+                    new_status = "accepted" if action == "accept" else "rejected"
+                    cur.execute(
+                        """
+                        UPDATE identity_decision_requests
+                        SET status = %s, decided_at = %s, decided_by_chat_id = %s
+                        WHERE request_id = %s
+                        """,
+                        (new_status, now, chat_id, req_id),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+            _telegram_answer_callback(callback_id, "Da ghi nhan lua chon.")
+            return jsonify({"ok": True})
+
+    message = payload.get("message")
+    if isinstance(message, dict):
+        chat = message.get("chat") or {}
+        from_user = message.get("from") or {}
+        text = str(message.get("text") or "").strip()
+        chat_id = int(chat.get("id") or 0)
+        user_id = int(from_user.get("id") or 0)
+
+        if text.startswith("/bind"):
+            parts = text.split()
+            if len(parts) < 2:
+                _telegram_send_text(chat_id, "Cach dung: /bind <driver_id>")
+                return jsonify({"ok": True})
+            driver_id = parts[1].strip()
+            if not driver_id:
+                _telegram_send_text(chat_id, "driver_id khong hop le.")
+                return jsonify({"ok": True})
+
+            now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            conn = get_mysql_conn()
+            try:
+                with conn.cursor() as cur:
+                    _ensure_identity_tables(cur)
+                    cur.execute(
+                        """
+                        INSERT INTO driver_telegram_owner
+                            (driver_id, telegram_chat_id, telegram_user_id, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                            telegram_chat_id = VALUES(telegram_chat_id),
+                            telegram_user_id = VALUES(telegram_user_id),
+                            updated_at = VALUES(updated_at)
+                        """,
+                        (driver_id, chat_id, user_id, now, now),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+            _telegram_send_text(chat_id, f"Da bind thanh cong cho driver_id: {driver_id}")
+            return jsonify({"ok": True})
+
+        if text.startswith("/start"):
+            _telegram_send_text(chat_id, "Xin chao. Dung lenh: /bind <driver_id> de lien ket xe.")
+            return jsonify({"ok": True})
+
+    return jsonify({"ok": True})
+
+
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+
+
 # phone pro
 @socketio.on("phone_frame")
 def handle_phone_frame(data):
@@ -1057,23 +1664,53 @@ def handle_phone_frame(data):
             emit("phone_result", {"boxes": []})
             return
 
-        results = phone_yolo_model(img, conf=0.4, iou=0.5, verbose=False)[0]
+        results = phone_yolo_model(img, conf=0.55, iou=0.5, verbose=False)[0]
         boxes_out = []
         if results.boxes is not None and len(results.boxes) > 0:
             xywhn = results.boxes.xywhn.cpu().numpy()
-            confs  = results.boxes.conf.cpu().numpy()
-            clss   = results.boxes.cls.cpu().numpy().astype(int)
-            names  = results.names
+            confs = results.boxes.conf.cpu().numpy()
+            clss = results.boxes.cls.cpu().numpy().astype(int)
+            names = results.names
             for (cx, cy, w, h), c, cls_idx in zip(xywhn, confs, clss):
-                label = str(names.get(int(cls_idx), int(cls_idx))) if isinstance(names, dict) else str(int(cls_idx))
-                boxes_out.append({"label": label, "x": float(cx), "y": float(cy), "w": float(w), "h": float(h), "prob": float(c)})
+                label = (
+                    str(names.get(int(cls_idx), int(cls_idx)))
+                    if isinstance(names, dict)
+                    else str(int(cls_idx))
+                )
+                boxes_out.append(
+                    {
+                        "label": label,
+                        "x": float(cx),
+                        "y": float(cy),
+                        "w": float(w),
+                        "h": float(h),
+                        "prob": float(c),
+                    }
+                )
 
         emit("phone_result", {"boxes": boxes_out})
     except Exception as exc:
         emit("phone_result", {"boxes": [], "error": str(exc)})
+        return
+
+    # Important: phone_frame should ONLY run phone inference.
+    return
+
+
+@socketio.on("smoking_frame")
+def handle_smoking_frame(data):
+    """
+    Client gửi: { "image": "data:image/jpeg;base64,..." }
+    Server trả: { "label": "...", "prob": <float> } cho frontend smoking WS.
+    """
+    # Tạm tắt smoking để tập trung debug/tinh chỉnh phone detection.
+    emit("smoking_result", {"label": "no_smoking", "prob": 0, "raw_label": "no_smoking"})
+    return
         
     if smoking_model is None or not smoking_idx_to_label:
-        emit("smoking_result", {"label": "no_model", "prob": 0, "raw_label": "no_model"})
+        emit(
+            "smoking_result", {"label": "no_model", "prob": 0, "raw_label": "no_model"}
+        )
         return
  
     image_b64 = data.get("image", "")
@@ -1085,16 +1722,51 @@ def handle_phone_frame(data):
         return
  
     try:
-        result = _run_smoking_inference(image_b64)
-        emit("smoking_result", {
-            "label":     result["label"],
-            "prob":      result["prob"] or 0,
-            "raw_label": result["raw_label"],
-        })
+        vec = _image_base64_to_landmarks(image_b64)
     except Exception as exc:
         emit("smoking_result", {"label": "error", "prob": 0, "raw_label": str(exc)})
+        return
+
+    if vec is None:
+        emit("smoking_result", {"label": "no_face", "prob": 0, "raw_label": "no_face"})
+        return
+
+    x = np.asarray(vec, dtype=np.float32).reshape(1, -1)
+
+    try:
+        pred_idx = int(smoking_model.predict(x)[0])
+        raw_label = smoking_idx_to_label.get(pred_idx, str(pred_idx))
+
+        if hasattr(smoking_model, "predict_proba"):
+            proba = smoking_model.predict_proba(x)[0]
+        else:
+            proba = None
+    except Exception as exc:
+        emit("smoking_result", {"label": "error", "prob": 0, "raw_label": str(exc)})
+        return
+
+    scores: Dict[str, float] = {}
+    if proba is not None:
+        for i, p in enumerate(proba):
+            scores[smoking_idx_to_label.get(i, str(i))] = float(p)
+
+    best_prob = float(max(scores.values())) if scores else None
+
+    # Hysteresis/threshold giống REST để giảm false-positive.
+    SMOKING_HARD_THRESHOLD = 0.90
+    label = raw_label
+    if label == "smoking" and (best_prob is None or best_prob < SMOKING_HARD_THRESHOLD):
+        label = "no_smoking"
+
+    emit(
+        "smoking_result",
+        {
+            "label": label,
+            "prob": best_prob or 0,
+            "raw_label": raw_label,
+        },
+    )
 
 
 if __name__ == "__main__":
       socketio.run(app, host="0.0.0.0", port=8000, debug=True, allow_unsafe_werkzeug=True)
-
