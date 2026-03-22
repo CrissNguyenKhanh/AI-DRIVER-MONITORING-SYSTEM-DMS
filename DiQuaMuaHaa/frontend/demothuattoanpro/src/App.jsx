@@ -8,6 +8,7 @@ import MedicalRecordConfirmation from "./User/vippoint";
 import EnhancedPatientStatistics from "./User/endhaintstatics";
 import Thumuctest from "./testdata/thucmuctest";
 import DectionHand from "./hand-dection/dectionHand";
+import VerifyPro from "./verify/verifypro";
 
 import FaceDetect from "./systeamdetectface/face_detect";
 function App() {
@@ -27,6 +28,8 @@ function App() {
         <Route path="/test3" element={<Thumuctest />} />
         {/* Trang Test 4 */}
         <Route path="/test4" element={<DectionHand />} />
+       {/* trang tesst cua verify pro */}
+        <Route path="/verifypro" element={<VerifyPro />} />
 
         <Route path="/test5" element={<FaceDetect />} />
       </Routes>
