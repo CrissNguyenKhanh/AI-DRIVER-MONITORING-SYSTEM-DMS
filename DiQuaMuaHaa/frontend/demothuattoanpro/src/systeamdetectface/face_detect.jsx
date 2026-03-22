@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 
 const API_BASE = "http://localhost:8000";
-const API_INTERVAL_MS = 1200;
+const API_INTERVAL_MS = 900;
+const BURST_GAP_MS = 120;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const DRIVER_ID_KEY = "driver_owner_id_v1";
 const DRIVER_IMAGE_KEY = "driver_owner_image_v1";
 const DEFAULT_DRIVER_ID = "driver_001";
@@ -305,22 +307,26 @@ export default function FaceDetect() {
 
   const [status, setStatus] = useState("idle");
   const [errorMsg, setErrorMsg] = useState("");
-  const [apiResult, setApiResult] = useState(null); // predict_from_frame result
   const [apiError, setApiError] = useState("");
-  const [apiLoading, setApiLoading] = useState(false);
+  const [verifyLoading, setVerifyLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [faceVisible, setFaceVisible] = useState(true);
+  const [verifyStatus, setVerifyStatus] = useState("IDLE");
 
   // Identity state (from /api/identity/verify)
   const [hasRegistered, setHasRegistered] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
   const [similarity, setSimilarity] = useState(null);
   const [simThreshold, setSimThreshold] = useState(0.9);
+  const [smoothSimilarity, setSmoothSimilarity] = useState(null);
   const [ownerFaceImage, setOwnerFaceImage] = useState(null);
   const [driverId, setDriverId] = useState(DEFAULT_DRIVER_ID);
 
   const [isScanning, setIsScanning] = useState(false);
   const [registered, setRegistered] = useState(false);
   const [registerLoading, setRegisterLoading] = useState(false);
+  const similarityBufferRef = useRef([]);
+  const lastDecisionRef = useRef(null);
 
   // Load saved driver image & id from localStorage (just UI, not the signature)
   useEffect(() => {
@@ -369,57 +375,130 @@ export default function FaceDetect() {
     return () => stopWebcam();
   }, []);
 
-  // Polling loop: predict_from_frame + identity/verify
+  const captureCurrentFrame = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+      return null;
+    }
+
+    // Downscale ảnh để giảm size base64, tránh lỗi payload quá lớn
+    const maxW = 480;
+    const scale = Math.min(1, maxW / video.videoWidth);
+    const targetW = Math.max(1, Math.round(video.videoWidth * scale));
+    const targetH = Math.max(1, Math.round(video.videoHeight * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, targetW, targetH);
+    return canvas.toDataURL("image/jpeg", 0.75);
+  }, []);
+
+  const captureBurstFrames = useCallback(
+    async (count = 2) => {
+      const frames = [];
+      for (let i = 0; i < count; i += 1) {
+        const frame = captureCurrentFrame();
+        if (frame) frames.push(frame);
+        if (i < count - 1) await sleep(BURST_GAP_MS);
+      }
+      return frames;
+    },
+    [captureCurrentFrame],
+  );
+
+  // Polling loop: only identity verification
   useEffect(() => {
     if (status !== "active") return;
     let cancelled = false,
       timeoutId;
     const loop = async () => {
       if (cancelled) return;
-      const video = videoRef.current;
-      if (!video || video.readyState < 2) {
+
+      if (!hasRegistered) {
+        setVerifyStatus("WAIT_REGISTER");
         if (!cancelled) timeoutId = setTimeout(loop, API_INTERVAL_MS);
         return;
       }
-      try {
-        setApiLoading(true);
-        setApiError("");
-        const canvas = document.createElement("canvas");
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        canvas.getContext("2d").drawImage(video, 0, 0);
-        const imageBase64 = canvas.toDataURL("image/jpeg", 0.85);
 
-        // 1) predict face state (drowsy/safe/yawning)
-        const res = await fetch(`${API_BASE}/api/landmark/predict_from_frame`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: imageBase64 }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || "Gọi API predict thất bại");
-        setApiResult(data);
+      const frames = await captureBurstFrames(2);
+      if (frames.length === 0) {
+        if (!cancelled) timeoutId = setTimeout(loop, API_INTERVAL_MS);
+        return;
+      }
+
+      try {
+        setVerifyLoading(true);
+        setApiError("");
+        setVerifyStatus("VERIFYING");
         setLastUpdated(new Date().toLocaleTimeString());
 
-        // 2) verify identity (only if registered)
-        if (hasRegistered) {
-          const vRes = await fetch(`${API_BASE}/api/identity/verify`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ driver_id: driverId, image: imageBase64 }),
-          });
-          const vData = await vRes.json();
-          if (vRes.ok && !vData.error) {
-            setHasRegistered(vData.has_registered);
-            setIsOwner(vData.is_owner);
-            setSimilarity(vData.similarity);
+        const vRes = await fetch(`${API_BASE}/api/identity/verify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            driver_id: driverId,
+            images: frames,
+          }),
+        });
+        const vData = await vRes.json();
+
+        if (!vRes.ok) {
+          const msg = String(vData?.error || "Xác thực thất bại");
+          if (msg.toLowerCase().includes("không detect được khuôn mặt")) {
+            setFaceVisible(false);
+            setVerifyStatus("NO_FACE");
+          } else {
+            setApiError(msg);
+            setVerifyStatus("ERROR");
+          }
+        } else if (vData.error) {
+          setApiError(vData.error);
+          setVerifyStatus("ERROR");
+        } else {
+          setFaceVisible(true);
+          setHasRegistered(Boolean(vData.has_registered));
+
+          if (!vData.has_registered) {
+            setVerifyStatus("WAIT_REGISTER");
+            setSimilarity(null);
+            setSmoothSimilarity(null);
+            similarityBufferRef.current = [];
+          } else {
             if (vData.threshold != null) setSimThreshold(vData.threshold);
+            const simValue =
+              typeof vData.similarity === "number" ? vData.similarity : null;
+            setSimilarity(simValue);
+
+            if (simValue !== null) {
+              const buf = similarityBufferRef.current.slice(-11);
+              buf.push(simValue);
+              similarityBufferRef.current = buf;
+              const avg = buf.reduce((acc, v) => acc + v, 0) / buf.length;
+              setSmoothSimilarity(avg);
+
+              const baseThreshold = vData.threshold ?? simThreshold;
+              const highThresh = baseThreshold + 0.02;
+              const lowThresh = baseThreshold - 0.03;
+              const prev = lastDecisionRef.current ?? Boolean(vData.is_owner);
+
+              let nextDecision = prev;
+              if (avg >= highThresh) nextDecision = true;
+              else if (avg <= lowThresh) nextDecision = false;
+
+              lastDecisionRef.current = nextDecision;
+              setIsOwner(nextDecision);
+              setVerifyStatus(nextDecision ? "OWNER" : "INTRUDER");
+            }
           }
         }
       } catch (err) {
-        setApiError(err.message);
+        setApiError(err.message || "Lỗi kết nối API");
+        setVerifyStatus("ERROR");
       } finally {
-        setApiLoading(false);
+        setVerifyLoading(false);
       }
       if (!cancelled) timeoutId = setTimeout(loop, API_INTERVAL_MS);
     };
@@ -428,7 +507,7 @@ export default function FaceDetect() {
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [status, hasRegistered, driverId]);
+  }, [status, hasRegistered, driverId, captureBurstFrames, simThreshold]);
 
   const handleRegisterOwner = () => {
     if (status !== "active") {
@@ -443,12 +522,12 @@ export default function FaceDetect() {
     const video = videoRef.current;
     if (!video) return;
 
-    // Capture current frame
-    const c = document.createElement("canvas");
-    c.width = video.videoWidth || 640;
-    c.height = video.videoHeight || 360;
-    c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
-    const imageBase64 = c.toDataURL("image/jpeg", 0.9);
+    const frames = await captureBurstFrames(3);
+    const imageBase64 = frames[0];
+    if (!imageBase64) {
+      setApiError("Không lấy được khung hình từ webcam.");
+      return;
+    }
 
     setRegisterLoading(true);
     setApiError("");
@@ -459,7 +538,7 @@ export default function FaceDetect() {
         body: JSON.stringify({
           driver_id: driverId,
           name: driverId,
-          image: imageBase64,
+          images: frames,
         }),
       });
       const data = await res.json();
@@ -470,6 +549,11 @@ export default function FaceDetect() {
       setHasRegistered(true);
       setIsOwner(true);
       setSimilarity(1);
+      setSmoothSimilarity(1);
+      setFaceVisible(true);
+      setVerifyStatus("OWNER");
+      similarityBufferRef.current = [1];
+      lastDecisionRef.current = true;
       setRegistered(true);
       try {
         window.localStorage.setItem(DRIVER_ID_KEY, driverId);
@@ -481,12 +565,17 @@ export default function FaceDetect() {
     } finally {
       setRegisterLoading(false);
     }
-  }, [driverId]);
+  }, [driverId, captureBurstFrames]);
 
   const handleClearOwner = () => {
     setHasRegistered(false);
     setIsOwner(false);
     setSimilarity(null);
+    setSmoothSimilarity(null);
+    setFaceVisible(true);
+    setVerifyStatus("WAIT_REGISTER");
+    similarityBufferRef.current = [];
+    lastDecisionRef.current = null;
     setOwnerFaceImage(null);
     try {
       window.localStorage.removeItem(DRIVER_ID_KEY);
@@ -895,7 +984,7 @@ export default function FaceDetect() {
                       padding: "4px 12px",
                     }}
                   >
-                    <PulseDot color={apiLoading ? "#facc15" : "#00ffa0"} />
+                    <PulseDot color={verifyLoading ? "#facc15" : "#00ffa0"} />
                     <span
                       style={{
                         color: "#00ffa0",
@@ -903,7 +992,7 @@ export default function FaceDetect() {
                         letterSpacing: "0.15em",
                       }}
                     >
-                      {apiLoading ? "ANALYZING..." : "FEED ACTIVE"}
+                      {verifyLoading ? "VERIFYING..." : "FEED ACTIVE"}
                     </span>
                   </div>
                 )}
@@ -1147,7 +1236,7 @@ export default function FaceDetect() {
               )}
             </div>
 
-            {/* Probability vector */}
+            {/* Verification telemetry */}
             <div
               style={{
                 background: "#030a14",
@@ -1166,90 +1255,72 @@ export default function FaceDetect() {
                   marginBottom: 14,
                 }}
               >
-                FACE STATE VECTOR
+                VERIFICATION TELEMETRY
               </div>
 
-              {apiResult?.scores && Object.keys(apiResult.scores).length > 0 ? (
-                <div
-                  style={{ display: "flex", flexDirection: "column", gap: 10 }}
-                >
-                  {Object.entries(apiResult.scores)
-                    .sort((a, b) => b[1] - a[1])
-                    .map(([key, value]) => {
-                      const pct = value * 100;
-                      const isTop =
-                        pct ===
-                        Math.max(...Object.values(apiResult.scores)) * 100;
-                      return (
-                        <div key={key}>
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              marginBottom: 5,
-                            }}
-                          >
-                            <span
-                              style={{
-                                fontSize: 9,
-                                color: isTop ? "#00ffa0" : "#334155",
-                                letterSpacing: "0.12em",
-                                textTransform: "uppercase",
-                                fontWeight: isTop ? 700 : 400,
-                              }}
-                            >
-                              {key}
-                            </span>
-                            <span
-                              style={{
-                                fontSize: 9,
-                                color: isTop ? "#00ffa0" : "#475569",
-                                fontWeight: 700,
-                              }}
-                            >
-                              {pct.toFixed(1)}%
-                            </span>
-                          </div>
-                          <div
-                            style={{
-                              height: 3,
-                              background: "#0a1628",
-                              borderRadius: 2,
-                              overflow: "hidden",
-                            }}
-                          >
-                            <div
-                              style={{
-                                height: "100%",
-                                width: `${Math.min(100, pct)}%`,
-                                background: isTop
-                                  ? "linear-gradient(90deg, #00ffa0, #00cc7a)"
-                                  : "linear-gradient(90deg, #1e3a2a, #0f2a1a)",
-                                borderRadius: 2,
-                                transition: "width 0.5s ease",
-                                boxShadow: isTop
-                                  ? "0 0 6px rgba(0,255,160,0.5)"
-                                  : "none",
-                              }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                </div>
-              ) : (
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: "#1e3a2a",
-                    textAlign: "center",
-                    padding: "20px 0",
-                    letterSpacing: "0.1em",
-                  }}
-                >
-                  AWAITING SIGNAL...
-                </div>
-              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {[
+                  { label: "VERIFY STATUS", value: verifyStatus },
+                  {
+                    label: "FACE IN FRAME",
+                    value: faceVisible ? "YES" : "NO",
+                    color: faceVisible ? "#22c55e" : "#f97316",
+                  },
+                  {
+                    label: "RAW SIMILARITY",
+                    value:
+                      typeof similarity === "number"
+                        ? `${(similarity * 100).toFixed(2)}%`
+                        : "--",
+                  },
+                  {
+                    label: "SMOOTHED SIMILARITY",
+                    value:
+                      typeof smoothSimilarity === "number"
+                        ? `${(smoothSimilarity * 100).toFixed(2)}%`
+                        : "--",
+                  },
+                  {
+                    label: "DECISION",
+                    value: hasRegistered ? (isOwner ? "OWNER" : "INTRUDER") : "NO DATA",
+                    color: !hasRegistered ? "#64748b" : isOwner ? "#00ffa0" : "#ff4444",
+                  },
+                ].map(({ label, value, color }) => (
+                  <div
+                    key={label}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      background: "#07101f",
+                      border: "1px solid #12233a",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 9,
+                        color: "#1e4d3a",
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {label}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: color || "#cbd5e1",
+                        fontWeight: 700,
+                        letterSpacing: "0.06em",
+                      }}
+                    >
+                      {value}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* System info */}
@@ -1263,7 +1334,7 @@ export default function FaceDetect() {
             >
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {[
-                  { label: "MODEL", value: "FaceMesh + Landmark" },
+                  { label: "MODEL", value: "Face Identity Verification" },
                   { label: "METHOD", value: "Cosine Similarity" },
                   { label: "DRIVER ID", value: driverId },
                   { label: "CAM STATUS", value: status.toUpperCase() },
