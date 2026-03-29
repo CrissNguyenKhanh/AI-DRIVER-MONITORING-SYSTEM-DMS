@@ -406,7 +406,7 @@ Dự án DMS sử dụng **MediaPipe**, **OpenCV**, **scikit-learn**, và tùy c
 
 <div align="center">
 
-**Nếu ảnh banner/sơ đồ hiển thị lỗi trên GitHub**, kiểm tra đường dẫn tương đối `docs/images/` đã được push cùng commit.
+
 
 Made with focus on **driver safety** and **transparent logging**.
 
