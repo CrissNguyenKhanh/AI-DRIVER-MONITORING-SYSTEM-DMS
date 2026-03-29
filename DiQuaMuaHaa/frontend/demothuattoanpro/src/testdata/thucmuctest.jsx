@@ -3,8 +3,23 @@ import * as THREE from "three";
 import { io } from "socket.io-client";
 import OwnerVerifyGate from "../systeamdetectface/OwnerVerifyGate";
 import TelegramOwnerRejectOverlay from "../systeamdetectface/TelegramOwnerRejectOverlay";
+import DriverAuthenticatedWelcome from "../systeamdetectface/DriverAuthenticatedWelcome";
+import { getDmsApiBase } from "../config/apiEndpoints";
+import { getWebcamSupportErrorMessage } from "../utils/cameraContext";
+import {
+  speakOwnerGreeting,
+  warmSpeechVoices,
+} from "../utils/speakOwnerGreeting";
+import {
+  startDrivingSession,
+  endDrivingSession,
+  recordDrivingAlert,
+  listDrivingSessions,
+} from "../utils/drivingSessionApi";
+import VoiceCarAssistant from "../voice/VoiceCarAssistant";
+import FakeYouTubeLayout from "../voice/FakeYouTubeLayout";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = getDmsApiBase();
 const API_INTERVAL_MS = 1000; // landmark + smoking vẫn 1s
 const IDENTITY_BURST_FRAMES = 2;
 const IDENTITY_BURST_GAP_MS = 110;
@@ -56,6 +71,7 @@ const STATUS_ICONS = [
   { id: "attentive", label: "Attentive", icon: "🧠" },
   { id: "awake", label: "Awake", icon: "👁" },
   { id: "seatbelt", label: "Seatbelt", icon: "🔒" },
+  { id: "cabin", label: "Cabin", icon: "💡" },
   { id: "phone", label: "Phone", icon: "📱" },
   { id: "smoking", label: "Smoking", icon: "🚬" },
 ];
@@ -1093,6 +1109,11 @@ export default function DriverMonitorDMS() {
   const wsSmokePendingRef = useRef(false);
   const wsSmokLastSentRef = useRef(0);
 
+  const drivingSessionIdRef = useRef(null);
+  const prevPhoneAlertRef = useRef(null);
+  const prevSmokingAlertRef = useRef(null);
+  const prevDrowsyAlertRef = useRef(null);
+
   const [status, setStatus] = useState("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [apiResult, setApiResult] = useState(null);
@@ -1141,6 +1162,118 @@ export default function DriverMonitorDMS() {
     /** @type {"owner_reject" | "owner_timeout" | "generic" | null} */ (null),
   );
   const [identityRejectLockedAt, setIdentityRejectLockedAt] = useState("");
+  /** Hồ sơ hiển thị popup chào mừng sau khi auth xong (~5s) */
+  const [authWelcomeProfile, setAuthWelcomeProfile] = useState(null);
+  /** Đèn cabin / điều hòa — điều khiển bằng giọng (Hey Car) */
+  const [cabinLightsOn, setCabinLightsOn] = useState(false);
+  const [cabinAcOn, setCabinAcOn] = useState(false);
+  const [youtubeMockOpen, setYoutubeMockOpen] = useState(false);
+  const [drivingSessionId, setDrivingSessionId] = useState(null);
+  const [drivingSessionStartedAt, setDrivingSessionStartedAt] = useState(null);
+  const [sessionAlertCounts, setSessionAlertCounts] = useState({
+    phone: 0,
+    smoking: 0,
+    drowsy: 0,
+  });
+  const [sessionLogOpen, setSessionLogOpen] = useState(false);
+  const [sessionLogLoading, setSessionLogLoading] = useState(false);
+  const [sessionLogItems, setSessionLogItems] = useState([]);
+
+  const dismissAuthWelcome = useCallback(() => setAuthWelcomeProfile(null), []);
+
+  /** Phiên lái: bắt đầu khi active, kết thúc khi rời active (locked / idle / …). */
+  useEffect(() => {
+    if (status !== "active") {
+      const sid = drivingSessionIdRef.current;
+      drivingSessionIdRef.current = null;
+      setDrivingSessionId(null);
+      setDrivingSessionStartedAt(null);
+      prevPhoneAlertRef.current = null;
+      prevSmokingAlertRef.current = null;
+      prevDrowsyAlertRef.current = null;
+      setSessionAlertCounts({ phone: 0, smoking: 0, drowsy: 0 });
+      if (sid) {
+        endDrivingSession(API_BASE, sid).catch(() => {});
+      }
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { ok, data } = await startDrivingSession(API_BASE, { driverId });
+      if (cancelled) {
+        if (ok && data?.session_id) {
+          await endDrivingSession(API_BASE, data.session_id).catch(() => {});
+        }
+        return;
+      }
+      if (ok && data?.session_id) {
+        drivingSessionIdRef.current = data.session_id;
+        setDrivingSessionId(data.session_id);
+        setDrivingSessionStartedAt(data.started_at || "");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [status, driverId]);
+
+  /** Khi vừa có session_id, một lần: baseline cảnh báo hiện tại (không tính sự kiện đang bật sẵn là “lần mới”). */
+  useEffect(() => {
+    if (!drivingSessionId || status !== "active") return;
+    prevPhoneAlertRef.current = phoneAlert;
+    prevSmokingAlertRef.current = smokingAlert;
+    prevDrowsyAlertRef.current = drowsyAlert;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ khi gán session mới
+  }, [drivingSessionId, status]);
+
+  /** Mỗi lần cảnh báo chuyển tắt → bật: ghi nhận một lần theo loại. */
+  useEffect(() => {
+    const sid = drivingSessionIdRef.current;
+    if (!sid || status !== "active") return;
+
+    if (phoneAlert !== null && prevPhoneAlertRef.current === null) {
+      recordDrivingAlert(API_BASE, sid, "phone").then((r) => {
+        if (r.ok)
+          setSessionAlertCounts((c) => ({ ...c, phone: c.phone + 1 }));
+      });
+    }
+    prevPhoneAlertRef.current = phoneAlert;
+
+    if (smokingAlert !== null && prevSmokingAlertRef.current === null) {
+      recordDrivingAlert(API_BASE, sid, "smoking").then((r) => {
+        if (r.ok)
+          setSessionAlertCounts((c) => ({ ...c, smoking: c.smoking + 1 }));
+      });
+    }
+    prevSmokingAlertRef.current = smokingAlert;
+
+    if (drowsyAlert !== null && prevDrowsyAlertRef.current === null) {
+      recordDrivingAlert(API_BASE, sid, "drowsy").then((r) => {
+        if (r.ok)
+          setSessionAlertCounts((c) => ({ ...c, drowsy: c.drowsy + 1 }));
+      });
+    }
+    prevDrowsyAlertRef.current = drowsyAlert;
+  }, [phoneAlert, smokingAlert, drowsyAlert, status]);
+
+  const refreshSessionLog = useCallback(async () => {
+    setSessionLogLoading(true);
+    try {
+      const { ok, data } = await listDrivingSessions(API_BASE, {
+        limit: 25,
+        driverId,
+      });
+      if (ok && data?.sessions) setSessionLogItems(data.sessions);
+    } catch (_) {
+      setSessionLogItems([]);
+    } finally {
+      setSessionLogLoading(false);
+    }
+  }, [driverId]);
+
+  useEffect(() => {
+    if (sessionLogOpen) refreshSessionLog();
+  }, [sessionLogOpen, refreshSessionLog]);
 
   // ── Audio helpers ──
   function getAudioCtx() {
@@ -1194,12 +1327,62 @@ export default function DriverMonitorDMS() {
   }
 
   // ── Owner identity gate callbacks (tách riêng khỏi thucmuctest) ──
-  const handleIdentityUnlock = useCallback(() => {
-    setIdentityError("");
-    setIdentityLockCause(null);
-    setIdentityRejectLockedAt("");
-    setStatus((prev) => (prev === "active" ? prev : "active"));
-  }, []);
+  const handleIdentityUnlock = useCallback(
+    async (detail) => {
+      setIdentityError("");
+      setIdentityLockCause(null);
+      setIdentityRejectLockedAt("");
+      setStatus((prev) => (prev === "active" ? prev : "active"));
+
+      const id =
+        (detail && (detail.driver_id || detail.driverId)) || driverId;
+
+      let merged = {
+        driver_id: id,
+        registered_name:
+          (detail && (detail.registered_name || detail.name)) || "",
+        profile_image_base64: detail && detail.profile_image_base64,
+        registered_at: detail && detail.registered_at,
+        similarity:
+          detail && typeof detail.similarity === "number"
+            ? detail.similarity
+            : null,
+        threshold:
+          detail && typeof detail.threshold === "number"
+            ? detail.threshold
+            : null,
+        samples_used: detail && detail.samples_used,
+        source: (detail && detail.source) || "face",
+      };
+
+      if (!merged.profile_image_base64 && id) {
+        try {
+          const r = await fetch(
+            `${API_BASE}/api/identity/driver_profile?driver_id=${encodeURIComponent(id)}`,
+          );
+          const d = await r.json();
+          if (r.ok && d.driver_id) {
+            merged = {
+              ...merged,
+              registered_name:
+                merged.registered_name || d.registered_name || id,
+              profile_image_base64:
+                merged.profile_image_base64 || d.profile_image_base64,
+              registered_at: merged.registered_at || d.registered_at,
+            };
+          }
+        } catch (_) {
+          /* ignore */
+        }
+      }
+
+      if (!merged.registered_name) merged.registered_name = id;
+
+      setAuthWelcomeProfile(merged);
+      speakOwnerGreeting(merged.registered_name);
+    },
+    [driverId],
+  );
 
   const handleIdentityLock = useCallback((reason) => {
     stopAlarm();
@@ -1241,6 +1424,11 @@ export default function DriverMonitorDMS() {
     const id = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    warmSpeechVoices();
+  }, []);
+
   useEffect(() => {
     try {
       const savedId = window.localStorage.getItem(DRIVER_ID_KEY);
@@ -1250,7 +1438,7 @@ export default function DriverMonitorDMS() {
 
   // ── WebSocket setup ──────────────────────────────────────
   useEffect(() => {
-    const sock = io("http://localhost:8000", {
+    const sock = io(API_BASE, {
       transports: ["websocket"],
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
@@ -1675,8 +1863,9 @@ export default function DriverMonitorDMS() {
   }, [status]);
 
   async function startWebcam() {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setErrorMsg("No webcam support");
+    const supportErr = getWebcamSupportErrorMessage();
+    if (supportErr) {
+      setErrorMsg(supportErr);
       setStatus("error");
       return;
     }
@@ -1867,6 +2056,7 @@ export default function DriverMonitorDMS() {
         currentLabel !== "yawning" &&
         !drowsyAlert;
     if (ic.id === "seatbelt") active = true;
+    if (ic.id === "cabin") active = cabinLightsOn || cabinAcOn;
     if (ic.id === "phone") active = phoneIconActive;
     if (ic.id === "smoking") active = smokingIconActive;
     return { ...ic, active };
@@ -2299,6 +2489,24 @@ export default function DriverMonitorDMS() {
                         boxShadow: "0 0 18px rgba(255,60,20,0.7)",
                       }
                     : {}),
+                  ...(ic.id === "cabin" && cabinLightsOn
+                    ? {
+                        background:
+                          "radial-gradient(circle at 35% 35%,#ffe08a,#d4a017)",
+                        border: "2px solid rgba(255,220,120,0.85)",
+                        boxShadow: "0 0 20px rgba(255,210,80,0.65)",
+                        filter: "none",
+                      }
+                    : {}),
+                  ...(ic.id === "cabin" && cabinAcOn && !cabinLightsOn
+                    ? {
+                        background:
+                          "radial-gradient(circle at 35% 35%,#7ecbff,#2080c0)",
+                        border: "2px solid rgba(120,200,255,0.8)",
+                        boxShadow: "0 0 16px rgba(80,180,255,0.55)",
+                        filter: "none",
+                      }
+                    : {}),
                 }}
               >
                 <span style={{ fontSize: 22 }}>{ic.icon}</span>
@@ -2331,6 +2539,26 @@ export default function DriverMonitorDMS() {
               display: "block",
               filter: "brightness(0.9) contrast(1.05)",
             }}
+          />
+          {status === "active" && cabinLightsOn && (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                pointerEvents: "none",
+                zIndex: 22,
+                background:
+                  "radial-gradient(ellipse 85% 50% at 50% 8%, rgba(255,248,210,0.4) 0%, rgba(255,235,180,0.12) 35%, transparent 65%)",
+              }}
+            />
+          )}
+          <VoiceCarAssistant
+            enabled={status === "active"}
+            requireWake
+            onLightChange={setCabinLightsOn}
+            onAcChange={setCabinAcOn}
+            onYoutubeOpen={() => setYoutubeMockOpen(true)}
+            onYoutubeClose={() => setYoutubeMockOpen(false)}
           />
           <OwnerVerifyGate
             enabled={status === "auth" || status === "active" || status === "locked"}
@@ -2451,6 +2679,74 @@ export default function DriverMonitorDMS() {
                   {phoneError}
                 </div>
               )}
+              <div
+                style={{
+                  pointerEvents: "auto",
+                  marginTop: 10,
+                  paddingTop: 8,
+                  borderTop: "1px solid rgba(60,120,180,0.35)",
+                  maxWidth: 280,
+                }}
+              >
+                <div style={{ fontSize: 12, color: "#8ecae6", fontWeight: 600 }}>
+                  Phiên lái #{drivingSessionId ?? "…"}
+                  {drivingSessionStartedAt
+                    ? ` · ${drivingSessionStartedAt}`
+                    : ""}
+                </div>
+                <div style={{ fontSize: 11, color: "#a8d8ff", marginTop: 2 }}>
+                  Cảnh báo (lần phát hiện): 📱 {sessionAlertCounts.phone} · 🚬{" "}
+                  {sessionAlertCounts.smoking} · 😴 {sessionAlertCounts.drowsy}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSessionLogOpen((o) => !o)}
+                  style={{
+                    marginTop: 6,
+                    fontSize: 11,
+                    padding: "4px 10px",
+                    borderRadius: 4,
+                    border: "1px solid rgba(100,180,255,0.5)",
+                    background: "rgba(10,40,70,0.85)",
+                    color: "#cfe8ff",
+                    cursor: "pointer",
+                  }}
+                >
+                  {sessionLogOpen ? "Ẩn lịch sử phiên" : "Lịch sử phiên (fleet demo)"}
+                </button>
+                {sessionLogOpen && (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      maxHeight: 180,
+                      overflow: "auto",
+                      fontSize: 10,
+                      color: "#9ecfff",
+                      fontFamily: "monospace",
+                      lineHeight: 1.45,
+                      background: "rgba(0,20,40,0.5)",
+                      padding: 8,
+                      borderRadius: 4,
+                    }}
+                  >
+                    {sessionLogLoading ? (
+                      <span>Đang tải…</span>
+                    ) : sessionLogItems.length === 0 ? (
+                      <span>Chưa có phiên nào.</span>
+                    ) : (
+                      sessionLogItems.map((s) => (
+                        <div key={s.session_id} style={{ marginBottom: 6 }}>
+                          #{s.session_id}{" "}
+                          {s.started_at} → {s.ended_at || "…"} ·{" "}
+                          {Object.entries(s.alerts || {})
+                            .map(([k, v]) => `${k}:${v}`)
+                            .join(" ")}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
               {SMOKING_ENABLED && (
                 <div
                   style={{
@@ -3609,6 +3905,11 @@ export default function DriverMonitorDMS() {
               </button>
             </div>
           )}
+          <DriverAuthenticatedWelcome
+            profile={authWelcomeProfile}
+            durationMs={5000}
+            onDismiss={dismissAuthWelcome}
+          />
         </div>
 
         {/* bottom bar */}
@@ -3717,6 +4018,11 @@ export default function DriverMonitorDMS() {
           </div>
         </div>
       </div>
+
+      <FakeYouTubeLayout
+        open={youtubeMockOpen}
+        onClose={() => setYoutubeMockOpen(false)}
+      />
 
       <style>{`
         @keyframes borderPulse{0%,100%{opacity:0.9}50%{opacity:0.15}}

@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
+import { getDmsApiBase } from "../config/apiEndpoints";
+import { getWebcamSupportErrorMessage } from "../utils/cameraContext";
+import { speakOwnerGreeting, warmSpeechVoices } from "../utils/speakOwnerGreeting";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = getDmsApiBase();
 const API_INTERVAL_MS = 900;
 const BURST_GAP_MS = 120;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -327,9 +330,11 @@ export default function FaceDetect() {
   const [registerLoading, setRegisterLoading] = useState(false);
   const similarityBufferRef = useRef([]);
   const lastDecisionRef = useRef(null);
+  const ownerWelcomeSpokenRef = useRef(false);
 
   // Load saved driver image & id from localStorage (just UI, not the signature)
   useEffect(() => {
+    warmSpeechVoices();
     try {
       const savedId = window.localStorage.getItem(DRIVER_ID_KEY);
       if (savedId) setDriverId(savedId);
@@ -341,9 +346,14 @@ export default function FaceDetect() {
     } catch {}
   }, []);
 
+  useEffect(() => {
+    ownerWelcomeSpokenRef.current = false;
+  }, [driverId]);
+
   const startWebcam = async () => {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setErrorMsg("Trình duyệt không hỗ trợ webcam");
+    const supportErr = getWebcamSupportErrorMessage();
+    if (supportErr) {
+      setErrorMsg(supportErr);
       setStatus("error");
       return;
     }
@@ -491,6 +501,14 @@ export default function FaceDetect() {
               lastDecisionRef.current = nextDecision;
               setIsOwner(nextDecision);
               setVerifyStatus(nextDecision ? "OWNER" : "INTRUDER");
+
+              if (nextDecision && !prev && !ownerWelcomeSpokenRef.current) {
+                ownerWelcomeSpokenRef.current = true;
+                speakOwnerGreeting(
+                  vData.registered_name || driverId,
+                );
+              }
+              if (!nextDecision) ownerWelcomeSpokenRef.current = false;
             }
           }
         }

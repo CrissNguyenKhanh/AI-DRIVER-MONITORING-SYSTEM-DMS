@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Activity, AlertCircle, CheckCircle, TrendingUp, Users, Calendar, Save } from "lucide-react";
+import { getMedicalApiBase } from "../config/apiEndpoints";
 
 const MedicalDiagnosisAI = () => {
   const [formData, setFormData] = useState({
@@ -23,7 +24,7 @@ const MedicalDiagnosisAI = () => {
 
   const fetchStatistics = async () => {
     try {
-      const response = await fetch("http://localhost:5000/api/statistics");
+      const response = await fetch(`${getMedicalApiBase()}/api/statistics`);
       const data = await response.json();
       setStatistics(data);
     } catch (error) {
@@ -33,7 +34,7 @@ const MedicalDiagnosisAI = () => {
 
   const fetchSymptoms = async () => {
     try {
-      const response = await fetch("http://localhost:5000/api/ai/symptoms");
+      const response = await fetch(`${getMedicalApiBase()}/api/ai/symptoms`);
       const data = await response.json();
       if (data.success) {
         setAvailableSymptoms(data.symptoms);
@@ -65,7 +66,7 @@ const MedicalDiagnosisAI = () => {
         .filter((s) => s.length > 0);
 
       // Gọi API /api/records để vừa predict vừa lưu luôn
-      const response = await fetch("http://localhost:5000/api/records", {
+      const response = await fetch(`${getMedicalApiBase()}/api/records`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
