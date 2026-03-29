@@ -1,0 +1,24 @@
+Flask==3.0.0
+Flask-CORS==4.0.0
+Flask-SQLAlchemy==3.1.1
+
+# Database
+PyMySQL==1.1.0
+SQLAlchemy==2.0.23
+
+# JWT & Security
+Flask-JWT-Extended==4.5.3
+Werkzeug==3.0.1
+
+# Machine Learning
+scikit-learn==1.6.1
+numpy==2.4.3
+joblib==1.3.2
+
+# Image processing
+Pillow==10.0.1
+opencv-python==4.8.1.78
+mediapipe==0.10.13
+
+# Optional
+pandas==2.2.3

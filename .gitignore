@@ -1,0 +1,19 @@
+node_modules/
+venv/
+.venv/
+DiQuaMuaHaa/backend/venv/
+DiQuaMuaHaa/backend/.venv/
+dist/
+.env
+.env.*
+npm-debug.log*
+yarn-error.log*
+DiQuaMuaHaa/backend/dataset/
+DiQuaMuaHaa/backend/driver_training/dataset/
+DiQuaMuaHaa/backend/driver_training/models/
+DiQuaMuaHaa/backend/driver_training/runs/
+# GitHub max file size 100 MB — regenerate locally from Kaggle pipeline
+DiQuaMuaHaa/backend/driver_training/collect/data/landmarks_kaggle.csv
+__pycache__/
+*.py[cod]
+*.pt
