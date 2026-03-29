@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { User, Lock, Mail, Phone, Activity, ArrowRight, Eye, EyeOff } from 'lucide-react';
+import { getMedicalApiBase } from '../config/apiEndpoints';
 
 const Login = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -44,7 +45,7 @@ const Login = () => {
           };
 
       // Gọi API Flask (đảm bảo Backend đang chạy ở port 5000)
-      const response = await fetch(`http://localhost:5000${endpoint}`, {
+      const response = await fetch(`${getMedicalApiBase()}${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

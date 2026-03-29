@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { CheckCircle, XCircle, AlertTriangle, Clock, User } from "lucide-react";
+import { getMedicalApiBase } from "../config/apiEndpoints";
 
 const MedicalRecordConfirmation = () => {
   const [records, setRecords] = useState([]);
@@ -22,7 +23,7 @@ const MedicalRecordConfirmation = () => {
   const loadRecords = async () => {
     try {
       const response = await fetch(
-        `http://localhost:5000/api/records/${currentUser.id}`
+        `${getMedicalApiBase()}/api/records/${currentUser.id}`
       );
       const data = await response.json();
       if (data.success) {
@@ -37,7 +38,7 @@ const MedicalRecordConfirmation = () => {
 
   const loadDiagnoses = async () => {
     try {
-      const response = await fetch("http://localhost:5000/api/ai/diagnoses");
+      const response = await fetch(`${getMedicalApiBase()}/api/ai/diagnoses`);
       const data = await response.json();
       if (data.success) {
         setDiagnoses(data.diagnoses);
@@ -58,7 +59,7 @@ const MedicalRecordConfirmation = () => {
 
     try {
       const response = await fetch(
-        `http://localhost:5000/api/records/${selectedRecord.id}/confirm`,
+        `${getMedicalApiBase()}/api/records/${selectedRecord.id}/confirm`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
