@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { getMedicalApiBase } from "../config/apiEndpoints";
 import {
   Activity,
   AlertCircle,
@@ -59,7 +60,7 @@ const MedicalDiagnosisAI = () => {
   // --- API CALLS ---
   const fetchStatistics = async () => {
     try {
-      const response = await fetch("http://localhost:5000/api/statistics");
+      const response = await fetch(`${getMedicalApiBase()}/api/statistics`);
       const data = await response.json();
       setStatistics(data);
     } catch (error) {
@@ -69,7 +70,7 @@ const MedicalDiagnosisAI = () => {
 
   const fetchSymptoms = async () => {
     try {
-      const response = await fetch("http://localhost:5000/api/ai/symptoms");
+      const response = await fetch(`${getMedicalApiBase()}/api/ai/symptoms`);
       const data = await response.json();
       if (data.success) {
         setAvailableSymptoms(data.symptoms);
@@ -111,7 +112,7 @@ const MedicalDiagnosisAI = () => {
       const formDataImage = new FormData();
       formDataImage.append("image", file);
 
-      const response = await fetch("http://localhost:5000/api/ai/predict-image", {
+      const response = await fetch(`${getMedicalApiBase()}/api/ai/predict-image`, {
         method: "POST",
         body: formDataImage,
       });
@@ -222,7 +223,7 @@ const MedicalDiagnosisAI = () => {
         if (!formData.symptoms.trim() || !formData.age) return;
         const symptomsArray = formData.symptoms.split(",").map(s => s.trim()).filter(s => s.length > 0);
 
-        const response = await fetch("http://localhost:5000/api/records", {
+        const response = await fetch(`${getMedicalApiBase()}/api/records`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

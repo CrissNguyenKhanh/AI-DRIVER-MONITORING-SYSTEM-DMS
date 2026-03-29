@@ -58,8 +58,8 @@ IDENTITY_SIM_THRESHOLD = float(os.getenv("IDENTITY_SIM_THRESHOLD", "0.975"))
 IDENTITY_MIN_REGISTER_SAMPLES = int(os.getenv("IDENTITY_MIN_REGISTER_SAMPLES", "3"))
 IDENTITY_MIN_VERIFY_SAMPLES = int(os.getenv("IDENTITY_MIN_VERIFY_SAMPLES", "2"))
 IDENTITY_DECISION_TIMEOUT_SEC = int(os.getenv("IDENTITY_DECISION_TIMEOUT_SEC", "30"))
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8778925999:AAEvtjjjwulzUvGTC8ThTfvwOkJ7ALGuyoQ").strip()
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "Khanhdz123").strip()
 
 
 artifact: Dict[str, Any] | None = None
@@ -130,6 +130,38 @@ def _ensure_identity_tables(cur) -> None:
         )
         """
     )
+
+
+def _ensure_driving_session_tables(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS driving_sessions (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            driver_id VARCHAR(64) NULL,
+            label VARCHAR(128) NULL,
+            started_at DATETIME NOT NULL,
+            ended_at DATETIME NULL,
+            INDEX idx_driving_driver (driver_id),
+            INDEX idx_driving_started (started_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS driving_session_alerts (
+            session_id BIGINT NOT NULL,
+            alert_type VARCHAR(32) NOT NULL,
+            count INT NOT NULL DEFAULT 0,
+            PRIMARY KEY (session_id, alert_type),
+            INDEX idx_dsa_session (session_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+
+
+DRIVING_ALERT_TYPES = frozenset(
+    {"phone", "smoking", "drowsy", "identity_lock", "landmark_risk", "other"}
+)
 
 
 def _telegram_call(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1199,7 +1231,10 @@ def identity_verify() -> Any:
         with conn.cursor() as cur:
             _ensure_identity_tables(cur)
             cur.execute(
-                "SELECT embedding_json FROM driver_identity WHERE driver_id = %s",
+                """
+                SELECT embedding_json, name, image_base64, created_at
+                FROM driver_identity WHERE driver_id = %s
+                """,
                 (driver_id,),
             )
             row = cur.fetchone()
@@ -1229,6 +1264,14 @@ def identity_verify() -> Any:
     similarity = _cosine_similarity(stored_embedding, embedding_now)
     threshold = IDENTITY_SIM_THRESHOLD
 
+    created_raw = row.get("created_at")
+    if hasattr(created_raw, "strftime"):
+        registered_at = created_raw.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        registered_at = str(created_raw) if created_raw is not None else ""
+
+    reg_name = str(row.get("name") or "").strip()
+
     return jsonify(
         {
             "driver_id": driver_id,
@@ -1237,6 +1280,53 @@ def identity_verify() -> Any:
             "similarity": float(similarity),
             "threshold": float(threshold),
             "samples_used": len(current_embeddings),
+            "registered_name": reg_name,
+            "profile_image_base64": row.get("image_base64"),
+            "registered_at": registered_at,
+        }
+    )
+
+
+@app.get("/api/identity/driver_profile")
+def identity_driver_profile() -> Any:
+    """Trả về tên + ảnh đăng ký + ngày tạo (dùng cho UI sau khi mở khóa / Telegram accept)."""
+    driver_id = str(request.args.get("driver_id", "")).strip()
+    if not driver_id:
+        return jsonify({"error": "Thiếu driver_id."}), 400
+
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            _ensure_identity_tables(cur)
+            cur.execute(
+                """
+                SELECT driver_id, name, image_base64, created_at
+                FROM driver_identity WHERE driver_id = %s
+                """,
+                (driver_id,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        return jsonify({"error": "Không tìm thấy driver_id trong hệ thống."}), 404
+
+    created_raw = row.get("created_at")
+    if hasattr(created_raw, "strftime"):
+        registered_at = created_raw.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        registered_at = str(created_raw) if created_raw is not None else ""
+
+    reg_name = str(row.get("name") or "").strip()
+    did = str(row.get("driver_id") or driver_id)
+
+    return jsonify(
+        {
+            "driver_id": did,
+            "registered_name": reg_name or did,
+            "profile_image_base64": row.get("image_base64"),
+            "registered_at": registered_at,
         }
     )
 
@@ -1313,6 +1403,17 @@ def request_identity_decision() -> Any:
     driver_id = str(payload.get("driver_id", "")).strip()
     if not driver_id:
         return jsonify({"error": "Thiếu 'driver_id'."}), 400
+
+    phase = str(payload.get("phase") or "").strip().lower()
+    if phase != "auth":
+        return jsonify(
+            {
+                "error": (
+                    "Gửi yêu cầu Telegram chỉ được khi xác nhận xe. "
+                    "Truyền phase=auth từ bước CAR AUTH (không dùng khi đang lái)."
+                )
+            }
+        ), 400
 
     similarity = payload.get("similarity")
     threshold = payload.get("threshold")
@@ -1636,6 +1737,247 @@ def telegram_webhook() -> Any:
             return jsonify({"ok": True})
 
     return jsonify({"ok": True})
+
+
+@app.post("/api/driving/session/start")
+def driving_session_start() -> Any:
+    """Bắt đầu phiên lái (sau khi tài xế đã active)."""
+    payload = request.get_json(silent=True) or {}
+    driver_id = (payload.get("driver_id") or "").strip() or None
+    label = (payload.get("label") or "").strip() or None
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            _ensure_driving_session_tables(cur)
+            cur.execute(
+                """
+                INSERT INTO driving_sessions (driver_id, label, started_at, ended_at)
+                VALUES (%s, %s, %s, NULL)
+                """,
+                (driver_id, label, now),
+            )
+            sid = cur.lastrowid
+        conn.commit()
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    finally:
+        conn.close()
+
+    return jsonify({"session_id": int(sid), "started_at": now, "driver_id": driver_id})
+
+
+@app.post("/api/driving/session/end")
+def driving_session_end() -> Any:
+    """Kết thúc phiên lái (ghi ended_at)."""
+    payload = request.get_json(silent=True) or {}
+    try:
+        session_id = int(payload.get("session_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Thiếu hoặc sai 'session_id'."}), 400
+
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    n = 0
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            _ensure_driving_session_tables(cur)
+            cur.execute(
+                """
+                UPDATE driving_sessions
+                SET ended_at = %s
+                WHERE id = %s AND ended_at IS NULL
+                """,
+                (now, session_id),
+            )
+            n = cur.rowcount
+        conn.commit()
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    finally:
+        conn.close()
+
+    if not n:
+        return jsonify({"error": "session_id không tồn tại hoặc đã kết thúc."}), 404
+    return jsonify({"ok": True, "session_id": session_id, "ended_at": now})
+
+
+@app.post("/api/driving/session/alert")
+def driving_session_alert() -> Any:
+    """Tăng số lần cảnh báo theo loại (delta mặc định 1)."""
+    payload = request.get_json(silent=True) or {}
+    try:
+        session_id = int(payload.get("session_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Thiếu hoặc sai 'session_id'."}), 400
+
+    alert_type = (payload.get("alert_type") or "").strip().lower()
+    if alert_type not in DRIVING_ALERT_TYPES:
+        return (
+            jsonify(
+                {
+                    "error": f"alert_type không hợp lệ. Cho phép: {sorted(DRIVING_ALERT_TYPES)}",
+                }
+            ),
+            400,
+        )
+
+    try:
+        delta = int(payload.get("delta", 1))
+    except (TypeError, ValueError):
+        return jsonify({"error": "'delta' phải là số nguyên."}), 400
+    if delta < 1 or delta > 1000:
+        return jsonify({"error": "'delta' phải trong [1, 1000]."}), 400
+
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            _ensure_driving_session_tables(cur)
+            cur.execute(
+                "SELECT id FROM driving_sessions WHERE id = %s LIMIT 1",
+                (session_id,),
+            )
+            if not cur.fetchone():
+                return jsonify({"error": "session_id không tồn tại."}), 404
+            cur.execute(
+                """
+                INSERT INTO driving_session_alerts (session_id, alert_type, count)
+                VALUES (%s, %s, %s)
+                ON DUPLICATE KEY UPDATE count = count + VALUES(count)
+                """,
+                (session_id, alert_type, delta),
+            )
+            cur.execute(
+                """
+                SELECT count FROM driving_session_alerts
+                WHERE session_id = %s AND alert_type = %s
+                """,
+                (session_id, alert_type),
+            )
+            row = cur.fetchone()
+            total = int(row["count"]) if row else delta
+        conn.commit()
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    finally:
+        conn.close()
+
+    return jsonify(
+        {"ok": True, "session_id": session_id, "alert_type": alert_type, "count": total}
+    )
+
+
+@app.get("/api/driving/sessions")
+def driving_sessions_list() -> Any:
+    """Danh sách phiên gần đây (kèm tổng cảnh báo)."""
+    try:
+        limit = min(100, max(1, int(request.args.get("limit", "30"))))
+    except ValueError:
+        limit = 30
+    driver_id = (request.args.get("driver_id") or "").strip() or None
+
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            _ensure_driving_session_tables(cur)
+            if driver_id:
+                cur.execute(
+                    """
+                    SELECT id, driver_id, label, started_at, ended_at
+                    FROM driving_sessions
+                    WHERE driver_id = %s
+                    ORDER BY started_at DESC
+                    LIMIT %s
+                    """,
+                    (driver_id, limit),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, driver_id, label, started_at, ended_at
+                    FROM driving_sessions
+                    ORDER BY started_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+            sessions = cur.fetchall() or []
+            out: List[Dict[str, Any]] = []
+            for s in sessions:
+                sid = int(s["id"])
+                cur.execute(
+                    """
+                    SELECT alert_type, count FROM driving_session_alerts
+                    WHERE session_id = %s
+                    """,
+                    (sid,),
+                )
+                alerts = {str(r["alert_type"]): int(r["count"]) for r in (cur.fetchall() or [])}
+                out.append(
+                    {
+                        "session_id": sid,
+                        "driver_id": s.get("driver_id"),
+                        "label": s.get("label"),
+                        "started_at": _session_dt_iso(s.get("started_at")),
+                        "ended_at": _session_dt_iso(s.get("ended_at")),
+                        "alerts": alerts,
+                    }
+                )
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    finally:
+        conn.close()
+
+    return jsonify({"sessions": out})
+
+
+def _session_dt_iso(v: Any) -> str | None:
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v.strftime("%Y-%m-%d %H:%M:%S")
+    return str(v)
+
+
+@app.get("/api/driving/session/<int:session_id>")
+def driving_session_detail(session_id: int) -> Any:
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            _ensure_driving_session_tables(cur)
+            cur.execute(
+                """
+                SELECT id, driver_id, label, started_at, ended_at
+                FROM driving_sessions WHERE id = %s LIMIT 1
+                """,
+                (session_id,),
+            )
+            s = cur.fetchone()
+            if not s:
+                return jsonify({"error": "Không tìm thấy phiên."}), 404
+            cur.execute(
+                """
+                SELECT alert_type, count FROM driving_session_alerts
+                WHERE session_id = %s
+                """,
+                (session_id,),
+            )
+            alerts = {str(r["alert_type"]): int(r["count"]) for r in (cur.fetchall() or [])}
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    finally:
+        conn.close()
+
+    return jsonify(
+        {
+            "session_id": int(s["id"]),
+            "driver_id": s.get("driver_id"),
+            "label": s.get("label"),
+            "started_at": _session_dt_iso(s.get("started_at")),
+            "ended_at": _session_dt_iso(s.get("ended_at")),
+            "alerts": alerts,
+        }
+    )
 
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
