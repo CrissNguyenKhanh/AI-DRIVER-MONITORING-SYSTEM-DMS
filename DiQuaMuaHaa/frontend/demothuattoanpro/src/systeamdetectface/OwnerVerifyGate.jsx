@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
+import { getDmsApiBase } from "../config/apiEndpoints";
 
-const DEFAULT_API_BASE = "http://localhost:8000";
+const DEFAULT_API_BASE = getDmsApiBase();
 const DEFAULT_VERIFY_INTERVAL_MS = 1200;
 const DEFAULT_DECISION_TIMEOUT_SEC = 30;
 const BURST_FRAMES = 2;
@@ -45,10 +46,10 @@ async function captureBurstFrames(videoEl, count = BURST_FRAMES, gapMs = BURST_G
  * - carState: "auth" | "active" (dùng để tránh callback lặp)
  * - videoRef: ref tới <video>
  * - driverId: car uuid / owner id
- * - apiBase: base url backend (default http://localhost:8000)
+ * - apiBase: base url backend (mặc định cùng hostname trang web, cổng 8000)
  * - unlockStreakFrames: số lần liên tiếp cần is_owner=true để unlock
  * - lockStreakFrames: số lần liên tiếp cần is_owner=false để lock về auth
- * - onUnlock: callback khi unlock
+ * - onUnlock: callback khi unlock; nhận optional object profile từ verify (hoặc tối thiểu { driverId, source: "telegram" })
  * - onLock: callback khi lock
  * - onUpdateIdentity: callback mỗi vòng verify để parent render HUD
  */
@@ -114,6 +115,7 @@ export default function OwnerVerifyGate({
           threshold,
           reason: "intruder",
           timeout_sec: decisionTimeoutSec,
+          phase: "auth",
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -158,7 +160,7 @@ export default function OwnerVerifyGate({
               intruderStreakRef.current = 0;
               ownerStreakRef.current = unlockStreakFrames;
               waitMsg = "OWNER ACCEPTED REMOTE OVERRIDE";
-              onUnlockRef.current?.();
+              onUnlockRef.current?.({ driverId, source: "telegram" });
               if (onUpdateRef.current) {
                 onUpdateRef.current({
                   hasRegistered: true,
@@ -276,15 +278,31 @@ export default function OwnerVerifyGate({
 
           if (carState === "auth" && ownerStreakRef.current >= unlockStreakFrames && !lockedStateRef.current) {
             lockedStateRef.current = true;
-            onUnlockRef.current?.();
+            onUnlockRef.current?.({
+              driverId,
+              driver_id: res.data?.driver_id || driverId,
+              registered_name: res.data?.registered_name,
+              profile_image_base64: res.data?.profile_image_base64,
+              registered_at: res.data?.registered_at,
+              similarity: res.data?.similarity,
+              threshold: res.data?.threshold,
+              samples_used: res.data?.samples_used,
+              source: "face",
+            });
           }
         } else {
           ownerStreakRef.current = 0;
           intruderStreakRef.current += 1;
 
+          // Chỉ gửi Telegram khi đang xác nhận xe (auth), không spam khi đã lái (active).
           const mustEscalate =
-            intruderStreakRef.current >= lockStreakFrames && carState !== "locked";
+            carState === "auth" &&
+            intruderStreakRef.current >= lockStreakFrames &&
+            carState !== "locked";
           let msg = "INTRUDER DETECTED";
+          if (carState === "active" && intruderStreakRef.current >= lockStreakFrames) {
+            msg = "⚠ KHÔNG KHỚP KHUÔN MẶT (chỉ cảnh báo trên xe, không gửi Telegram)";
+          }
 
           if (mustEscalate) {
             if (!pendingRequestIdRef.current) {

@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
+import { getDmsApiBase } from "../config/apiEndpoints";
+import { getWebcamSupportErrorMessage } from "../utils/cameraContext";
 
 import sukunaVideo from "./video/khanhvideo.mp4";
 const API_INTERVAL_MS = 1000; // ms, tần suất gọi API khi webcam bật
@@ -96,8 +98,9 @@ function DectionHand() {
   const [lastUpdated, setLastUpdated] = useState(null);
 
   const startWebcam = async () => {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setErrorMsg("Trình duyệt không hỗ trợ truy cập webcam");
+    const supportErr = getWebcamSupportErrorMessage();
+    if (supportErr) {
+      setErrorMsg(supportErr);
       setStatus("error");
       return;
     }
@@ -167,7 +170,7 @@ function DectionHand() {
         const imageBase64 = canvas.toDataURL("image/jpeg", 0.85);
 
         const res = await fetch(
-          "http://localhost:8000/api/hand/predict_from_frame",
+          `${getDmsApiBase()}/api/hand/predict_from_frame`,
           {
             method: "POST",
             headers: {

@@ -26,6 +26,7 @@ import {
   Thermometer,
   FileText
 } from "lucide-react";
+import { getMedicalApiBase } from "../config/apiEndpoints";
 
 // Bảng màu hiện đại, chuyên nghiệp cho Y tế
 const COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899", "#6366F1"];
@@ -53,7 +54,7 @@ const PatientStatistics = () => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch("http://localhost:5000/api/statistics")
+    fetch(`${getMedicalApiBase()}/api/statistics`)
       .then((response) => {
         if (!response.ok) {
           throw new Error("Lỗi kết nối đến server");
