@@ -107,6 +107,8 @@ sequenceDiagram
 
 Phần này tóm tắt **mô hình trong code** (`driver_training/train/*.py`): các nhánh landmark dùng **Perceptron đa lớp (MLP)** trong scikit-learn; nhánh điện thoại (real-time) có thể dùng **YOLO**; xác thực danh tính dùng **vector embedding** + độ tương đồng.
 
+![DMS AI model stack](docs/images/dms-models-diagram.svg)
+
 ### Ảnh minh họa MLP (Pipeline sklearn)
 
 ![MLP: StandardScaler + MLPClassifier — minh họa đồ án](docs/images/ai-mlp-thesis.png)
