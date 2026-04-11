@@ -18,9 +18,17 @@ import {
 } from "../utils/drivingSessionApi";
 import VoiceCarAssistant from "../voice/VoiceCarAssistant";
 import FakeYouTubeLayout from "../voice/FakeYouTubeLayout";
+import HandQuickAppsMenu, {
+  executeQuickAppAction,
+  handLabelToQuickAppKey,
+  HAND_LABEL_CLOSES_MENU,
+  HAND_LABEL_OPENS_MENU,
+} from "../systeamdetectface/HandQuickAppsMenu";
 
 const API_BASE = getDmsApiBase();
 const API_INTERVAL_MS = 1000; // landmark + smoking vẫn 1s
+const HAND_API_INTERVAL_MS = 1000;
+const HAND_QUICK_CONFIDENCE = 0.75;
 const IDENTITY_BURST_FRAMES = 2;
 const IDENTITY_BURST_GAP_MS = 110;
 const DRIVER_ID_KEY = "driver_owner_id_v1";
@@ -113,6 +121,31 @@ const FACE_OVAL_IDX = [
 const LIPS_IDX = [
   61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84,
   181, 91, 146,
+];
+
+/** Nối 21 điểm — topology MediaPipe Hands */
+const HAND_CONNECTIONS = [
+  [0, 1],
+  [1, 2],
+  [2, 3],
+  [3, 4],
+  [0, 5],
+  [5, 6],
+  [6, 7],
+  [7, 8],
+  [5, 9],
+  [9, 10],
+  [10, 11],
+  [11, 12],
+  [9, 13],
+  [13, 14],
+  [14, 15],
+  [15, 16],
+  [13, 17],
+  [17, 18],
+  [18, 19],
+  [19, 20],
+  [0, 17],
 ];
 
 function distPts(a, b) {
@@ -771,6 +804,92 @@ function FaceMeshOverlay({ landmarksRef, eyeDataRef, videoRef }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────
+// HandLandmarkOverlay — MediaPipe Hands (mirror theo video scaleX(-1))
+// ─────────────────────────────────────────────────────────
+function HandLandmarkOverlay({ handLandmarksRef, videoRef }) {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const vid = videoRef.current;
+    if (!canvas || !vid) return;
+    const ro = new ResizeObserver(() => {
+      canvas.width = vid.offsetWidth || 640;
+      canvas.height = vid.offsetHeight || 480;
+    });
+    ro.observe(vid);
+    canvas.width = vid.offsetWidth || 640;
+    canvas.height = vid.offsetHeight || 480;
+    return () => ro.disconnect();
+  }, [videoRef]);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    let rafId;
+    const lineColors = [
+      "rgba(0, 255, 180, 0.88)",
+      "rgba(255, 130, 220, 0.88)",
+    ];
+    const dotColors = [
+      "rgba(220, 255, 245, 0.95)",
+      "rgba(255, 230, 250, 0.95)",
+    ];
+    function draw() {
+      rafId = requestAnimationFrame(draw);
+      const vid = videoRef.current;
+      if (!vid || !canvas) return;
+      const W = canvas.width,
+        H = canvas.height;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, W, H);
+      const hands = handLandmarksRef.current;
+      if (!hands || !hands.length) return;
+      const mx = (x) => W - x * W,
+        my = (y) => y * H;
+      hands.forEach((lm, hi) => {
+        if (!lm || !lm.length) return;
+        const lc = lineColors[hi % lineColors.length],
+          dc = dotColors[hi % dotColors.length];
+        ctx.strokeStyle = lc;
+        ctx.lineWidth = 2;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        HAND_CONNECTIONS.forEach(([a, b]) => {
+          const pa = lm[a],
+            pb = lm[b];
+          if (!pa || !pb) return;
+          ctx.beginPath();
+          ctx.moveTo(mx(pa.x), my(pa.y));
+          ctx.lineTo(mx(pb.x), my(pb.y));
+          ctx.stroke();
+        });
+        lm.forEach((p) => {
+          if (!p) return;
+          ctx.beginPath();
+          ctx.arc(mx(p.x), my(p.y), 2.4, 0, Math.PI * 2);
+          ctx.fillStyle = dc;
+          ctx.fill();
+        });
+      });
+    }
+    draw();
+    return () => cancelAnimationFrame(rafId);
+  }, [handLandmarksRef, videoRef]);
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{
+        position: "absolute",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        pointerEvents: "none",
+        zIndex: 9,
+      }}
+    />
+  );
+}
+
 function EyeCanvas({ eyeDataRef, side }) {
   const canvasRef = useRef(null);
   useEffect(() => {
@@ -1068,6 +1187,8 @@ export default function DriverMonitorDMS() {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const faceMeshRef = useRef(null);
+  const handsRef = useRef(null);
+  const handLandmarksRef = useRef([]);
   const poseRef = useRef({ yaw: 0, pitch: 0, roll: 0 });
   const landmarksRef = useRef([]);
   const eyeDataRef = useRef({
@@ -1113,6 +1234,9 @@ export default function DriverMonitorDMS() {
   const prevPhoneAlertRef = useRef(null);
   const prevSmokingAlertRef = useRef(null);
   const prevDrowsyAlertRef = useRef(null);
+  const prevHandOpenRef = useRef("");
+  const prevHandCloseRef = useRef("");
+  const prevHandQuickRef = useRef("");
 
   const [status, setStatus] = useState("idle");
   const [errorMsg, setErrorMsg] = useState("");
@@ -1124,6 +1248,8 @@ export default function DriverMonitorDMS() {
   const [smokingHistory, setSmokingHistory] = useState([]);
   const [phoneError, setPhoneError] = useState("");
   const [phoneHistory, setPhoneHistory] = useState([]);
+  const [handApiResult, setHandApiResult] = useState(null);
+  const [appMenuOpen, setAppMenuOpen] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [history, setHistory] = useState([]);
   const [time, setTime] = useState(new Date());
@@ -1766,7 +1892,39 @@ export default function DriverMonitorDMS() {
         });
         faceMeshRef.current = fm;
       } catch (e) {
-        console.warn("MediaPipe init error", e);
+        console.warn("MediaPipe FaceMesh init error", e);
+      }
+      try {
+        await loadScript(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js",
+        );
+        const H = window.Hands;
+        if (!H) return;
+        const hands = new H({
+          locateFile: (f) =>
+            "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + f,
+        });
+        hands.setOptions({
+          maxNumHands: 2,
+          modelComplexity: 0,
+          // Không bật selfieMode: graph đã flip sẽ lệch với overlay (mx = W−x) giống FaceMesh → skeleton chồng mặt.
+          selfieMode: false,
+          minDetectionConfidence: 0.35,
+          minTrackingConfidence: 0.35,
+        });
+        hands.onResults((results) => {
+          if (!results.multiHandLandmarks || !results.multiHandLandmarks.length) {
+            handLandmarksRef.current = [];
+            return;
+          }
+          handLandmarksRef.current = results.multiHandLandmarks.map((raw) =>
+            raw.map((p) => ({ x: p.x, y: p.y, z: p.z })),
+          );
+        });
+        await hands.initialize();
+        handsRef.current = hands;
+      } catch (e) {
+        console.warn("MediaPipe Hands init error", e);
       }
     }
     init();
@@ -1837,7 +1995,7 @@ export default function DriverMonitorDMS() {
     return () => clearInterval(dispId);
   }, []);
 
-  // ── Face mesh send loop ──
+  // ── Face mesh + Hands: một RAF, gửi tuần tự (hai graph WebGL song song hay làm mất kết quả tay)
   useEffect(() => {
     if (status !== "active") return;
     let running = true,
@@ -1847,11 +2005,20 @@ export default function DriverMonitorDMS() {
       if (now - last >= 33) {
         last = now;
         const fm = faceMeshRef.current,
+          hs = handsRef.current,
           vid = videoRef.current;
-        if (fm && vid && vid.readyState >= 2)
-          try {
-            await fm.send({ image: vid });
-          } catch (_) {}
+        if (vid && vid.readyState >= 2) {
+          if (fm) {
+            try {
+              await fm.send({ image: vid });
+            } catch (_) {}
+          }
+          if (hs) {
+            try {
+              await hs.send({ image: vid });
+            } catch (_) {}
+          }
+        }
         setFrameCount((f) => f + 1);
       }
       requestAnimationFrame(loop);
@@ -1890,6 +2057,7 @@ export default function DriverMonitorDMS() {
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     landmarksRef.current = [];
+    handLandmarksRef.current = [];
     setStatus("idle");
     poseRef.current = { yaw: 0, pitch: 0, roll: 0 };
     stopAlarm();
@@ -1919,6 +2087,8 @@ export default function DriverMonitorDMS() {
     setIdentitySamples(0);
     setIdentityLockCause(null);
     setIdentityRejectLockedAt("");
+    setHandApiResult(null);
+    setAppMenuOpen(false);
   }
   useEffect(() => {
     startWebcam();
@@ -2021,6 +2191,86 @@ export default function DriverMonitorDMS() {
       clearTimeout(tid);
     };
   }, [status]);
+
+  // ── Hand API (train_hands labels: open, map, music, phonecall, no_sign) ──
+  useEffect(() => {
+    if (status !== "active") {
+      setHandApiResult(null);
+      return;
+    }
+    let cancelled = false,
+      tid;
+    async function loop() {
+      if (cancelled) return;
+      const vid = videoRef.current;
+      if (!vid || vid.readyState < 2) {
+        tid = setTimeout(loop, HAND_API_INTERVAL_MS);
+        return;
+      }
+      try {
+        const image = captureFrame(vid, 0.82);
+        if (!image) {
+          tid = setTimeout(loop, HAND_API_INTERVAL_MS);
+          return;
+        }
+        const res = await fetch(`${API_BASE}/api/hand/predict_from_frame`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "hand API failed");
+        if (!cancelled) setHandApiResult(data);
+      } catch {
+        if (!cancelled) setHandApiResult(null);
+      }
+      if (!cancelled) tid = setTimeout(loop, HAND_API_INTERVAL_MS);
+    }
+    loop();
+    return () => {
+      cancelled = true;
+      if (tid) clearTimeout(tid);
+    };
+  }, [status]);
+
+  // ── Quick Apps: open -> menu; no_sign -> dong; map/music/phonecall khi menu mo ──
+  useEffect(() => {
+    if (status !== "active") {
+      setAppMenuOpen(false);
+      prevHandOpenRef.current = "";
+      prevHandCloseRef.current = "";
+      prevHandQuickRef.current = "";
+      return;
+    }
+    const prob =
+      typeof handApiResult?.prob === "number" ? handApiResult.prob : null;
+    if (prob === null || prob < HAND_QUICK_CONFIDENCE) return;
+    const label = (handApiResult?.label || "").toString().trim().toLowerCase();
+
+    if (label === HAND_LABEL_OPENS_MENU) {
+      if (prevHandOpenRef.current !== label) setAppMenuOpen(true);
+      prevHandOpenRef.current = label;
+    } else {
+      prevHandOpenRef.current = "";
+    }
+
+    if (label === HAND_LABEL_CLOSES_MENU) {
+      if (prevHandCloseRef.current !== label) setAppMenuOpen(false);
+      prevHandCloseRef.current = label;
+    } else {
+      prevHandCloseRef.current = "";
+    }
+
+    const appKey = handLabelToQuickAppKey(label);
+    if (appMenuOpen && appKey) {
+      if (prevHandQuickRef.current !== label) {
+        executeQuickAppAction(appKey);
+      }
+      prevHandQuickRef.current = label;
+    } else {
+      prevHandQuickRef.current = "";
+    }
+  }, [status, handApiResult, appMenuOpen]);
 
   // ── Smoothed label ──
   let smoothedLabel = apiResult?.label || "unknown";
@@ -2582,6 +2832,18 @@ export default function DriverMonitorDMS() {
             />
           )}
           {status === "active" && (
+            <HandLandmarkOverlay
+              handLandmarksRef={handLandmarksRef}
+              videoRef={videoRef}
+            />
+          )}
+          {status === "active" && (
+            <HandQuickAppsMenu
+              open={appMenuOpen}
+              onRequestClose={() => setAppMenuOpen(false)}
+            />
+          )}
+          {status === "active" && (
             <PhoneFOMOOverlay
               phoneDetectionRef={phoneDetectionRef}
               landmarksRef={landmarksRef}
@@ -2664,6 +2926,13 @@ export default function DriverMonitorDMS() {
                     ? `⚠ YES (${((phoneDetectionRef.current?.prob || 0) * 100).toFixed(0)}%)`
                     : "NO"
                   : "⚠ disconnected"}
+              </div>
+              <div style={{ fontSize: 13, color: "#7ee787", fontWeight: 500 }}>
+                Hand API :{" "}
+                {handApiResult?.label
+                  ? `${handApiResult.label} (${((handApiResult.prob || 0) * 100).toFixed(0)}%)`
+                  : "--"}
+                {appMenuOpen ? " | QuickApps ON" : ""}
               </div>
               {identityError && (
                 <div

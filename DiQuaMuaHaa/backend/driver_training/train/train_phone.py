@@ -1,263 +1,102 @@
 """
-train_phone.py
+train_phone.py (DETECTION-FIRST)
 
-Train mô hình phân loại frame có/không có ĐIỆN THOẠI
-từ ảnh mà bạn đã thu bằng:
-  backend/driver_training/collect/collect_phone.py
+This script now standardizes phone training to YOLO object detection.
+The old full-frame MLP classifier approach is intentionally retired because it
+is more sensitive to noise for in-cabin phone use detection.
 
-Cấu trúc dataset (do collect_phone.py tạo):
-  backend/dataset/phone-using/phone/*.jpg      → class "phone"
-  backend/dataset/phone-using/no_phone/*.jpg   → class "no_phone"
-
-Mô hình: Pipeline(StandardScaler -> MLPClassifier) dùng scikit-learn,
-tương tự các model khác của project.
-
-Cách chạy (từ thư mục backend):
+Recommended command (from backend/):
   python -m driver_training.train.train_phone
+
+Equivalent to:
+  python -m driver_training.train.train_phone_yolo --data-dir backend/dataset/phone-yolo
 """
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
 
-import cv2  # type: ignore
-import joblib
-import numpy as np
-from sklearn.metrics import classification_report, confusion_matrix
-from sklearn.model_selection import train_test_split
-from sklearn.neural_network import MLPClassifier
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-
-
-ROOT_DIR = Path(__file__).resolve().parent.parent  # .../backend/driver_training
-DEFAULT_DATASET_ROOT = ROOT_DIR.parent / "dataset" / "phone-using"
-DEFAULT_MODEL_PATH = ROOT_DIR / "models" / "phone_model.pkl"
-
-IMAGE_SIZE = 160  # ảnh sẽ resize về 160x160
-
-
-# ======================================================================
-# ĐỌC DATASET ẢNH
-# ======================================================================
-
-
-def _load_images_from_folder(
-    folder: Path,
-    label: str,
-    image_size: int = IMAGE_SIZE,
-) -> Tuple[List[np.ndarray], List[str]]:
-    xs: List[np.ndarray] = []
-    ys: List[str] = []
-
-    if not folder.exists():
-        return xs, ys
-
-    for img_path in sorted(folder.iterdir()):
-        if not img_path.is_file():
-            continue
-        if img_path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp"}:
-            continue
-        img = cv2.imread(str(img_path))
-        if img is None:
-            continue
-        # chuyển sang grayscale cho đơn giản, sau đó resize
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        gray = cv2.resize(gray, (image_size, image_size), interpolation=cv2.INTER_AREA)
-        # chuẩn hóa về [0,1]
-        arr = gray.astype("float32") / 255.0
-        xs.append(arr.flatten())
-        ys.append(label)
-    return xs, ys
-
-
-def load_phone_dataset(
-    dataset_root: Path | str = DEFAULT_DATASET_ROOT,
-) -> Tuple[np.ndarray, np.ndarray, Dict[str, int]]:
-    """
-    Đọc ảnh từ:
-      dataset_root/phone      → label "phone"
-      dataset_root/no_phone   → label "no_phone"
-
-    Trả về:
-      X: [num_samples, num_features]
-      y: [num_samples] (int label index)
-      label_to_idx: mapping {label: idx}
-    """
-    root = Path(dataset_root)
-    phone_dir = root / "phone"
-    no_phone_dir = root / "no_phone"
-
-    xs: List[np.ndarray] = []
-    ys: List[str] = []
-
-    xs_p, ys_p = _load_images_from_folder(phone_dir, "phone")
-    xs.extend(xs_p)
-    ys.extend(ys_p)
-
-    xs_n, ys_n = _load_images_from_folder(no_phone_dir, "no_phone")
-    xs.extend(xs_n)
-    ys.extend(ys_n)
-
-    if not xs:
-        raise ValueError(f"Không tìm thấy ảnh trong {phone_dir} hoặc {no_phone_dir}")
-
-    X = np.stack(xs).astype("float32")
-    unique_labels = sorted(set(ys))
-    label_to_idx = {lbl: i for i, lbl in enumerate(unique_labels)}
-    y = np.asarray([label_to_idx[lbl] for lbl in ys], dtype=np.int64)
-
-    return X, y, label_to_idx
-
-
-# ======================================================================
-# BUILD MODEL
-# ======================================================================
-
-
-def build_model(random_state: int = 42) -> Pipeline:
-    """
-    Pipeline:
-      - StandardScaler
-      - MLPClassifier
-    """
-    clf = MLPClassifier(
-        hidden_layer_sizes=(256, 128),
-        activation="relu",
-        solver="adam",
-        alpha=1e-4,
-        batch_size=64,
-        learning_rate_init=1e-3,
-        max_iter=40,
-        random_state=random_state,
-        verbose=False,
+try:
+    from .train_phone_yolo import (
+        DEFAULT_DATASET_DIR,
+        DEFAULT_MODEL_OUT,
+        DEFAULT_YAML_PATH,
+        train_phone_yolo,
+    )
+except ImportError:
+    from train_phone_yolo import (  # type: ignore
+        DEFAULT_DATASET_DIR,
+        DEFAULT_MODEL_OUT,
+        DEFAULT_YAML_PATH,
+        train_phone_yolo,
     )
 
-    pipe = Pipeline(
-        steps=[
-            ("scaler", StandardScaler()),
-            ("clf", clf),
-        ]
-    )
-    return pipe
-
-
-# ======================================================================
-# TRAIN
-# ======================================================================
-
-
-def train_phone_model(
-    dataset_root: Path | str = DEFAULT_DATASET_ROOT,
-    model_path: Path | str = DEFAULT_MODEL_PATH,
-    test_size: float = 0.2,
-    random_state: int = 42,
-) -> Tuple[Pipeline, Dict[str, int]]:
-    """
-    Train model phone/no_phone từ ảnh full-frame.
-    """
-    dataset_root = Path(dataset_root)
-    model_path = Path(model_path)
-    model_path.parent.mkdir(parents=True, exist_ok=True)
-
-    print(f"📂 Dataset root: {dataset_root}")
-    X, y, label_to_idx = load_phone_dataset(dataset_root)
-
-    print(f"   - Số mẫu     : {X.shape[0]}")
-    print(f"   - Kích thước : {X.shape[1]} feature (gray {IMAGE_SIZE}x{IMAGE_SIZE})")
-    print(f"   - Class      : {len(label_to_idx)} ({list(label_to_idx.keys())})")
-
-    if len(label_to_idx) < 2:
-        raise ValueError(
-            "Dataset phone hiện chỉ có 1 class. "
-            "Hãy đảm bảo có cả ảnh 'phone' và 'no_phone' trước khi train."
-        )
-
-    X_train, X_val, y_train, y_val = train_test_split(
-        X,
-        y,
-        test_size=test_size,
-        random_state=random_state,
-        stratify=y,
-    )
-
-    print(f"📊 Train: {X_train.shape[0]} mẫu  |  Val: {X_val.shape[0]} mẫu")
-
-    model = build_model(random_state=random_state)
-    print("🚀 Bắt đầu train model phone (MLP trên ảnh)...")
-    model.fit(X_train, y_train)
-    print("✅ Train xong.")
-
-    # Đánh giá
-    y_pred = model.predict(X_val)
-    print("\n=== REPORT TRÊN TẬP VAL (PHONE) ===")
-    target_names = [lbl for lbl, _ in sorted(label_to_idx.items(), key=lambda kv: kv[1])]
-    print(
-        classification_report(
-            y_val,
-            y_pred,
-            target_names=target_names,
-            digits=3,
-        )
-    )
-    print("Confusion matrix:")
-    print(confusion_matrix(y_val, y_pred))
-
-    # Lưu model
-    artifact: Dict[str, Any] = {
-        "model": model,
-        "label_to_idx": label_to_idx,
-        "image_size": IMAGE_SIZE,
-    }
-    joblib.dump(artifact, model_path)
-    print(f"\n💾 Đã lưu phone model vào: {model_path}")
-
-    return model, label_to_idx
-
-
-# ======================================================================
-# CLI
-# ======================================================================
+ROOT_DIR = Path(__file__).resolve().parent.parent
+LEGACY_CLASSIFICATION_DIR = ROOT_DIR.parent / "dataset" / "phone-using"
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Train phone/no_phone classifier từ ảnh collect_phone.")
+    p = argparse.ArgumentParser(
+        description=(
+            "Train phone detector using YOLO (recommended, robust against noise). "
+            "Legacy MLP classification is deprecated."
+        )
+    )
+    p.add_argument(
+        "--data-dir",
+        type=str,
+        default=str(DEFAULT_DATASET_DIR),
+        help="YOLO dataset dir (images/train,val + labels/train,val).",
+    )
+    # Keep old arg name for compatibility, but map it to data-dir.
     p.add_argument(
         "--dataset-root",
         type=str,
-        default=str(DEFAULT_DATASET_ROOT),
-        help="Thư mục chứa phone-using/phone, phone-using/no_phone",
+        default="",
+        help="Deprecated alias. Use --data-dir with YOLO dataset.",
     )
     p.add_argument(
         "--output",
         type=str,
-        default=str(DEFAULT_MODEL_PATH),
-        help="Đường dẫn file .pkl để lưu model",
+        default=str(DEFAULT_MODEL_OUT),
+        help="Output path for phone_yolo.pt",
     )
     p.add_argument(
-        "--test-size",
-        type=float,
-        default=0.2,
-        help="Tỷ lệ data dùng cho validation (default: 0.2)",
+        "--yaml",
+        type=str,
+        default=str(DEFAULT_YAML_PATH),
+        help="YOLO data yaml path",
     )
-    p.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="random_state cho train/test split và model",
-    )
+    p.add_argument("--epochs", type=int, default=60, help="YOLO training epochs")
+    p.add_argument("--imgsz", type=int, default=640, help="YOLO image size")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    train_phone_model(
-        dataset_root=args.dataset_root,
-        model_path=args.output,
-        test_size=args.test_size,
-        random_state=args.seed,
+    data_dir = Path(args.data_dir)
+    if args.dataset_root:
+        data_dir = Path(args.dataset_root)
+
+    # Friendly guidance if user accidentally points to old classification dataset.
+    if data_dir.resolve() == LEGACY_CLASSIFICATION_DIR.resolve():
+        raise SystemExit(
+            "Deprecated dataset detected: backend/dataset/phone-using (classification).\n"
+            "Please use YOLO detection dataset instead: backend/dataset/phone-yolo\n"
+            "Tip: use driver_training.collect.convert_external_phone_to_yolo or "
+            "build_phone_yolo_dataset.py before training."
+        )
+
+    print("Using detection-first training for phone (YOLO).")
+    print(f"Dataset dir : {data_dir}")
+    print(f"Output      : {args.output}")
+    train_phone_yolo(
+        dataset_dir=data_dir,
+        model_out=Path(args.output),
+        yaml_path=Path(args.yaml),
+        epochs=int(args.epochs),
+        imgsz=int(args.imgsz),
     )
 
 

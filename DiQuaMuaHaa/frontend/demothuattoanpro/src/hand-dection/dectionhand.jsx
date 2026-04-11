@@ -1,6 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import { getDmsApiBase } from "../config/apiEndpoints";
 import { getWebcamSupportErrorMessage } from "../utils/cameraContext";
+import HandQuickAppsMenu, {
+  executeQuickAppAction,
+  handLabelToQuickAppKey,
+  HAND_LABEL_CLOSES_MENU,
+  HAND_LABEL_OPENS_MENU,
+} from "../systeamdetectface/HandQuickAppsMenu";
 
 import sukunaVideo from "./video/khanhvideo.mp4";
 const API_INTERVAL_MS = 1000; // ms, tần suất gọi API khi webcam bật
@@ -83,12 +89,43 @@ const HAND_LABEL_MAP = {
     desc: "Hiệu ứng đặc biệt kích hoạt khi nhận diện ký hiệu Sukuna.",
     voice: "Chế độ sukuna",
   },
+  open: {
+    vi: "Mở menu Quick Apps",
+    color: "bg-cyan-600",
+    textColor: "text-cyan-50",
+    desc: "Cử chỉ open (train_hands) — mở Quick Apps.",
+    voice: "Mở menu",
+  },
+  map: {
+    vi: "Maps",
+    color: "bg-blue-600",
+    textColor: "text-blue-50",
+    desc: "Mở Google Maps (khi menu Quick Apps đang mở).",
+    voice: "Mở bản đồ",
+  },
+  music: {
+    vi: "Nhạc",
+    color: "bg-emerald-600",
+    textColor: "text-emerald-50",
+    desc: "Mở Spotify (khi menu đang mở).",
+    voice: "Mở nhạc",
+  },
+  phonecall: {
+    vi: "Gọi điện",
+    color: "bg-violet-600",
+    textColor: "text-violet-50",
+    desc: "Mở trình quay số (khi menu đang mở).",
+    voice: "Gọi điện",
+  },
 };
 
 function DectionHand() {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const prevLabelRef = useRef(null);
+  const prevOpenMenuGestureRef = useRef("");
+  const prevCloseMenuGestureRef = useRef("");
+  const prevQuickGestureRef = useRef("");
 
   const [status, setStatus] = useState("idle"); // idle | loading | active | error
   const [errorMsg, setErrorMsg] = useState("");
@@ -96,6 +133,7 @@ function DectionHand() {
   const [apiError, setApiError] = useState("");
   const [apiLoading, setApiLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [appMenuOpen, setAppMenuOpen] = useState(false);
 
   const startWebcam = async () => {
     const supportErr = getWebcamSupportErrorMessage();
@@ -259,6 +297,44 @@ function DectionHand() {
     prevLabelRef.current = label || null;
   }, [currentLabel]);
 
+  /** Quick Apps: open / no_sign; map / music / phonecall khi menu mo */
+  useEffect(() => {
+    if (status !== "active") {
+      setAppMenuOpen(false);
+      prevOpenMenuGestureRef.current = "";
+      prevCloseMenuGestureRef.current = "";
+      prevQuickGestureRef.current = "";
+      return;
+    }
+    if (rawProb === null || rawProb < CONFIDENCE_THRESHOLD) return;
+
+    const label = currentLabel;
+
+    if (label === HAND_LABEL_OPENS_MENU) {
+      if (prevOpenMenuGestureRef.current !== label) setAppMenuOpen(true);
+      prevOpenMenuGestureRef.current = label;
+    } else {
+      prevOpenMenuGestureRef.current = "";
+    }
+
+    if (label === HAND_LABEL_CLOSES_MENU) {
+      if (prevCloseMenuGestureRef.current !== label) setAppMenuOpen(false);
+      prevCloseMenuGestureRef.current = label;
+    } else {
+      prevCloseMenuGestureRef.current = "";
+    }
+
+    const quickKey = handLabelToQuickAppKey(label);
+    if (appMenuOpen && quickKey) {
+      if (prevQuickGestureRef.current !== label) {
+        executeQuickAppAction(quickKey);
+      }
+      prevQuickGestureRef.current = label;
+    } else {
+      prevQuickGestureRef.current = "";
+    }
+  }, [status, currentLabel, rawProb, appMenuOpen]);
+
   const scoreEntries = apiResult?.scores
     ? Object.entries(apiResult.scores).sort((a, b) => b[1] - a[1])
     : [];
@@ -366,6 +442,12 @@ function DectionHand() {
                   SUKUNA
                 </span>
               </div>
+              {status === "active" && (
+                <HandQuickAppsMenu
+                  open={appMenuOpen}
+                  onRequestClose={() => setAppMenuOpen(false)}
+                />
+              )}
             </div>
           ) : (
             <div className="relative aspect-video bg-black">
@@ -419,6 +501,10 @@ function DectionHand() {
                       </div>
                     </div>
                   )}
+                  <HandQuickAppsMenu
+                    open={appMenuOpen}
+                    onRequestClose={() => setAppMenuOpen(false)}
+                  />
                 </>
               )}
             </div>
