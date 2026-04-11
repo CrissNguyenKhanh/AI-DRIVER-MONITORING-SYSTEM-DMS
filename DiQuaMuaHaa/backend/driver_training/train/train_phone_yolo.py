@@ -107,10 +107,17 @@ def train_phone_yolo(
         exist_ok=True,
     )
 
-    # Lấy best weights
-    best = Path(results.best) if hasattr(results, "best") else None  # type: ignore[attr-defined]
+    # Lấy best weights (Ultralytics có thể trả path qua results.best hoặc chỉ lưu dưới runs/)
+    best: Path | None = None
+    if results is not None and hasattr(results, "best") and results.best:  # type: ignore[attr-defined]
+        cand = Path(str(results.best))  # type: ignore[attr-defined]
+        if cand.exists():
+            best = cand
+    if best is None:
+        fallback = ROOT_DIR / "runs" / "detect" / "phone_yolo" / "weights" / "best.pt"
+        if fallback.exists():
+            best = fallback
     if best is None or not best.exists():
-        # fallback: tự pick từ runs dir
         print("⚠ Không tìm thấy best.pt trong results, hãy kiểm tra thư mục runs/detect/phone_yolo.")
         return
 

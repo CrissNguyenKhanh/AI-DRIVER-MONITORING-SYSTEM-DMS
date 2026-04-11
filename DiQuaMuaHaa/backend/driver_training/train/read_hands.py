@@ -3,8 +3,11 @@ read_hands.py
 
 Đọc file CSV hand landmarks được tạo từ `collect/collect_hands.py`.
 
-CSV format:
-    label, x1, y1, z1, ..., x126 (21 landmark × 3 × 2 tay = 126 số)
+CSV format (collect_hands v3 — 1 tay):
+    label, f0, f1, ..., f62   (63 features, normalized)
+
+Hoặc format cũ 2 tay:
+    label, x1, y1, z1, ..., x126 (126 số)
 
 Cách dùng:
     python -m driver_training.train.read_hands
