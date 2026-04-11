@@ -69,6 +69,7 @@ idx_to_label: Dict[int, str] = {}
 hand_artifact: Dict[str, Any] | None = None
 hand_model = None
 hand_idx_to_label: Dict[int, str] = {}
+hand_vec_len: int = 126  # khớp artifact vec_len (63 = collect_hands normalize + dominant hand)
 
 smoking_artifact: Dict[str, Any] | None = None
 smoking_model = None
@@ -246,17 +247,22 @@ def load_model() -> None:
 
 
 def load_hand_model() -> None:
-    global hand_artifact, hand_model, hand_idx_to_label
+    global hand_artifact, hand_model, hand_idx_to_label, hand_vec_len
     if not HAND_MODEL_PATH.exists():
         hand_artifact = None
         hand_model = None
         hand_idx_to_label = {}
+        hand_vec_len = 126
         return
 
     hand_artifact = joblib.load(HAND_MODEL_PATH)
     hand_model = hand_artifact.get("model")
     label_to_idx = hand_artifact.get("label_to_idx", {})
     hand_idx_to_label = {v: k for k, v in label_to_idx.items()}
+    try:
+        hand_vec_len = int(hand_artifact.get("vec_len", 126))
+    except (TypeError, ValueError):
+        hand_vec_len = 126
 
 
 def load_smoking_model() -> None:
@@ -331,6 +337,38 @@ _hands = mp.solutions.hands.Hands(
 NUM_LANDMARKS_PER_HAND = 21
 
 
+def _get_dominant_hand_landmark(multi_hand_landmarks, multi_handedness):
+    """Giống collect_hands.get_dominant_hand: tay có score handedness cao nhất."""
+    if not multi_hand_landmarks:
+        return None, 0.0
+    best_lm = None
+    best_conf = -1.0
+    for i, hlm in enumerate(multi_hand_landmarks):
+        conf = 0.0
+        if multi_handedness and i < len(multi_handedness):
+            conf = float(multi_handedness[i].classification[0].score)
+        if conf > best_conf:
+            best_conf = conf
+            best_lm = hlm
+    return best_lm, best_conf
+
+
+def _normalize_single_hand_landmarks(hand_landmarks) -> List[float] | None:
+    """Giống collect_hands.normalize_landmarks: trừ cổ tay, chia max(abs)."""
+    if hand_landmarks is None:
+        return None
+    pts = np.array(
+        [(lm.x, lm.y, lm.z) for lm in hand_landmarks.landmark],
+        dtype=np.float32,
+    )
+    pts = pts - pts[0]
+    scale = float(np.max(np.abs(pts)))
+    if scale < 1e-6:
+        return None
+    pts /= scale
+    return pts.flatten().tolist()
+
+
 def _hands_to_vector(multi_hand_landmarks, multi_handedness) -> List[float]:
     """Chuyển 1 hoặc 2 bàn tay → vector 126 số (left 63 + right 63)."""
     left_vec = [0.0] * (NUM_LANDMARKS_PER_HAND * 3)
@@ -356,6 +394,25 @@ def _hands_to_vector(multi_hand_landmarks, multi_handedness) -> List[float]:
     return left_vec + right_vec
 
 
+def _hands_to_feature_vector(multi_hand_landmarks, multi_handedness) -> List[float] | None:
+    """
+    Vector đưa vào hand_model:
+    - vec_len 63 (train_hands + collect_hands): 1 tay dominant + normalize.
+    - vec_len 126 (legacy): raw left 63 + right 63 như cũ.
+    Trả về None khi model 63-dim mà không có tay / landmark suy biến.
+    """
+    if hand_vec_len == 63:
+        if multi_hand_landmarks is None or len(multi_hand_landmarks) == 0:
+            return None
+        lm, _conf = _get_dominant_hand_landmark(
+            multi_hand_landmarks, multi_handedness
+        )
+        if lm is None:
+            return None
+        return _normalize_single_hand_landmarks(lm)
+    return _hands_to_vector(multi_hand_landmarks, multi_handedness)
+
+
 def _image_base64_to_landmarks(image_b64: str) -> List[float] | None:
     """
     Decode base64 → MediaPipe Face Mesh → vector 1434 số.
@@ -377,8 +434,8 @@ def _image_base64_to_landmarks(image_b64: str) -> List[float] | None:
     return coords
 
 
-def _image_base64_to_hand_landmarks(image_b64: str) -> List[float]:
-    """Decode base64 image → chạy MediaPipe Hands → trả về vector 126 số."""
+def _image_base64_to_hand_landmarks(image_b64: str) -> List[float] | None:
+    """Decode base64 → MediaPipe Hands → vector khớp hand_vec_len (63 hoặc 126)."""
     raw = base64.b64decode(image_b64)
     arr = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -386,7 +443,9 @@ def _image_base64_to_hand_landmarks(image_b64: str) -> List[float]:
         raise ValueError("Không decode được ảnh từ base64.")
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     results = _hands.process(rgb)
-    return _hands_to_vector(results.multi_hand_landmarks, results.multi_handedness)
+    return _hands_to_feature_vector(
+        results.multi_hand_landmarks, results.multi_handedness
+    )
 
 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -961,8 +1020,9 @@ def _parse_hand_landmarks(payload: Dict[str, Any]) -> List[float]:
 @app.post("/api/hand/predict")
 def predict_hand() -> Any:
     """
-    Nhận vector 126 số (hand landmarks) → dự đoán ký hiệu tay.
-    Body JSON: { "landmarks": [x1, y1, z1, ..., x126] }
+    Nhận vector landmark tay (63 sau normalize như collect_hands, hoặc 126 legacy)
+    → dự đoán ký hiệu tay.
+    Body JSON: { "landmarks": [...] } độ dài khớp vec_len của model đã train.
     """
     if hand_model is None or not hand_idx_to_label:
         return (
@@ -994,6 +1054,19 @@ def predict_hand() -> Any:
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
+    if len(vec) != hand_vec_len:
+        return (
+            jsonify(
+                {
+                    "error": (
+                        f"Độ dài landmarks {len(vec)} không khớp model "
+                        f"(cần {hand_vec_len})."
+                    ),
+                }
+            ),
+            400,
+        )
+
     x = np.asarray(vec, dtype=np.float32).reshape(1, -1)
 
     try:
@@ -1016,6 +1089,25 @@ def predict_hand() -> Any:
         {
             "label": label,
             "prob": float(max(scores.values())) if scores else None,
+            "scores": scores,
+        }
+    )
+
+
+def _json_hand_no_hand_in_frame() -> Any:
+    """Khi không detect tay (model 63-dim): coi như no_sign để frontend đóng menu."""
+    ordered = sorted(hand_idx_to_label.keys())
+    all_lbls = [hand_idx_to_label[i] for i in ordered]
+    if not all_lbls:
+        return jsonify({"label": "no_sign", "prob": 1.0, "scores": {}})
+    if "no_sign" in all_lbls:
+        scores = {l: (1.0 if l == "no_sign" else 0.0) for l in all_lbls}
+        return jsonify({"label": "no_sign", "prob": 1.0, "scores": scores})
+    scores = {l: 1.0 / len(all_lbls) for l in all_lbls}
+    return jsonify(
+        {
+            "label": all_lbls[0],
+            "prob": 0.05,
             "scores": scores,
         }
     )
@@ -1064,6 +1156,9 @@ def hand_predict_from_frame() -> Any:
         vec = _image_base64_to_hand_landmarks(image_b64)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+    if vec is None:
+        return _json_hand_no_hand_in_frame()
 
     x = np.asarray(vec, dtype=np.float32).reshape(1, -1)
 
