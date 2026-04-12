@@ -1117,6 +1117,8 @@ export default function DriverMonitorDMS() {
   const [status, setStatus] = useState("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [apiResult, setApiResult] = useState(null);
+  const apiLabelRef = useRef("unknown");
+  const apiLabelStreakRef = useRef(0);
   const [apiError, setApiError] = useState("");
   const [apiLoading, setApiLoading] = useState(false);
   const [smokingResult, setSmokingResult] = useState(null);
@@ -1820,10 +1822,24 @@ export default function DriverMonitorDMS() {
       } else {
         setPhoneAlert(null);
       }
-      // ── drowsy timer (priority cao nhất) ──
+      // ── drowsy detection: kết hợp EAR (client) + API label (server) ──
       const closedSec = eyesClosedSecRef.current;
-      if (closedSec >= EYES_CLOSED_WARN_MS / 1000) {
-        setDrowsyAlert(closedSec);
+      const apiLabel  = apiLabelRef.current;
+
+      // Đếm streak: API liên tục trả drowsy/yawning → tăng bộ đếm
+      if (apiLabel === "drowsy" || apiLabel === "yawning") {
+        apiLabelStreakRef.current = Math.min(apiLabelStreakRef.current + 1, 20);
+      } else {
+        apiLabelStreakRef.current = Math.max(apiLabelStreakRef.current - 1, 0);
+      }
+      const apiStreakTriggered = apiLabelStreakRef.current >= 5; // 5 × 250ms = 1.25s liên tiếp
+
+      // Kích hoạt cảnh báo nếu MẮT NHẮM lâu (EAR) HOẶC model API nhận định drowsy liên tục
+      const drowsyTriggered = closedSec >= EYES_CLOSED_WARN_MS / 1000 || apiStreakTriggered;
+
+      if (drowsyTriggered) {
+        // Nếu EAR không detect được thì dùng closedSec=1 làm giá trị tối thiểu
+        setDrowsyAlert(closedSec > 0 ? closedSec : 1);
         if (!alarmIntervalRef.current) startAlarm();
       } else {
         setDrowsyAlert(null);
@@ -1992,6 +2008,7 @@ export default function DriverMonitorDMS() {
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "API failed");
         setApiResult(data);
+        apiLabelRef.current = data?.label || "unknown";
         setLastUpdated(new Date().toLocaleTimeString());
 
         // label history

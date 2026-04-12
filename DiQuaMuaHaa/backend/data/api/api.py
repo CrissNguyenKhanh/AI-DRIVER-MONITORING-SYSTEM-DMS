@@ -2045,9 +2045,6 @@ def handle_smoking_frame(data):
     Client gửi: { "image": "data:image/jpeg;base64,..." }
     Server trả: { "label": "...", "prob": <float> } cho frontend smoking WS.
     """
-    # Tạm tắt smoking để tập trung debug/tinh chỉnh phone detection.
-    emit("smoking_result", {"label": "no_smoking", "prob": 0, "raw_label": "no_smoking"})
-    return
         
     if smoking_model is None or not smoking_idx_to_label:
         emit(

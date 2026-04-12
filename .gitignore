@@ -1,4 +1,8 @@
 node_modules/
+venv/
+.venv/
+DiQuaMuaHaa/backend/venv/
+DiQuaMuaHaa/backend/.venv/
 dist/
 .env
 .env.*
