@@ -1,37 +1,118 @@
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import "./App.css";
 
-import PatientStatistics from "./admin/PatientStatistics";
+import Layout from "./components/Layout";
+import DriverMonitorDMS from "./testdata/thucmuctest";
+import FaceDetect from "./systeamdetectface/face_detect";
+import DectionHand from "./hand-dection/dectionhand";
+import DrivingSessions from "./pages/DrivingSessions";
+
 import Login from "./Login/Login";
+import PatientStatistics from "./admin/PatientStatistics";
 import MedicalDiagnosisAI from "./User/khanhku";
 import MedicalRecordConfirmation from "./User/vippoint";
 import EnhancedPatientStatistics from "./User/endhaintstatics";
-import Thumuctest from "./testdata/thucmuctest";
-import DectionHand from "./hand-dection/dectionHand";
 import VerifyPro from "./verify/verifypro";
 
-import FaceDetect from "./systeamdetectface/face_detect";
 function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<Login />} />
-        {/* Trang thống kê */}
-        <Route path="/admin" element={<PatientStatistics />} />
-        {/* Trang Spam Detector */}
-        <Route path="/spam" element={<MedicalDiagnosisAI />} />
+        {/* Trang đăng nhập — không cần Layout */}
+        <Route path="/login" element={<Login />} />
 
-        <Route path="/test1" element={<MedicalRecordConfirmation />} />
-        {/* Trang Spam Detector */}
-        <Route path="/test2" element={<EnhancedPatientStatistics />} />
-        {/* Trang Test 3 */}
-        <Route path="/test3" element={<Thumuctest />} />
-        {/* Trang Test 4 */}
-        <Route path="/test4" element={<DectionHand />} />
-       {/* trang tesst cua verify pro */}
-        <Route path="/verifypro" element={<VerifyPro />} />
+        {/* DMS Dashboard */}
+        <Route
+          path="/"
+          element={
+            <Layout>
+              <DriverMonitorDMS />
+            </Layout>
+          }
+        />
 
-        <Route path="/test5" element={<FaceDetect />} />
+        {/* Nhận diện danh tính */}
+        <Route
+          path="/identity"
+          element={
+            <Layout>
+              <FaceDetect />
+            </Layout>
+          }
+        />
+
+        {/* Nhận diện tay */}
+        <Route
+          path="/hand"
+          element={
+            <Layout>
+              <DectionHand />
+            </Layout>
+          }
+        />
+
+        {/* Lịch sử lái xe */}
+        <Route
+          path="/sessions"
+          element={
+            <Layout>
+              <DrivingSessions />
+            </Layout>
+          }
+        />
+
+        {/* Trang thống kê admin */}
+        <Route
+          path="/admin"
+          element={
+            <Layout>
+              <PatientStatistics />
+            </Layout>
+          }
+        />
+
+        {/* Spam / AI Diagnosis */}
+        <Route
+          path="/spam"
+          element={
+            <Layout>
+              <MedicalDiagnosisAI />
+            </Layout>
+          }
+        />
+
+        {/* Medical Record Confirmation */}
+        <Route
+          path="/test1"
+          element={
+            <Layout>
+              <MedicalRecordConfirmation />
+            </Layout>
+          }
+        />
+
+        {/* Enhanced Patient Statistics */}
+        <Route
+          path="/test2"
+          element={
+            <Layout>
+              <EnhancedPatientStatistics />
+            </Layout>
+          }
+        />
+
+        {/* Verify Pro */}
+        <Route
+          path="/verifypro"
+          element={
+            <Layout>
+              <VerifyPro />
+            </Layout>
+          }
+        />
+
+        {/* Redirect mọi route không xác định về trang chính */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
   );
