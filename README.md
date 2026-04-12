@@ -2,7 +2,7 @@
 
 ![AI Driver Monitoring System - DMS](docs/images/dms-banner.png)
 
-# AI Driver Monitoring System (DMS)
+# AI Driver Monitoring System (DMS)  
 
 **Webcam-based behavior monitoring (phone, smoking, hand activity, drowsiness) + driver identity verification + Telegram owner approval + driving session logs (fleet demo).**
 
