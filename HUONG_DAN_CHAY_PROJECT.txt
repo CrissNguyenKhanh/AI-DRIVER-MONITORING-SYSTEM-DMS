@@ -1,0 +1,167 @@
+================================================================
+  HƯỚNG DẪN CHẠY PROJECT - DACN (DMS + Medical Diagnosis)
+================================================================
+
+YÊU CẦU CÀI ĐẶT TRƯỚC
+-----------------------
+  - Python 3.10+ (khuyến nghị 3.12)
+  - Node.js 18+  (kiểm tra: node -v)
+  - XAMPP (Apache + MySQL) — tải tại https://www.apachefriends.org
+  - Git
+
+
+================================================================
+BƯỚC 1 — CLONE / PULL CODE
+================================================================
+
+  Lần đầu clone:
+    git clone <url-repo> DACN
+    cd DACN
+    git checkout integrated
+
+  Đã có rồi, chỉ cần pull:
+    git pull origin integrated
+
+
+================================================================
+BƯỚC 2 — CHUẨN BỊ DATABASE (XAMPP)
+================================================================
+
+  1. Mở XAMPP Control Panel → Start Apache + MySQL
+
+  2. Vào phpMyAdmin (http://localhost/phpmyadmin)
+
+  3. Tạo 2 database mới:
+       - diquamuaha          (dùng cho DMS / api.py)
+       - medical_diagnosis   (dùng cho Medical AI / len.py)
+     (Encoding: utf8mb4_unicode_ci)
+
+  LƯU Ý: Nếu MySQL của bạn có mật khẩu root, sửa lại trong:
+    - DiQuaMuaHaa/backend/data/api/api.py
+        MYSQL_CONFIG = { ..., "password": "mật_khẩu_của_bạn", ... }
+    - DiQuaMuaHaa/backend/len.py
+        SQLALCHEMY_DATABASE_URI = "mysql+pymysql://root:MẬT_KHẨU@localhost:3306/medical_diagnosis"
+
+
+================================================================
+BƯỚC 3 — BACKEND: CÀI THƯ VIỆN PYTHON
+================================================================
+
+  Mở terminal, vào thư mục backend:
+    cd DiQuaMuaHaa/backend
+
+  Tạo virtual environment (chỉ cần làm 1 lần):
+    python -m venv venv
+
+  Kích hoạt venv:
+    Windows (PowerShell):   .\venv\Scripts\Activate.ps1
+    Windows (CMD):          venv\Scripts\activate.bat
+    macOS/Linux:            source venv/bin/activate
+
+  Cài thư viện:
+    pip install -r requirements.txt
+
+  Cài thêm Flask-SocketIO và eventlet (nếu chưa có):
+    pip install flask-socketio eventlet ultralytics
+
+
+================================================================
+BƯỚC 4 — CHẠY SERVER BACKEND
+================================================================
+
+  Cần MỞ 2 terminal riêng biệt cho 2 server:
+
+  --- Terminal 1: DMS API (cổng 8000) ---
+    cd DiQuaMuaHaa/backend
+    .\venv\Scripts\Activate.ps1        (Windows)
+    python data/api/api.py
+
+    Kết quả thành công: "Running on http://0.0.0.0:8000"
+
+  --- Terminal 2: Medical Diagnosis API (cổng 5000) ---
+    cd DiQuaMuaHaa/backend
+    .\venv\Scripts\Activate.ps1        (Windows)
+    python len.py
+
+    Kết quả thành công: "Server sẵn sàng tại: http://localhost:5000"
+    Tài khoản admin mặc định: admin@example.com | Pass: admin123
+
+
+================================================================
+BƯỚC 5 — FRONTEND: CÀI VÀ CHẠY
+================================================================
+
+  Mở terminal mới:
+    cd DiQuaMuaHaa/frontend/demothuattoanpro
+
+  Cài dependencies (chỉ cần làm 1 lần hoặc sau khi pull có thay đổi package.json):
+    npm install
+
+  Chạy dev server:
+    npm run dev
+
+  Kết quả: Vite sẽ in ra URL dạng:
+    https://localhost:5173
+    https://192.168.x.x:5173   ← dùng cái này nếu mở trên điện thoại cùng mạng
+
+  LƯU Ý HTTPS: Project dùng HTTPS (basicSsl) để camera hoạt động được.
+  Trình duyệt sẽ cảnh báo "Kết nối không an toàn" → nhấn "Nâng cao" → "Tiếp tục"
+
+
+================================================================
+BƯỚC 6 — TRUY CẬP CÁC TRANG
+================================================================
+
+  Mở trình duyệt vào: https://localhost:5173
+
+  Các route chính:
+    /             → DMS Dashboard (giám sát tài xế)
+    /login        → Trang đăng nhập
+    /identity     → Nhận diện khuôn mặt
+    /hand         → Nhận diện cử chỉ tay
+    /sessions     → Lịch sử phiên lái xe
+    /admin        → Thống kê (Patient Statistics)
+    /spam         → AI Diagnosis (Medical)
+    /test1        → Medical Record Confirmation
+    /test2        → Enhanced Patient Statistics
+    /verifypro    → Verify Pro
+
+
+================================================================
+SƠ ĐỒ KIẾN TRÚC (TÓM TẮT)
+================================================================
+
+  Trình duyệt (https://localhost:5173)
+       │
+       ├─ /api/*       → Flask DMS     (localhost:8000)  ← api.py
+       ├─ /socket.io   → WebSocket DMS (localhost:8000)  ← api.py
+       └─ /api-medical → Flask Medical (localhost:5000)  ← len.py
+                                │
+                           MySQL (XAMPP)
+                     ┌─────────┴─────────┐
+                 diquamuaha      medical_diagnosis
+
+
+================================================================
+XỬ LÝ LỖI THƯỜNG GẶP
+================================================================
+
+  [Lỗi] "Cannot find module" hoặc "Module not found" (Frontend)
+    → Chạy lại: npm install
+
+  [Lỗi] "ModuleNotFoundError" (Python)
+    → Đảm bảo đã activate venv rồi chạy: pip install -r requirements.txt
+
+  [Lỗi] "Access denied for user 'root'" (MySQL)
+    → Kiểm tra lại mật khẩu trong api.py và len.py (Bước 2)
+
+  [Lỗi] "Address already in use" cổng 8000 hoặc 5000
+    → Tắt process đang dùng cổng đó hoặc đổi port trong file tương ứng
+
+  [Lỗi] Camera không hoạt động trên điện thoại
+    → Phải truy cập qua HTTPS (https://IP-LAN:5173), không phải http://
+
+  [Lỗi] PowerShell báo "cannot be loaded because running scripts is disabled"
+    → Chạy: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+================================================================
