@@ -522,15 +522,9 @@ def home():
             "message": "Medical Diagnosis API",
             "version": "1.1 (Auth Enabled)",
             "endpoints": {
-                "auth": "/api/auth/login [POST], /api/auth/register [POST]",
-                "records": "/api/records [POST, GET]",
+              
                 "predict": "/api/ai/predict [POST]",
-                "symptoms": "/api/ai/symptoms [GET]",
-                "statistics": "/api/statistics [GET]",
-                "diseases": "/api/diseases [GET]",
-                "users": "/api/users [GET, POST]",
-                "train": "/api/train [POST]",
-                "health": "/api/health [GET]",
+             
             },
         }
     )
@@ -872,17 +866,6 @@ def create_user():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-@app.route("/api/train", methods=["POST"])
-def retrain_model():
-    """Retrain the model - GIỮ NGUYÊN"""
-    try:
-        success = train_model()
-        if success:
-            return jsonify({"success": True, "message": "Model trained successfully"})
-        else:
-            return jsonify({"success": False, "error": "Failed to train model"}), 500
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/api/health", methods=["GET"])
