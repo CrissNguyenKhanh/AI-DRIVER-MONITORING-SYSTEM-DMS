@@ -2,11 +2,11 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import basicSsl from '@vitejs/plugin-basic-ssl'
 
-// HTTPS: camera (getUserMedia) chỉ hoạt động trên secure context (HTTPS hoặc localhost).
-// http://IP-LAN bị trình duyệt chặn → không có mediaDevices, không hiện prompt Allow.
-// Proxy /api và /socket.io → Flask :8000; /api-medical → len.py :5000 (tránh mixed content).
+// basicSsl chỉ dùng khi dev local (LAN) — trên Vercel/Render đã có HTTPS sẵn
+const isDev = process.env.NODE_ENV !== 'production'
+
 export default defineConfig({
-  plugins: [react(), basicSsl()],
+  plugins: isDev ? [react(), basicSsl()] : [react()],
   server: {
     host: true,
     port: 5173,
