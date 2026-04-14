@@ -29,8 +29,8 @@ Pillow==10.0.1
 opencv-python-headless==4.8.1.78
 mediapipe==0.10.9
 
-# YOLO (phone detection)
-ultralytics==8.0.196
+# YOLO (phone detection) — comment out nếu Render bị OOM (PyTorch ~200MB)
+# ultralytics==8.0.196
 
 # Optional
 pandas==2.1.3
