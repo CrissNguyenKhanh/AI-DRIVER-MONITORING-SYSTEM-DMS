@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: diquamuaha-backend
+    runtime: python
+    rootDir: DiQuaMuaHaa/backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT app:app
+    envVars:
+      - key: MYSQL_HOST
+        sync: false   # điền trên Render dashboard
+      - key: MYSQL_PORT
+        value: "3306"
+      - key: MYSQL_USER
+        sync: false
+      - key: MYSQL_PASSWORD
+        sync: false
+      - key: MYSQL_DATABASE
+        value: diquamuaha
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: IDENTITY_SIM_THRESHOLD
+        value: "0.975"
