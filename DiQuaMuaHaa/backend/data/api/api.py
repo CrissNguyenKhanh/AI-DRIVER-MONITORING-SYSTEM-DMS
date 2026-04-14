@@ -26,7 +26,7 @@ except Exception:  # ImportError, RuntimeError, ...
 
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+CORS(app, origins="*", supports_credentials=True)
 
 # Tránh lỗi server khi client gửi base64 ảnh quá lớn
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25MB
@@ -2091,7 +2091,7 @@ def driving_session_detail(session_id: int) -> Any:
     )
 
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
 
 # phone pro
