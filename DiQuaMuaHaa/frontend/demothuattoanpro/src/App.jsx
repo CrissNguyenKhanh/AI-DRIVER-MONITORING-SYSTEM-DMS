@@ -7,7 +7,7 @@ import MedicalDiagnosisAI from "./User/khanhku";
 import MedicalRecordConfirmation from "./User/vippoint";
 import EnhancedPatientStatistics from "./User/endhaintstatics";
 import Thumuctest from "./testdata/thucmuctest";
-import DectionHand from "./hand-dection/dectionHand";
+import DectionHand from "./hand-dection/dectionhand";
 import VerifyPro from "./verify/verifypro";
 
 import FaceDetect from "./systeamdetectface/face_detect";
