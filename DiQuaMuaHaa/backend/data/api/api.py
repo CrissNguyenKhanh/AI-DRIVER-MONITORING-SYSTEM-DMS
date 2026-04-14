@@ -5,9 +5,11 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
-import cv2
-import joblib
 import numpy as np
+
+# cv2 và joblib được import lazy trong _ensure_models_loaded() để giảm RAM startup
+cv2 = None  # type: ignore[assignment]
+joblib = None  # type: ignore[assignment]
 import pymysql
 import json
 from datetime import datetime, timedelta
@@ -323,14 +325,20 @@ def _ensure_models_loaded() -> None:
         return
     _models_loaded = True
 
-    # Import mediapipe lazy — tránh load TensorFlow Lite lúc startup
+    # Import tất cả heavy libs lazy — tránh OOM lúc startup (Render 512MB)
+    global cv2, joblib  # noqa: PLW0603
+    import cv2 as _cv2  # noqa: PLC0415
+    import joblib as _joblib  # noqa: PLC0415
     import mediapipe as mp  # noqa: PLC0415
+    cv2 = _cv2
+    joblib = _joblib
 
     load_model()
     load_hand_model()
     load_smoking_model()
-    load_phone_model()
-    load_phone_yolo_model()
+    # phone_model (106MB) + YOLO/PyTorch (200MB) bị skip trên free tier 512MB
+    # load_phone_model()
+    # load_phone_yolo_model()
 
     _face_mesh = mp.solutions.face_mesh.FaceMesh(
         max_num_faces=1,
