@@ -45,6 +45,7 @@ PHONE_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "phone_model.pkl"
 PHONE_YOLO_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "phone_yolo.pt"
 
 # MySQL config — đọc từ biến môi trường để tương thích Render / Cloud
+# Trên Render: vào Environment → thêm MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE
 MYSQL_CONFIG = {
     "host":     os.getenv("MYSQL_HOST", "localhost"),
     "port":     int(os.getenv("MYSQL_PORT", "3306")),
@@ -54,10 +55,6 @@ MYSQL_CONFIG = {
     "charset": "utf8mb4",
     "cursorclass": pymysql.cursors.DictCursor,
 }
-
-# Nếu MYSQL_HOST không set hoặc bị block → fallback sang SQLite
-USE_SQLITE = os.getenv("USE_SQLITE", "false").lower() == "true"
-SQLITE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "dms.db")
 
 IDENTITY_SIM_THRESHOLD = float(os.getenv("IDENTITY_SIM_THRESHOLD", "0.975"))
 IDENTITY_MIN_REGISTER_SAMPLES = int(os.getenv("IDENTITY_MIN_REGISTER_SAMPLES", "3"))
@@ -89,65 +86,7 @@ phone_yolo_model = None
 
 
 def get_mysql_conn():
-    if USE_SQLITE:
-        import sqlite3
-        class DictConn:
-            def __init__(self):
-                self._conn = sqlite3.connect(SQLITE_PATH, check_same_thread=False)
-                self._conn.row_factory = sqlite3.Row
-            def cursor(self):
-                return _SQLiteCursorWrapper(self._conn.cursor())
-            def commit(self):
-                self._conn.commit()
-            def close(self):
-                self._conn.close()
-            def __enter__(self): return self
-            def __exit__(self, *a): self.close()
-
-        class _SQLiteCursorWrapper:
-            def __init__(self, cur): self._cur = cur
-            def execute(self, sql, params=()): 
-                sql = _mysql_to_sqlite(sql)
-                self._cur.execute(sql, params)
-            def fetchone(self):
-                row = self._cur.fetchone()
-                return dict(row) if row else None
-            def fetchall(self):
-                return [dict(r) for r in self._cur.fetchall()]
-            @property
-            def lastrowid(self): return self._cur.lastrowid
-            @property
-            def rowcount(self): return self._cur.rowcount
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-
-        return DictConn()
     return pymysql.connect(**MYSQL_CONFIG)
-
-
-def _mysql_to_sqlite(sql: str) -> str:
-    """Chuyển MySQL syntax → SQLite syntax."""
-    import re
-    s = sql.strip()
-
-    # INSERT ... ON DUPLICATE KEY UPDATE → INSERT OR REPLACE
-    if re.search(r"ON\s+DUPLICATE\s+KEY\s+UPDATE", s, re.IGNORECASE):
-        s = re.sub(r"\s+ON\s+DUPLICATE\s+KEY\s+UPDATE.*", "", s, flags=re.IGNORECASE | re.DOTALL)
-        s = re.sub(r"^INSERT\s+INTO", "INSERT OR REPLACE INTO", s, flags=re.IGNORECASE)
-
-    # CREATE TABLE cleanup
-    s = re.sub(r"LONGTEXT|MEDIUMTEXT", "TEXT", s, flags=re.IGNORECASE)
-    s = re.sub(r"VARCHAR\s*\(\d+\)", "TEXT", s, flags=re.IGNORECASE)
-    s = re.sub(r"BIGINT\s+AUTO_INCREMENT", "INTEGER", s, flags=re.IGNORECASE)
-    s = re.sub(r"\bAUTO_INCREMENT\b", "", s, flags=re.IGNORECASE)
-    s = re.sub(r"ENGINE\s*=\s*\w+", "", s, flags=re.IGNORECASE)
-    s = re.sub(r"DEFAULT\s+CHARSET\s*=\s*\w+", "", s, flags=re.IGNORECASE)
-    s = re.sub(r",?\s*INDEX\s+\w+\s*\([^)]+\)", "", s, flags=re.IGNORECASE)
-    s = re.sub(r",?\s*INDEX\s+idx_\w+\s*\([^)]+\)", "", s, flags=re.IGNORECASE)
-
-    # Xoá trailing comma trước dấu ) cuối
-    s = re.sub(r",\s*\)", "\n)", s)
-    return s
 
 
 def _ensure_identity_tables(cur) -> None:
@@ -1376,6 +1315,11 @@ def identity_register() -> Any:
 
 @app.post("/api/identity/verify")
 def identity_verify() -> Any:
+    try:
+        _ensure_models_loaded()
+    except Exception as exc:
+        import traceback
+        return jsonify({"error": f"Model load failed: {exc}", "trace": traceback.format_exc()}), 500
     """
     So khớp tài xế hiện tại với chính chủ đã đăng ký.
 
