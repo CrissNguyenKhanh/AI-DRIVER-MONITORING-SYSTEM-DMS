@@ -552,6 +552,23 @@ def _get_face_embedding_from_image(image_b64: str) -> List[float] | None:
 
 
 
+@app.get("/")
+def index() -> Any:
+    return jsonify({
+        "status": "ok",
+        "message": "DMS Backend is running",
+        "endpoints": [
+            "POST /api/hand/predict_from_frame",
+            "POST /api/landmark/predict_from_frame",
+            "POST /api/identity/register",
+            "POST /api/identity/verify",
+            "GET  /api/identity/driver_profile",
+            "POST /api/identity/request_decision",
+            "GET  /api/identity/decision_status",
+        ]
+    })
+
+
 def _parse_landmarks(payload: Dict[str, Any]) -> List[float]:
     if "landmarks" not in payload:
         raise ValueError("Thiếu trường 'landmarks' trong JSON body.")
