@@ -108,9 +108,9 @@ def _ensure_identity_tables(cur) -> None:
         CREATE TABLE IF NOT EXISTS driver_identity (
             driver_id      VARCHAR(64) PRIMARY KEY,
             name           VARCHAR(255),
-            embedding_json LONGTEXT NOT NULL,
-            image_base64   LONGTEXT,
-            created_at     DATETIME NOT NULL
+            embedding_json TEXT NOT NULL,
+            image_base64   TEXT,
+            created_at     TIMESTAMP NOT NULL
         )
         """
     )
@@ -120,59 +120,59 @@ def _ensure_identity_tables(cur) -> None:
             driver_id         VARCHAR(64) PRIMARY KEY,
             telegram_chat_id  BIGINT NOT NULL,
             telegram_user_id  BIGINT NULL,
-            created_at        DATETIME NOT NULL,
-            updated_at        DATETIME NOT NULL
+            created_at        TIMESTAMP NOT NULL,
+            updated_at        TIMESTAMP NOT NULL
         )
         """
     )
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS identity_decision_requests (
-            request_id           BIGINT AUTO_INCREMENT PRIMARY KEY,
+            request_id           BIGSERIAL PRIMARY KEY,
             driver_id            VARCHAR(64) NOT NULL,
             status               VARCHAR(16) NOT NULL,
             reason               VARCHAR(64) NULL,
-            similarity           DOUBLE NULL,
-            threshold            DOUBLE NULL,
-            requested_at         DATETIME NOT NULL,
-            expires_at           DATETIME NOT NULL,
-            decided_at           DATETIME NULL,
+            similarity           DOUBLE PRECISION NULL,
+            threshold            DOUBLE PRECISION NULL,
+            requested_at         TIMESTAMP NOT NULL,
+            expires_at           TIMESTAMP NOT NULL,
+            decided_at           TIMESTAMP NULL,
             decided_by_chat_id   BIGINT NULL,
             telegram_chat_id     BIGINT NULL,
-            telegram_message_id  BIGINT NULL,
-            INDEX idx_identity_driver (driver_id),
-            INDEX idx_identity_status (status),
-            INDEX idx_identity_expires (expires_at)
+            telegram_message_id  BIGINT NULL
         )
         """
     )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_identity_driver ON identity_decision_requests (driver_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_identity_status ON identity_decision_requests (status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_identity_expires ON identity_decision_requests (expires_at)")
 
 
 def _ensure_driving_session_tables(cur) -> None:
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS driving_sessions (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
-            driver_id VARCHAR(64) NULL,
-            label VARCHAR(128) NULL,
-            started_at DATETIME NOT NULL,
-            ended_at DATETIME NULL,
-            INDEX idx_driving_driver (driver_id),
-            INDEX idx_driving_started (started_at)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            id         BIGSERIAL PRIMARY KEY,
+            driver_id  VARCHAR(64) NULL,
+            label      VARCHAR(128) NULL,
+            started_at TIMESTAMP NOT NULL,
+            ended_at   TIMESTAMP NULL
+        )
         """
     )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_driving_driver ON driving_sessions (driver_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_driving_started ON driving_sessions (started_at)")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS driving_session_alerts (
             session_id BIGINT NOT NULL,
             alert_type VARCHAR(32) NOT NULL,
-            count INT NOT NULL DEFAULT 0,
-            PRIMARY KEY (session_id, alert_type),
-            INDEX idx_dsa_session (session_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            count      INT NOT NULL DEFAULT 0,
+            PRIMARY KEY (session_id, alert_type)
+        )
         """
     )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_dsa_session ON driving_session_alerts (session_id)")
 
 
 DRIVING_ALERT_TYPES = frozenset(
@@ -1304,11 +1304,11 @@ def identity_register() -> Any:
                 """
                 INSERT INTO driver_identity (driver_id, name, embedding_json, image_base64, created_at)
                 VALUES (%s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    name = VALUES(name),
-                    embedding_json = VALUES(embedding_json),
-                    image_base64 = VALUES(image_base64),
-                    created_at = VALUES(created_at)
+                ON CONFLICT (driver_id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    embedding_json = EXCLUDED.embedding_json,
+                    image_base64 = EXCLUDED.image_base64,
+                    created_at = EXCLUDED.created_at
                 """,
                 (driver_id, name, embedding_json, image_b64, created_at),
             )
@@ -1523,10 +1523,10 @@ def bind_driver_telegram_owner() -> Any:
                 INSERT INTO driver_telegram_owner
                     (driver_id, telegram_chat_id, telegram_user_id, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    telegram_chat_id = VALUES(telegram_chat_id),
-                    telegram_user_id = VALUES(telegram_user_id),
-                    updated_at = VALUES(updated_at)
+                ON CONFLICT (driver_id) DO UPDATE SET
+                    telegram_chat_id = EXCLUDED.telegram_chat_id,
+                    telegram_user_id = EXCLUDED.telegram_user_id,
+                    updated_at = EXCLUDED.updated_at
                 """,
                 (driver_id, chat_id, user_id, now, now),
             )
@@ -1650,10 +1650,11 @@ def request_identity_decision() -> Any:
                 INSERT INTO identity_decision_requests
                     (driver_id, status, reason, similarity, threshold, requested_at, expires_at, telegram_chat_id)
                 VALUES (%s, 'pending', %s, %s, %s, %s, %s, %s)
+                RETURNING request_id
                 """,
                 (driver_id, reason, similarity_val, threshold_val, now, expires, chat_id),
             )
-            request_id = int(cur.lastrowid)
+            request_id = int(cur.fetchone()[0])
 
             try:
                 msg_id = _telegram_send_decision_message(
@@ -1871,10 +1872,10 @@ def telegram_webhook() -> Any:
                         INSERT INTO driver_telegram_owner
                             (driver_id, telegram_chat_id, telegram_user_id, created_at, updated_at)
                         VALUES (%s, %s, %s, %s, %s)
-                        ON DUPLICATE KEY UPDATE
-                            telegram_chat_id = VALUES(telegram_chat_id),
-                            telegram_user_id = VALUES(telegram_user_id),
-                            updated_at = VALUES(updated_at)
+                        ON CONFLICT (driver_id) DO UPDATE SET
+                            telegram_chat_id = EXCLUDED.telegram_chat_id,
+                            telegram_user_id = EXCLUDED.telegram_user_id,
+                            updated_at = EXCLUDED.updated_at
                         """,
                         (driver_id, chat_id, user_id, now, now),
                     )
@@ -1907,10 +1908,11 @@ def driving_session_start() -> Any:
                 """
                 INSERT INTO driving_sessions (driver_id, label, started_at, ended_at)
                 VALUES (%s, %s, %s, NULL)
+                RETURNING id
                 """,
                 (driver_id, label, now),
             )
-            sid = cur.lastrowid
+            sid = cur.fetchone()[0]
         conn.commit()
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
@@ -1996,7 +1998,7 @@ def driving_session_alert() -> Any:
                 """
                 INSERT INTO driving_session_alerts (session_id, alert_type, count)
                 VALUES (%s, %s, %s)
-                ON DUPLICATE KEY UPDATE count = count + VALUES(count)
+                ON CONFLICT (session_id, alert_type) DO UPDATE SET count = driving_session_alerts.count + EXCLUDED.count
                 """,
                 (session_id, alert_type, delta),
             )
