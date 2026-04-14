@@ -126,16 +126,28 @@ def get_mysql_conn():
 
 
 def _mysql_to_sqlite(sql: str) -> str:
-    """Chuyển một số cú pháp MySQL → SQLite."""
+    """Chuyển MySQL syntax → SQLite syntax."""
     import re
-    sql = re.sub(r"AUTO_INCREMENT", "AUTOINCREMENT", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"ENGINE\s*=\s*\w+", "", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"DEFAULT CHARSET\s*=\s*\w+", "", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"ON DUPLICATE KEY UPDATE.*", "", sql, flags=re.IGNORECASE | re.DOTALL)
-    sql = re.sub(r"LONGTEXT", "TEXT", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"BIGINT\s+AUTO_?INCREMENT", "INTEGER", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"INDEX\s+\w+\s*\([^)]+\),?\s*", "", sql, flags=re.IGNORECASE)
-    return sql
+    s = sql.strip()
+
+    # INSERT ... ON DUPLICATE KEY UPDATE → INSERT OR REPLACE
+    if re.search(r"ON\s+DUPLICATE\s+KEY\s+UPDATE", s, re.IGNORECASE):
+        s = re.sub(r"\s+ON\s+DUPLICATE\s+KEY\s+UPDATE.*", "", s, flags=re.IGNORECASE | re.DOTALL)
+        s = re.sub(r"^INSERT\s+INTO", "INSERT OR REPLACE INTO", s, flags=re.IGNORECASE)
+
+    # CREATE TABLE cleanup
+    s = re.sub(r"LONGTEXT|MEDIUMTEXT", "TEXT", s, flags=re.IGNORECASE)
+    s = re.sub(r"VARCHAR\s*\(\d+\)", "TEXT", s, flags=re.IGNORECASE)
+    s = re.sub(r"BIGINT\s+AUTO_INCREMENT", "INTEGER", s, flags=re.IGNORECASE)
+    s = re.sub(r"\bAUTO_INCREMENT\b", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"ENGINE\s*=\s*\w+", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"DEFAULT\s+CHARSET\s*=\s*\w+", "", s, flags=re.IGNORECASE)
+    s = re.sub(r",?\s*INDEX\s+\w+\s*\([^)]+\)", "", s, flags=re.IGNORECASE)
+    s = re.sub(r",?\s*INDEX\s+idx_\w+\s*\([^)]+\)", "", s, flags=re.IGNORECASE)
+
+    # Xoá trailing comma trước dấu ) cuối
+    s = re.sub(r",\s*\)", "\n)", s)
+    return s
 
 
 def _ensure_identity_tables(cur) -> None:
