@@ -43,13 +43,14 @@ SMOKING_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "smoking_model.pk
 PHONE_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "phone_model.pkl"
 PHONE_YOLO_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "phone_yolo.pt"
 
-# MySQL (XAMPP) config cho module xác thực danh tính tài xế
+# MySQL config — đọc từ biến môi trường để tương thích Render / Cloud
+# Trên Render: vào Environment → thêm MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE
 MYSQL_CONFIG = {
-    "host": "localhost",
-    "port": 3306,
-    "user": "root",  # TODO: chỉnh lại cho đúng user MySQL của bạn
-    "password": "",  # TODO: điền mật khẩu nếu có
-    "database": "diquamuaha",  # TODO: tạo database này hoặc đổi sang tên bạn đang dùng
+    "host":     os.getenv("MYSQL_HOST", "localhost"),
+    "port":     int(os.getenv("MYSQL_PORT", "3306")),
+    "user":     os.getenv("MYSQL_USER", "root"),
+    "password": os.getenv("MYSQL_PASSWORD", ""),
+    "database": os.getenv("MYSQL_DATABASE", "diquamuaha"),
     "charset": "utf8mb4",
     "cursorclass": pymysql.cursors.DictCursor,
 }
