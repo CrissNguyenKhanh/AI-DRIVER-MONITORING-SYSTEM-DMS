@@ -7,7 +7,6 @@ from typing import Any, Dict, List
 
 import cv2
 import joblib
-import mediapipe as mp
 import numpy as np
 import pymysql
 import json
@@ -323,6 +322,9 @@ def _ensure_models_loaded() -> None:
     if _models_loaded:
         return
     _models_loaded = True
+
+    # Import mediapipe lazy — tránh load TensorFlow Lite lúc startup
+    import mediapipe as mp  # noqa: PLC0415
 
     load_model()
     load_hand_model()
