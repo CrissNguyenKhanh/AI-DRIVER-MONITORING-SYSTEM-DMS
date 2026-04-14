@@ -551,30 +551,6 @@ def _get_face_embedding_from_image(image_b64: str) -> List[float] | None:
     return _normalize_face_embedding(vec)
 
 
-@app.get("/health")
-def health() -> Any:
-    _ensure_models_loaded()
-    return jsonify(
-        {
-            "status": "ok",
-            "model_loaded": model is not None,
-            "model_path": str(MODEL_PATH),
-            "labels": list(idx_to_label.values()),
-            "landmark_model_loaded": model is not None,
-            "landmark_model_path": str(MODEL_PATH),
-            "landmark_labels": list(idx_to_label.values()),
-            "hand_model_loaded": hand_model is not None,
-            "hand_model_path": str(HAND_MODEL_PATH),
-            "hand_labels": list(hand_idx_to_label.values()),
-            "smoking_model_loaded": smoking_model is not None,
-            "smoking_model_path": str(SMOKING_MODEL_PATH),
-            "smoking_labels": list(smoking_idx_to_label.values()),
-            "phone_model_loaded": phone_model is not None,
-            "phone_model_path": str(PHONE_MODEL_PATH),
-            "phone_labels": list(phone_idx_to_label.values()),
-        }
-    )
-
 
 def _parse_landmarks(payload: Dict[str, Any]) -> List[float]:
     if "landmarks" not in payload:
