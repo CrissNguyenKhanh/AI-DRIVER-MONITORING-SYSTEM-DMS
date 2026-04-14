@@ -311,29 +311,38 @@ def load_phone_yolo_model() -> None:
         phone_yolo_model = None
 
 
-load_model()
-load_hand_model()
-load_smoking_model()
-load_phone_model()
-load_phone_yolo_model()
+# Lazy loading — chỉ load khi có request đầu tiên, tránh OOM lúc startup (Render 512MB)
+_models_loaded = False
+_face_mesh = None
+_hands = None
 
 
-# MediaPipe Face Mesh - khớp với collect_landmarks/convert_kaggle_face để inference chuẩn
-_face_mesh = mp.solutions.face_mesh.FaceMesh(
-    max_num_faces=1,
-    refine_landmarks=True,
-    min_detection_confidence=0.55,
-    min_tracking_confidence=0.55,
-    static_image_mode=True,  # mỗi request là 1 ảnh tĩnh → detect chuẩn hơn
-)
+def _ensure_models_loaded() -> None:
+    """Load tất cả models + MediaPipe lần đầu khi có request thực sự."""
+    global _models_loaded, _face_mesh, _hands
+    if _models_loaded:
+        return
+    _models_loaded = True
 
-# MediaPipe Hands - khớp với collect_hands
-_hands = mp.solutions.hands.Hands(
-    static_image_mode=True,  # mỗi request là 1 ảnh tĩnh
-    max_num_hands=2,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5,
-)
+    load_model()
+    load_hand_model()
+    load_smoking_model()
+    load_phone_model()
+    load_phone_yolo_model()
+
+    _face_mesh = mp.solutions.face_mesh.FaceMesh(
+        max_num_faces=1,
+        refine_landmarks=True,
+        min_detection_confidence=0.55,
+        min_tracking_confidence=0.55,
+        static_image_mode=True,
+    )
+    _hands = mp.solutions.hands.Hands(
+        static_image_mode=True,
+        max_num_hands=2,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
 
 NUM_LANDMARKS_PER_HAND = 21
 
@@ -419,6 +428,7 @@ def _image_base64_to_landmarks(image_b64: str) -> List[float] | None:
     Decode base64 → MediaPipe Face Mesh → vector 1434 số.
     Trả về None nếu không detect được mặt (để API trả no_face thay vì lỗi).
     """
+    _ensure_models_loaded()
     raw = base64.b64decode(image_b64)
     arr = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -437,6 +447,7 @@ def _image_base64_to_landmarks(image_b64: str) -> List[float] | None:
 
 def _image_base64_to_hand_landmarks(image_b64: str) -> List[float] | None:
     """Decode base64 → MediaPipe Hands → vector khớp hand_vec_len (63 hoặc 126)."""
+    _ensure_models_loaded()
     raw = base64.b64decode(image_b64)
     arr = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -542,6 +553,7 @@ def _get_face_embedding_from_image(image_b64: str) -> List[float] | None:
 
 @app.get("/health")
 def health() -> Any:
+    _ensure_models_loaded()
     return jsonify(
         {
             "status": "ok",
