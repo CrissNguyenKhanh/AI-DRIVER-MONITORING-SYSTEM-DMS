@@ -1,6 +1,8 @@
-import os
+import eventlet
+eventlet.monkey_patch()  # PHẢI gọi trước tất cả import khác
 
-from data.api.api import app, socketio
+import os  # noqa: E402
+from data.api.api import app, socketio  # noqa: E402
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
