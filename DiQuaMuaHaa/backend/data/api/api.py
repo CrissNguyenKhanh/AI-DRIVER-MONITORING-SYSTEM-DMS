@@ -579,6 +579,29 @@ def index() -> Any:
     })
 
 
+@app.get("/api/ping-db")
+def ping_db() -> Any:
+    """Test MySQL connection — chỉ dùng để debug, xoá sau khi xong."""
+    try:
+        conn = get_mysql_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        conn.close()
+        return jsonify({
+            "status": "ok",
+            "message": "MySQL connected!",
+            "host": os.getenv("MYSQL_HOST", "N/A"),
+            "database": os.getenv("MYSQL_DATABASE", "N/A"),
+        })
+    except Exception as exc:
+        return jsonify({
+            "status": "error",
+            "error": str(exc),
+            "host": os.getenv("MYSQL_HOST", "N/A"),
+            "database": os.getenv("MYSQL_DATABASE", "N/A"),
+        }), 500
+
+
 def _parse_landmarks(payload: Dict[str, Any]) -> List[float]:
     if "landmarks" not in payload:
         raise ValueError("Thiếu trường 'landmarks' trong JSON body.")
