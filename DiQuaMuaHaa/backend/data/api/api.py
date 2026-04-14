@@ -11,6 +11,12 @@ import numpy as np
 cv2 = None  # type: ignore[assignment]
 joblib = None  # type: ignore[assignment]
 import pymysql
+try:
+    import psycopg2
+    import psycopg2.extras
+    POSTGRES_AVAILABLE = True
+except ImportError:
+    POSTGRES_AVAILABLE = False
 import json
 from datetime import datetime, timedelta
 from urllib import parse, request as urlrequest
@@ -85,7 +91,14 @@ phone_image_size: int | None = None
 phone_yolo_model = None
 
 
+DATABASE_URL = os.getenv("DATABASE_URL", "")  # Render PostgreSQL internal URL
+
+
 def get_mysql_conn():
+    """Kết nối database — tự động dùng PostgreSQL nếu có DATABASE_URL, fallback MySQL."""
+    if DATABASE_URL and POSTGRES_AVAILABLE:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor)
+        return conn
     return pymysql.connect(**MYSQL_CONFIG)
 
 
