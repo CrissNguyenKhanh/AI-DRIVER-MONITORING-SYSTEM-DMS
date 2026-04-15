@@ -334,9 +334,9 @@ _hands = None
 def _ensure_models_loaded() -> None:
     """Load models + MediaPipe lần đầu khi có request thực sự."""
     global _models_loaded, _face_mesh, _hands
-    if _models_loaded:
+    # Check cả _face_mesh để tránh race condition khi eventlet yield giữa chừng
+    if _models_loaded and _face_mesh is not None:
         return
-    _models_loaded = True
 
     global cv2, joblib  # noqa: PLW0603
     import cv2 as _cv2  # noqa: PLC0415
@@ -344,12 +344,9 @@ def _ensure_models_loaded() -> None:
     cv2 = _cv2
     joblib = _joblib
 
-    # Chỉ load model nhẹ — bỏ smoking (2.3MB ok) nhưng skip phone/YOLO
+    # Chỉ load model nhẹ — bỏ phone/YOLO để tiết kiệm RAM
     load_hand_model()   # 214KB
     load_model()        # landmark 4.6MB
-    # load_smoking_model()  # tạm skip để tiết kiệm RAM
-    # load_phone_model()    # 106MB — skip
-    # load_phone_yolo_model()  # 200MB — skip
 
     # MediaPipe — load sau cùng, nặng nhất
     import mediapipe as mp  # noqa: PLC0415
@@ -367,6 +364,8 @@ def _ensure_models_loaded() -> None:
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5,
     )
+    # Chỉ set True SAU KHI mọi thứ đã load xong
+    _models_loaded = True
 
 NUM_LANDMARKS_PER_HAND = 21
 
@@ -1272,6 +1271,8 @@ def identity_register() -> Any:
     if not images:
         return jsonify({"error": "Thiếu 'image' hoặc 'images' trong JSON body."}), 400
 
+    _ensure_models_loaded()
+
     try:
         embeddings = _collect_face_embeddings(images)
     except ValueError as exc:
@@ -1357,6 +1358,8 @@ def identity_verify() -> Any:
     images = _extract_images_from_payload(payload)
     if not images:
         return jsonify({"error": "Thiếu 'image' hoặc 'images' trong JSON body."}), 400
+
+    _ensure_models_loaded()
 
     try:
         current_embeddings = _collect_face_embeddings(images)
