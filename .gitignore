@@ -1,24 +1,216 @@
-node_modules/
-dist/
-.env
-.env.*
-
-# Python virtual environment - NEVER commit this
+# =============================================================================
+# PYTHON - Virtual Environments
+# =============================================================================
 venv/
 .venv/
 env/
-DiQuaMuaHaa/backend/venv/
+ENV/
+.env/
+venv.bak/
+**/venv/
+**/.venv/
+
+# Python compiled files
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.pyo
+
+# Python distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Python testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+nosetests.xml
+
+# Python type checkers & linters
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.ruff_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# pyenv
+.python-version
+
+# =============================================================================
+# NODE.JS / JAVASCRIPT / REACT
+# =============================================================================
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+out/
+.next/
+.nuxt/
+.output/
+.vercel/
+.netlify/
+
+# Vite cache
+.vite/
+**/.vite/
+**/.vite-temp/
+
+# Logs
+logs/
+*.log
 npm-debug.log*
+yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Lock files (keep package-lock.json & yarn.lock, ignore others)
+.pnpm-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# =============================================================================
+# ENVIRONMENT & SECRETS
+# =============================================================================
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.cert
+secrets.json
+secrets.yaml
+
+# =============================================================================
+# ML / AI - Large Model & Dataset Files
+# =============================================================================
+
+# PyTorch models (có thể rất nặng)
+*.pt
+*.pth
+*.onnx
+*.tflite
+*.pb
+*.h5
+*.hdf5
+*.keras
+
+# Pickle files (toàn bộ, ngoại trừ 2 file model nhỏ cần thiết)
+*.pkl
+*.pickle
+!DiQuaMuaHaa/backend/driver_training/models/landmark_model.pkl
+!DiQuaMuaHaa/backend/driver_training/models/hand_model.pkl
+
+# Large datasets
 DiQuaMuaHaa/backend/dataset/
 DiQuaMuaHaa/backend/driver_training/dataset/
-# Giữ model nặng / tạm ngoài git; chỉ track 2 file nhỏ dùng API cloud (train từ CSV trong repo)
+DiQuaMuaHaa/backend/driver_training/runs/
+DiQuaMuaHaa/backend/driver_training/collect/data/landmarks_kaggle.csv
+DiQuaMuaHaa/backend/data/
+
+# Model weights folder (ngoại trừ 2 file nhỏ)
 DiQuaMuaHaa/backend/driver_training/models/*
 !DiQuaMuaHaa/backend/driver_training/models/landmark_model.pkl
 !DiQuaMuaHaa/backend/driver_training/models/hand_model.pkl
-DiQuaMuaHaa/backend/driver_training/runs/
-# GitHub max file size 100 MB — regenerate locally from Kaggle pipeline
-DiQuaMuaHaa/backend/driver_training/collect/data/landmarks_kaggle.csv
-__pycache__/
-*.py[cod]
-*.pt
+
+# Large binary / compiled extensions
+*.dll
+*.so
+*.dylib
+*.exe
+*.bin
+
+# =============================================================================
+# IDE & EDITOR
+# =============================================================================
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*.swo
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# =============================================================================
+# OPERATING SYSTEM
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+
+# =============================================================================
+# MISC
+# =============================================================================
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+
+# Archives (tránh commit file nén nặng)
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# CSV nặng (ngoại trừ file cần thiết)
+*.csv
+!DiQuaMuaHaa/backend/phone_data.csv
