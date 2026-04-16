@@ -331,24 +331,16 @@ _face_mesh = None
 _hands = None
 
 
-def _ensure_models_loaded() -> None:
-    """Load models + MediaPipe lần đầu khi có request thực sự."""
-    global _models_loaded, _face_mesh, _hands
-    # Check cả _face_mesh để tránh race condition khi eventlet yield giữa chừng
-    if _models_loaded and _face_mesh is not None:
+def _ensure_face_mesh_loaded() -> None:
+    """Chỉ OpenCV + MediaPipe FaceMesh — không unpickle sklearn (identity / vector mặt thô)."""
+    global cv2, _face_mesh
+    if _face_mesh is not None:
         return
 
-    global cv2, joblib  # noqa: PLW0603
     import cv2 as _cv2  # noqa: PLC0415
-    import joblib as _joblib  # noqa: PLC0415
+
     cv2 = _cv2
-    joblib = _joblib
 
-    # Chỉ load model nhẹ — bỏ phone/YOLO để tiết kiệm RAM
-    load_hand_model()   # 214KB
-    load_model()        # landmark 4.6MB
-
-    # MediaPipe — load sau cùng, nặng nhất
     import mediapipe as mp  # noqa: PLC0415
 
     _face_mesh = mp.solutions.face_mesh.FaceMesh(
@@ -358,14 +350,35 @@ def _ensure_models_loaded() -> None:
         min_tracking_confidence=0.55,
         static_image_mode=True,
     )
-    _hands = mp.solutions.hands.Hands(
-        static_image_mode=True,
-        max_num_hands=2,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    )
-    # Chỉ set True SAU KHI mọi thứ đã load xong
+
+
+def _ensure_models_loaded() -> None:
+    """Load sklearn .pkl + MediaPipe Hands; FaceMesh dùng chung qua _ensure_face_mesh_loaded()."""
+    global _models_loaded, _hands, joblib
+
+    _ensure_face_mesh_loaded()
+
+    if _models_loaded:
+        return
+
+    import joblib as _joblib  # noqa: PLC0415
+
+    joblib = _joblib
+
+    load_hand_model()
+    load_model()
+
+    import mediapipe as mp  # noqa: PLC0415
+
+    if _hands is None:
+        _hands = mp.solutions.hands.Hands(
+            static_image_mode=True,
+            max_num_hands=2,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
     _models_loaded = True
+
 
 NUM_LANDMARKS_PER_HAND = 21
 
@@ -451,7 +464,7 @@ def _image_base64_to_landmarks(image_b64: str) -> List[float] | None:
     Decode base64 → MediaPipe Face Mesh → vector 1434 số.
     Trả về None nếu không detect được mặt (để API trả no_face thay vì lỗi).
     """
-    _ensure_models_loaded()
+    _ensure_face_mesh_loaded()
     raw = base64.b64decode(image_b64)
     arr = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -1278,8 +1291,6 @@ def identity_register() -> Any:
     if not images:
         return jsonify({"error": "Thiếu 'image' hoặc 'images' trong JSON body."}), 400
 
-    _ensure_models_loaded()
-
     try:
         embeddings = _collect_face_embeddings(images)
     except ValueError as exc:
@@ -1337,11 +1348,6 @@ def identity_register() -> Any:
 
 @app.post("/api/identity/verify")
 def identity_verify() -> Any:
-    try:
-        _ensure_models_loaded()
-    except Exception as exc:
-        import traceback
-        return jsonify({"error": f"Model load failed: {exc}", "trace": traceback.format_exc()}), 500
     """
     So khớp tài xế hiện tại với chính chủ đã đăng ký.
 
@@ -1365,8 +1371,6 @@ def identity_verify() -> Any:
     images = _extract_images_from_payload(payload)
     if not images:
         return jsonify({"error": "Thiếu 'image' hoặc 'images' trong JSON body."}), 400
-
-    _ensure_models_loaded()
 
     try:
         current_embeddings = _collect_face_embeddings(images)
