@@ -34,6 +34,7 @@ Tuỳ chọn:
 from __future__ import annotations
 
 import argparse
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Tuple
@@ -165,6 +166,10 @@ def build_model(random_state: int = 42) -> Pipeline:
       - max_iter=500 (tăng từ 200) nhưng sẽ dừng sớm nhờ early_stopping
       - learning_rate="adaptive" → tự giảm lr khi loss không giảm
     """
+    fast_mode = os.getenv("FAST_MODE", "0") == "1"
+    max_iter = 200 if fast_mode else 500
+    n_iter_no_change = 10 if fast_mode else 20
+
     clf = MLPClassifier(
         hidden_layer_sizes=(128, 64),
         activation="relu",
@@ -173,10 +178,10 @@ def build_model(random_state: int = 42) -> Pipeline:
         batch_size=64,
         learning_rate_init=1e-3,
         learning_rate="adaptive",    # ← thêm mới
-        max_iter=500,                # ← tăng nhưng early_stopping sẽ dừng trước
+        max_iter=max_iter,           # ← giảm khi FAST_MODE để train fallback nhanh
         early_stopping=True,         # ← thêm mới — quan trọng nhất
         validation_fraction=0.1,     # ← 10% train dùng để early stop
-        n_iter_no_change=20,         # ← dừng sau 20 epoch không cải thiện
+        n_iter_no_change=n_iter_no_change,  # ← giảm khi FAST_MODE
         random_state=random_state,
         verbose=False,
     )
@@ -197,6 +202,8 @@ def train_hand_model(
     test_size:    float = 0.15,
     random_state: int   = 42,
 ) -> Tuple[Pipeline, Dict[str, int]]:
+
+    skip_cv = os.getenv("SKIP_CV", "0") == "1"
 
     csv_path   = Path(csv_path)
     model_path = Path(model_path)
@@ -255,20 +262,25 @@ def train_hand_model(
 
     # ── 5-Fold Cross Validation ───────────────────────────────
     # Dùng toàn bộ X để đánh giá variance (phát hiện overfit)
-    print(f"\n[CV] 5-Fold on full dataset...", flush=True)
-    cv_model = build_model(random_state)
-    cv_scores = cross_val_score(cv_model, X, y, cv=5, scoring="accuracy", n_jobs=-1)
-    print(f"   CV Accuracy: {cv_scores.mean()*100:.2f}% +/- {cv_scores.std()*100:.2f}%")
+    cv_mean: float | None = None
+    if not skip_cv:
+        print(f"\n[CV] 5-Fold on full dataset...", flush=True)
+        cv_model = build_model(random_state)
+        cv_scores = cross_val_score(cv_model, X, y, cv=5, scoring="accuracy", n_jobs=-1)
+        print(f"   CV Accuracy: {cv_scores.mean()*100:.2f}% +/- {cv_scores.std()*100:.2f}%")
 
-    gap = acc - cv_scores.mean()
-    if gap > 0.05:
-        print(
-            f"[WARN] Test acc ({acc*100:.1f}%) higher than CV ({cv_scores.mean()*100:.1f}%) - possible overfit."
-        )
-    elif acc < 0.85:
-        print(f"[WARN] Low accuracy ({acc*100:.1f}%) - collect more data or check normalization.")
+        cv_mean = float(cv_scores.mean())
+        gap = acc - cv_scores.mean()
+        if gap > 0.05:
+            print(
+                f"[WARN] Test acc ({acc*100:.1f}%) higher than CV ({cv_scores.mean()*100:.1f}%) - possible overfit."
+            )
+        elif acc < 0.85:
+            print(f"[WARN] Low accuracy ({acc*100:.1f}%) - collect more data or check normalization.")
+        else:
+            print(f"[OK] Model looks fine - no strong overfit signal.")
     else:
-        print(f"[OK] Model looks fine - no strong overfit signal.")
+        print("\n[CV] skipped (SKIP_CV=1) - faster training fallback.", flush=True)
 
     # ── Save ──────────────────────────────────────────────────
     idx_to_label = {v: k for k, v in label_to_idx.items()}
@@ -278,7 +290,7 @@ def train_hand_model(
         "idx_to_label": idx_to_label,   # ← thêm mới, backend dùng trực tiếp
         "vec_len":      X.shape[1],     # ← để kiểm tra khi load
         "classes":      class_names,    # ← list theo thứ tự index
-        "cv_mean":      float(cv_scores.mean()),
+        "cv_mean":      cv_mean,
         "test_acc":     float(acc),
     }
     joblib.dump(artifact, model_path)
