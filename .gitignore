@@ -128,11 +128,9 @@ secrets.yaml
 *.hdf5
 *.keras
 
-# Pickle files (toàn bộ, ngoại trừ 2 file model nhỏ cần thiết)
-*.pkl
+# Pickle files - chỉ ignore pkl ngoài thư mục models
+# (các model trong models/ được quản lý riêng bên dưới)
 *.pickle
-!DiQuaMuaHaa/backend/driver_training/models/landmark_model.pkl
-!DiQuaMuaHaa/backend/driver_training/models/hand_model.pkl
 
 # Large datasets
 DiQuaMuaHaa/backend/dataset/
@@ -141,10 +139,16 @@ DiQuaMuaHaa/backend/driver_training/runs/
 DiQuaMuaHaa/backend/driver_training/collect/data/landmarks_kaggle.csv
 DiQuaMuaHaa/backend/data/
 
-# Model weights folder (ngoại trừ 2 file nhỏ)
+# Model weights folder
+# - File nhỏ (<10MB): commit thẳng vào git
+# - phone_model.pkl (101MB): dùng Git LFS
+# - File .pth rỗng (chưa train): bỏ qua
 DiQuaMuaHaa/backend/driver_training/models/*
 !DiQuaMuaHaa/backend/driver_training/models/landmark_model.pkl
 !DiQuaMuaHaa/backend/driver_training/models/hand_model.pkl
+!DiQuaMuaHaa/backend/driver_training/models/smoking_model.pkl
+!DiQuaMuaHaa/backend/driver_training/models/phone_yolo.pt
+!DiQuaMuaHaa/backend/driver_training/models/phone_model.pkl
 
 # Large binary / compiled extensions
 *.dll
