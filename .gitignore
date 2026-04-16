@@ -2,6 +2,12 @@ node_modules/
 dist/
 .env
 .env.*
+
+# Python virtual environment - NEVER commit this
+venv/
+.venv/
+env/
+DiQuaMuaHaa/backend/venv/
 npm-debug.log*
 yarn-error.log*
 DiQuaMuaHaa/backend/dataset/
