@@ -79,6 +79,7 @@ MYSQL_CONFIG = {
 
 # Mô hình landmark chỉ có 2 class (drowsy/yawning): nếu top1 - top2 < margin → coi là "safe" (không chắc)
 LANDMARK_AMBIGUOUS_MARGIN = float(os.getenv("LANDMARK_AMBIGUOUS_MARGIN", "0.12"))
+LANDMARK_FLIP_INPUT = os.getenv("LANDMARK_FLIP_INPUT", "0") == "1"
 
 IDENTITY_SIM_THRESHOLD = float(os.getenv("IDENTITY_SIM_THRESHOLD", "0.975"))
 IDENTITY_MIN_REGISTER_SAMPLES = int(os.getenv("IDENTITY_MIN_REGISTER_SAMPLES", "3"))
@@ -625,8 +626,10 @@ def _image_base64_to_landmarks_for_predict(image_b64: str) -> List[float] | None
     if img is None:
         raise ValueError("Không decode được ảnh từ base64.")
 
-    # Match training data collection: flip horizontally.
-    img = cv2.flip(img, 1)
+    # Frontend có thể đã mirror (CSS transform scaleX(-1)).
+    # Để tránh double-mirror, mặc định không flip; có thể bật bằng biến môi trường.
+    if LANDMARK_FLIP_INPUT:
+        img = cv2.flip(img, 1)
 
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     results = _face_mesh.process(rgb)
@@ -2373,7 +2376,15 @@ def driving_session_detail(session_id: int) -> Any:
     )
 
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+try:
+    import eventlet  # noqa: F401
+
+    _async_mode = "eventlet"
+except Exception:
+    # Local run / environment may not have eventlet or EngineIO may not accept it.
+    _async_mode = "threading"
+
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode=_async_mode)
 
 
 # phone pro
