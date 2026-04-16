@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
 import { io } from "socket.io-client";
+import { useNavigate } from "react-router-dom";
 import OwnerVerifyGate from "../systeamdetectface/OwnerVerifyGate";
 import TelegramOwnerRejectOverlay from "../systeamdetectface/TelegramOwnerRejectOverlay";
 import DriverAuthenticatedWelcome from "../systeamdetectface/DriverAuthenticatedWelcome";
@@ -1184,6 +1185,7 @@ function Head3D({ poseRef }) {
 // MAIN
 // ═════════════════════════════════════════════════════════
 export default function DriverMonitorDMS() {
+  const navigate = useNavigate();
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const faceMeshRef = useRef(null);
@@ -4188,7 +4190,8 @@ export default function DriverMonitorDMS() {
             height: 32,
             background: "#030810",
             borderTop: "1px solid #0d1e30",
-            display: "flex",
+              display: "flex",
+              gap: 10,
             alignItems: "center",
             justifyContent: "space-between",
             padding: "0 14px",
@@ -4282,6 +4285,25 @@ export default function DriverMonitorDMS() {
                 }}
               >
                 ▶ Start
+              </button>
+            )}
+
+            {!identityHasRegistered && (
+              <button
+                type="button"
+                onClick={() => navigate("/test5")}
+                style={{
+                  marginLeft: 10,
+                  padding: "2px 14px",
+                  background: "rgba(0,245,160,0.07)",
+                  border: "1px solid rgba(0,245,160,0.35)",
+                  color: "#00ffa0",
+                  fontSize: 9,
+                  cursor: "pointer",
+                  borderRadius: 3,
+                }}
+              >
+                Register Face (/test5)
               </button>
             )}
           </div>

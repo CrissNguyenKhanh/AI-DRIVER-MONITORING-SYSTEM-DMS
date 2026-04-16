@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { getDmsApiBase } from "../config/apiEndpoints";
 import { getWebcamSupportErrorMessage } from "../utils/cameraContext";
 import { speakOwnerGreeting, warmSpeechVoices } from "../utils/speakOwnerGreeting";
@@ -305,6 +306,7 @@ function PulseDot({ color = "#00ffa0" }) {
 }
 
 export default function FaceDetect() {
+  const navigate = useNavigate();
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
@@ -577,6 +579,9 @@ export default function FaceDetect() {
         window.localStorage.setItem(DRIVER_ID_KEY, driverId);
         window.localStorage.setItem(DRIVER_IMAGE_KEY, imageBase64);
       } catch {}
+      // Sau khi đăng ký xong → tự quay lại test3 để detect
+      setTimeout(() => navigate("/test3"), 300);
+
       setTimeout(() => setRegistered(false), 3000);
     } catch (err) {
       setApiError(`Đăng ký thất bại: ${err.message}`);
