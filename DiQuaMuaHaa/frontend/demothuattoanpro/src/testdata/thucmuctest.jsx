@@ -34,19 +34,19 @@ const IDENTITY_BURST_GAP_MS = 110;
 const DRIVER_ID_KEY = "driver_owner_id_v1";
 const DEFAULT_DRIVER_ID = "driver_001";
 const HISTORY_SIZE = 10;
-const CONSISTENT_FRAMES = 4;
-const MIN_PROB_FOR_LABEL = 0.6;
+const CONSISTENT_FRAMES = 2;
+const MIN_PROB_FOR_LABEL = 0.5;
 const EAR_BLINK_THRESH = 0.21;
 const EAR_HISTORY = 90;
 const EYES_CLOSED_WARN_MS = 3000;
 
-// ── PHONE — WebSocket YOLO, ~15fps ──────────────────────────
-const PHONE_WS_FPS = 15;
-const PHONE_YOLO_MIN_PROB = 0.55;
+// ── PHONE — WebSocket YOLO, ~20fps ──────────────────────────
+const PHONE_WS_FPS = 20;
+const PHONE_YOLO_MIN_PROB = 0.5;
 const PHONE_HISTORY_LEN = 20;
 const PHONE_WARN_MS = 3000;
-const PHONE_STABLE_FRAMES = 4; // cần 4 lần liên tiếp mới bật cảnh báo
-const PHONE_OFF_FRAMES = 6; // cần 6 lần liên tiếp mất cảnh báo mới tắt
+const PHONE_STABLE_FRAMES = 2; // cần 2 lần liên tiếp mới bật cảnh báo
+const PHONE_OFF_FRAMES = 4; // cần 4 lần liên tiếp mất cảnh báo mới tắt
 // ── SMOKING — WebSocket landmark, ~4fps (không cần nhanh hơn) ──
 const SMOKING_WS_FPS = 4;
 const SMOKING_MIN_PROB = 0.82;
@@ -294,8 +294,8 @@ function PhoneFOMOOverlay({ phoneDetectionRef, landmarksRef, videoRef }) {
       // để tránh "lung tung" khi phone_detection bị mất tạm thời.
       if (!targetBox) return;
 
-      // smooth LERP — nhanh hơn khi có bbox thực
-      const LERP = 0.22;
+      // smooth LERP — tăng lên 0.4 để box bám theo phone nhanh hơn
+      const LERP = 0.4;
       if (!smoothBoxRef.current) {
         smoothBoxRef.current = { ...targetBox };
       } else {
@@ -1225,6 +1225,7 @@ export default function DriverMonitorDMS() {
   const socketRef = useRef(null);
   const wsReadyRef = useRef(false);
   const wsPendingRef = useRef(false);
+  const wsPendingCountRef = useRef(0); // số request đang chờ (sliding window tối đa 2)
   const wsLastSentRef = useRef(0);
   // WebSocket refs — smoking (dùng chung socket, event riêng)
   const wsSmokePendingRef = useRef(false);
@@ -1252,6 +1253,7 @@ export default function DriverMonitorDMS() {
   const [appMenuOpen, setAppMenuOpen] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [history, setHistory] = useState([]);
+  const stableLabelRef = useRef("safe"); // giữ nhãn ổn định, chỉ đổi khi đủ CONSISTENT_FRAMES
   const [time, setTime] = useState(new Date());
   const [frameCount, setFrameCount] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
@@ -1633,7 +1635,8 @@ export default function DriverMonitorDMS() {
 
     // ← kết quả YOLO từ server
     sock.on("phone_result", (data) => {
-      wsPendingRef.current = false; // sẵn sàng nhận frame tiếp
+      wsPendingCountRef.current = Math.max(0, wsPendingCountRef.current - 1);
+      wsPendingRef.current = wsPendingCountRef.current > 0;
 
       const boxesArr = Array.isArray(data?.boxes) ? data.boxes : [];
       const bestBox =
@@ -1724,11 +1727,13 @@ export default function DriverMonitorDMS() {
     };
   }, []);
 
-  // ── Phone WebSocket send loop — RAF-based, ~15fps ────────
+  // ── Phone WebSocket send loop — RAF-based, ~20fps ────────
   useEffect(() => {
     if (!status || status !== "active") return;
     let rafId;
-    const interval = 1000 / PHONE_WS_FPS; // ~67ms
+    const interval = 1000 / PHONE_WS_FPS; // ~50ms
+    const MAX_PENDING = 2; // sliding window: cho phép 2 request bay đồng thời
+    const PENDING_TIMEOUT_MS = 800; // reset pending nếu server không trả lời trong 800ms
 
     function loop() {
       rafId = requestAnimationFrame(loop);
@@ -1736,18 +1741,26 @@ export default function DriverMonitorDMS() {
       const sock = socketRef.current;
       const vid = videoRef.current;
 
-      // chỉ gửi khi: socket ready, không đang pending, đủ interval
-      if (!sock || !wsReadyRef.current || wsPendingRef.current) return;
+      // auto-reset pending nếu quá timeout (tránh deadlock khi mất gói)
+      if (wsPendingCountRef.current > 0 && now - wsLastSentRef.current > PENDING_TIMEOUT_MS) {
+        wsPendingCountRef.current = 0;
+        wsPendingRef.current = false;
+      }
+
+      // chỉ gửi khi: socket ready, sliding window chưa đầy, đủ interval
+      if (!sock || !wsReadyRef.current) return;
+      if (wsPendingCountRef.current >= MAX_PENDING) return;
       if (now - wsLastSentRef.current < interval) return;
       if (!vid || vid.readyState < 2) return;
 
-      // capture frame nhỏ hơn để giảm latency
+      // capture frame nhỏ để giảm latency
       const c = document.createElement("canvas");
       c.width = 320;
-      c.height = 240; // downscale: YOLO vẫn detect tốt ở 320x240
+      c.height = 240;
       c.getContext("2d").drawImage(vid, 0, 0, 320, 240);
-      const image = c.toDataURL("image/jpeg", 0.6); // quality 0.6 đủ cho YOLO
+      const image = c.toDataURL("image/jpeg", 0.55);
 
+      wsPendingCountRef.current += 1;
       wsPendingRef.current = true;
       wsLastSentRef.current = now;
       sock.emit("phone_frame", { image });
@@ -1906,11 +1919,11 @@ export default function DriverMonitorDMS() {
         });
         hands.setOptions({
           maxNumHands: 2,
-          modelComplexity: 0,
+          modelComplexity: 1,
           // Không bật selfieMode: graph đã flip sẽ lệch với overlay (mx = W−x) giống FaceMesh → skeleton chồng mặt.
           selfieMode: false,
-          minDetectionConfidence: 0.35,
-          minTrackingConfidence: 0.35,
+          minDetectionConfidence: 0.75,
+          minTrackingConfidence: 0.6,
         });
         hands.onResults((results) => {
           if (!results.multiHandLandmarks || !results.multiHandLandmarks.length) {
@@ -2058,6 +2071,7 @@ export default function DriverMonitorDMS() {
     if (videoRef.current) videoRef.current.srcObject = null;
     landmarksRef.current = [];
     handLandmarksRef.current = [];
+    stableLabelRef.current = "safe";
     setStatus("idle");
     poseRef.current = { yaw: 0, pitch: 0, roll: 0 };
     stopAlarm();
@@ -2071,6 +2085,7 @@ export default function DriverMonitorDMS() {
     phoneLastBoxRef.current = null;
     smokingDetectionRef.current = { active: false, prob: 0, bbox: null };
     wsPendingRef.current = false;
+    wsPendingCountRef.current = 0;
     wsSmokePendingRef.current = false;
     phoneSinceRef.current = null;
     phoneSecRef.current = 0;
@@ -2273,20 +2288,18 @@ export default function DriverMonitorDMS() {
   }, [status, handApiResult, appMenuOpen]);
 
   // ── Smoothed label ──
-  let smoothedLabel = apiResult?.label || "unknown";
+  // Chỉ đổi stableLabel khi CONSISTENT_FRAMES frame liên tiếp đều cùng 1 nhãn
+  // Tránh 1 lần ngáp/nhắm mắt làm flip nhãn ngay lập tức
   if (history.length > 0) {
     const rel = history.filter((h) => h.prob >= MIN_PROB_FOR_LABEL);
-    if (rel.length > 0) {
-      const cnt = {};
-      rel.forEach((h) => {
-        cnt[h.label] = (cnt[h.label] || 0) + 1;
-      });
-      const maj = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0][0];
+    if (rel.length >= CONSISTENT_FRAMES) {
       const rec = rel.slice(-CONSISTENT_FRAMES);
-      if (rec.length === CONSISTENT_FRAMES && rec.every((h) => h.label === maj))
-        smoothedLabel = maj;
+      if (rec.every((h) => h.label === rec[0].label)) {
+        stableLabelRef.current = rec[0].label;
+      }
     }
   }
+  const smoothedLabel = stableLabelRef.current;
   const currentLabel = smoothedLabel;
   const info = LABEL_MAP[currentLabel] || LABEL_MAP.unknown;
   const isAlert = info.level === "risk" || info.level === "warning";

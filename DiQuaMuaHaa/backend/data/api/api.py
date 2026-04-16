@@ -5,18 +5,11 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
+import cv2
+import joblib
+import mediapipe as mp
 import numpy as np
-
-# cv2 và joblib được import lazy trong _ensure_models_loaded() để giảm RAM startup
-cv2 = None  # type: ignore[assignment]
-joblib = None  # type: ignore[assignment]
 import pymysql
-try:
-    import psycopg2
-    import psycopg2.extras
-    POSTGRES_AVAILABLE = True
-except ImportError:
-    POSTGRES_AVAILABLE = False
 import json
 from datetime import datetime, timedelta
 from urllib import parse, request as urlrequest
@@ -32,7 +25,7 @@ except Exception:  # ImportError, RuntimeError, ...
 
 
 app = Flask(__name__)
-CORS(app, origins="*", supports_credentials=True)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # Tránh lỗi server khi client gửi base64 ảnh quá lớn
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25MB
@@ -91,14 +84,7 @@ phone_image_size: int | None = None
 phone_yolo_model = None
 
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")  # Render PostgreSQL internal URL
-
-
 def get_mysql_conn():
-    """Kết nối database — tự động dùng PostgreSQL nếu có DATABASE_URL, fallback MySQL."""
-    if DATABASE_URL and POSTGRES_AVAILABLE:
-        conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor)
-        return conn
     return pymysql.connect(**MYSQL_CONFIG)
 
 
@@ -108,9 +94,9 @@ def _ensure_identity_tables(cur) -> None:
         CREATE TABLE IF NOT EXISTS driver_identity (
             driver_id      VARCHAR(64) PRIMARY KEY,
             name           VARCHAR(255),
-            embedding_json TEXT NOT NULL,
-            image_base64   TEXT,
-            created_at     TIMESTAMP NOT NULL
+            embedding_json LONGTEXT NOT NULL,
+            image_base64   LONGTEXT,
+            created_at     DATETIME NOT NULL
         )
         """
     )
@@ -120,59 +106,59 @@ def _ensure_identity_tables(cur) -> None:
             driver_id         VARCHAR(64) PRIMARY KEY,
             telegram_chat_id  BIGINT NOT NULL,
             telegram_user_id  BIGINT NULL,
-            created_at        TIMESTAMP NOT NULL,
-            updated_at        TIMESTAMP NOT NULL
+            created_at        DATETIME NOT NULL,
+            updated_at        DATETIME NOT NULL
         )
         """
     )
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS identity_decision_requests (
-            request_id           BIGSERIAL PRIMARY KEY,
+            request_id           BIGINT AUTO_INCREMENT PRIMARY KEY,
             driver_id            VARCHAR(64) NOT NULL,
             status               VARCHAR(16) NOT NULL,
             reason               VARCHAR(64) NULL,
-            similarity           DOUBLE PRECISION NULL,
-            threshold            DOUBLE PRECISION NULL,
-            requested_at         TIMESTAMP NOT NULL,
-            expires_at           TIMESTAMP NOT NULL,
-            decided_at           TIMESTAMP NULL,
+            similarity           DOUBLE NULL,
+            threshold            DOUBLE NULL,
+            requested_at         DATETIME NOT NULL,
+            expires_at           DATETIME NOT NULL,
+            decided_at           DATETIME NULL,
             decided_by_chat_id   BIGINT NULL,
             telegram_chat_id     BIGINT NULL,
-            telegram_message_id  BIGINT NULL
+            telegram_message_id  BIGINT NULL,
+            INDEX idx_identity_driver (driver_id),
+            INDEX idx_identity_status (status),
+            INDEX idx_identity_expires (expires_at)
         )
         """
     )
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_identity_driver ON identity_decision_requests (driver_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_identity_status ON identity_decision_requests (status)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_identity_expires ON identity_decision_requests (expires_at)")
 
 
 def _ensure_driving_session_tables(cur) -> None:
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS driving_sessions (
-            id         BIGSERIAL PRIMARY KEY,
-            driver_id  VARCHAR(64) NULL,
-            label      VARCHAR(128) NULL,
-            started_at TIMESTAMP NOT NULL,
-            ended_at   TIMESTAMP NULL
-        )
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            driver_id VARCHAR(64) NULL,
+            label VARCHAR(128) NULL,
+            started_at DATETIME NOT NULL,
+            ended_at DATETIME NULL,
+            INDEX idx_driving_driver (driver_id),
+            INDEX idx_driving_started (started_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_driving_driver ON driving_sessions (driver_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_driving_started ON driving_sessions (started_at)")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS driving_session_alerts (
             session_id BIGINT NOT NULL,
             alert_type VARCHAR(32) NOT NULL,
-            count      INT NOT NULL DEFAULT 0,
-            PRIMARY KEY (session_id, alert_type)
-        )
+            count INT NOT NULL DEFAULT 0,
+            PRIMARY KEY (session_id, alert_type),
+            INDEX idx_dsa_session (session_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_dsa_session ON driving_session_alerts (session_id)")
 
 
 DRIVING_ALERT_TYPES = frozenset(
@@ -303,14 +289,21 @@ def load_phone_model() -> None:
         phone_image_size = None
         return
 
-    phone_artifact = joblib.load(PHONE_MODEL_PATH)
-    phone_model = phone_artifact.get("model")
-    label_to_idx = phone_artifact.get("label_to_idx", {})
-    phone_idx_to_label = {v: k for k, v in label_to_idx.items()}
-    img_sz = phone_artifact.get("image_size")
     try:
-        phone_image_size = int(img_sz) if img_sz is not None else None
-    except (TypeError, ValueError):
+        phone_artifact = joblib.load(PHONE_MODEL_PATH)
+        phone_model = phone_artifact.get("model")
+        label_to_idx = phone_artifact.get("label_to_idx", {})
+        phone_idx_to_label = {v: k for k, v in label_to_idx.items()}
+        img_sz = phone_artifact.get("image_size")
+        try:
+            phone_image_size = int(img_sz) if img_sz is not None else None
+        except (TypeError, ValueError):
+            phone_image_size = None
+    except Exception as e:
+        print(f"[WARN] phone_model.pkl không load được (numpy/sklearn không tương thích): {e}")
+        phone_artifact = None
+        phone_model = None
+        phone_idx_to_label = {}
         phone_image_size = None
 
 
@@ -320,65 +313,42 @@ def load_phone_yolo_model() -> None:
         phone_yolo_model = None
         return
     try:
+        import torch as _torch
+        _orig_load = _torch.load
+        def _patched_load(f, *args, **kwargs):
+            kwargs.setdefault("weights_only", False)
+            return _orig_load(f, *args, **kwargs)
+        _torch.load = _patched_load
         phone_yolo_model = YOLO(str(PHONE_YOLO_MODEL_PATH))
-    except Exception:
+        _torch.load = _orig_load
+    except Exception as e:
+        print(f"[WARN] phone_yolo.pt không load được: {e}")
         phone_yolo_model = None
 
 
-# Lazy loading — chỉ load khi có request đầu tiên, tránh OOM lúc startup (Render 512MB)
-_models_loaded = False
-_face_mesh = None
-_hands = None
+load_model()
+load_hand_model()
+load_smoking_model()
+load_phone_model()
+load_phone_yolo_model()
 
 
-def _ensure_face_mesh_loaded() -> None:
-    """Chỉ OpenCV + MediaPipe FaceMesh — không unpickle sklearn (identity / vector mặt thô)."""
-    global cv2, _face_mesh
-    if _face_mesh is not None:
-        return
+# MediaPipe Face Mesh - khớp với collect_landmarks/convert_kaggle_face để inference chuẩn
+_face_mesh = mp.solutions.face_mesh.FaceMesh(
+    max_num_faces=1,
+    refine_landmarks=True,
+    min_detection_confidence=0.55,
+    min_tracking_confidence=0.55,
+    static_image_mode=True,  # mỗi request là 1 ảnh tĩnh → detect chuẩn hơn
+)
 
-    import cv2 as _cv2  # noqa: PLC0415
-
-    cv2 = _cv2
-
-    import mediapipe as mp  # noqa: PLC0415
-
-    _face_mesh = mp.solutions.face_mesh.FaceMesh(
-        max_num_faces=1,
-        refine_landmarks=True,
-        min_detection_confidence=0.55,
-        min_tracking_confidence=0.55,
-        static_image_mode=True,
-    )
-
-
-def _ensure_models_loaded() -> None:
-    """Load sklearn .pkl + MediaPipe Hands; FaceMesh dùng chung qua _ensure_face_mesh_loaded()."""
-    global _models_loaded, _hands, joblib
-
-    _ensure_face_mesh_loaded()
-
-    if _models_loaded:
-        return
-
-    import joblib as _joblib  # noqa: PLC0415
-
-    joblib = _joblib
-
-    load_hand_model()
-    load_model()
-
-    import mediapipe as mp  # noqa: PLC0415
-
-    if _hands is None:
-        _hands = mp.solutions.hands.Hands(
-            static_image_mode=True,
-            max_num_hands=2,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5,
-        )
-    _models_loaded = True
-
+# MediaPipe Hands - khớp với collect_hands
+_hands = mp.solutions.hands.Hands(
+    static_image_mode=True,  # mỗi request là 1 ảnh tĩnh
+    max_num_hands=2,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5,
+)
 
 NUM_LANDMARKS_PER_HAND = 21
 
@@ -459,17 +429,19 @@ def _hands_to_feature_vector(multi_hand_landmarks, multi_handedness) -> List[flo
     return _hands_to_vector(multi_hand_landmarks, multi_handedness)
 
 
-def _image_base64_to_landmarks(image_b64: str) -> List[float] | None:
+def _image_base64_to_landmarks(image_b64: str, flip: bool = False) -> List[float] | None:
     """
     Decode base64 → MediaPipe Face Mesh → vector 1434 số.
     Trả về None nếu không detect được mặt (để API trả no_face thay vì lỗi).
+    flip=True: lật ngang ảnh trước khi chạy MediaPipe (khớp với collect_landmarks.py dùng cv2.flip(frame,1)).
     """
-    _ensure_face_mesh_loaded()
     raw = base64.b64decode(image_b64)
     arr = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError("Không decode được ảnh từ base64.")
+    if flip:
+        img = cv2.flip(img, 1)
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     results = _face_mesh.process(rgb)
     if results.multi_face_landmarks is None or len(results.multi_face_landmarks) == 0:
@@ -483,7 +455,6 @@ def _image_base64_to_landmarks(image_b64: str) -> List[float] | None:
 
 def _image_base64_to_hand_landmarks(image_b64: str) -> List[float] | None:
     """Decode base64 → MediaPipe Hands → vector khớp hand_vec_len (63 hoặc 126)."""
-    _ensure_models_loaded()
     raw = base64.b64decode(image_b64)
     arr = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -587,45 +558,28 @@ def _get_face_embedding_from_image(image_b64: str) -> List[float] | None:
     return _normalize_face_embedding(vec)
 
 
-
-@app.get("/")
-def index() -> Any:
-    return jsonify({
-        "status": "ok",
-        "message": "DMS Backend is running",
-        "endpoints": [
-            "POST /api/hand/predict_from_frame",
-            "POST /api/landmark/predict_from_frame",
-            "POST /api/identity/register",
-            "POST /api/identity/verify",
-            "GET  /api/identity/driver_profile",
-            "POST /api/identity/request_decision",
-            "GET  /api/identity/decision_status",
-        ]
-    })
-
-
-@app.get("/api/ping-db")
-def ping_db() -> Any:
-    """Test MySQL connection — chỉ dùng để debug, xoá sau khi xong."""
-    try:
-        conn = get_mysql_conn()
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1")
-        conn.close()
-        return jsonify({
+@app.get("/health")
+def health() -> Any:
+    return jsonify(
+        {
             "status": "ok",
-            "message": "MySQL connected!",
-            "host": os.getenv("MYSQL_HOST", "N/A"),
-            "database": os.getenv("MYSQL_DATABASE", "N/A"),
-        })
-    except Exception as exc:
-        return jsonify({
-            "status": "error",
-            "error": str(exc),
-            "host": os.getenv("MYSQL_HOST", "N/A"),
-            "database": os.getenv("MYSQL_DATABASE", "N/A"),
-        }), 500
+            "model_loaded": model is not None,
+            "model_path": str(MODEL_PATH),
+            "labels": list(idx_to_label.values()),
+            "landmark_model_loaded": model is not None,
+            "landmark_model_path": str(MODEL_PATH),
+            "landmark_labels": list(idx_to_label.values()),
+            "hand_model_loaded": hand_model is not None,
+            "hand_model_path": str(HAND_MODEL_PATH),
+            "hand_labels": list(hand_idx_to_label.values()),
+            "smoking_model_loaded": smoking_model is not None,
+            "smoking_model_path": str(SMOKING_MODEL_PATH),
+            "smoking_labels": list(smoking_idx_to_label.values()),
+            "phone_model_loaded": phone_model is not None,
+            "phone_model_path": str(PHONE_MODEL_PATH),
+            "phone_labels": list(phone_idx_to_label.values()),
+        }
+    )
 
 
 def _parse_landmarks(payload: Dict[str, Any]) -> List[float]:
@@ -646,7 +600,6 @@ def _parse_landmarks(payload: Dict[str, Any]) -> List[float]:
 
 @app.post("/api/landmark/predict")
 def predict_landmark() -> Any:
-    _ensure_models_loaded()
     if model is None or not idx_to_label:
         return (
             jsonify(
@@ -711,7 +664,6 @@ def predict_from_frame() -> Any:
     rồi dùng model đã train để dự đoán label.
     Body JSON: { "image": "data:image/jpeg;base64,..." hoặc "base64_string" }
     """
-    _ensure_models_loaded()
     if model is None or not idx_to_label:
         return (
             jsonify(
@@ -744,10 +696,15 @@ def predict_from_frame() -> Any:
     if image_b64.startswith("data:"):
         image_b64 = image_b64.split(",", 1)[-1]
 
-    try:
-        vec = _image_base64_to_landmarks(image_b64)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+    # Thử flip=False trước (khớp training Kaggle — ảnh thẳng), fallback flip=True
+    vec = None
+    for flip_val in (False, True):
+        try:
+            vec = _image_base64_to_landmarks(image_b64, flip=flip_val)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        if vec is not None:
+            break
 
     if vec is None:
         return jsonify(
@@ -775,10 +732,22 @@ def predict_from_frame() -> Any:
         for i, p in enumerate(proba):
             scores[idx_to_label.get(i, str(i))] = float(p)
 
+    best_prob = float(max(scores.values())) if scores else None
+
+    # Ngưỡng tối thiểu: nếu model không tự tin, coi là "safe" (bình thường)
+    # Đặc biệt quan trọng khi model chỉ có 2 class (drowsy/yawning) mà không có "safe"
+    CONFIDENCE_THRESHOLD = float(os.getenv("LANDMARK_MIN_CONFIDENCE", "0.52"))
+    MARGIN_THRESHOLD = float(os.getenv("LANDMARK_MIN_MARGIN", "0.05"))
+    if scores and len(scores) >= 2:
+        sorted_probs = sorted(scores.values(), reverse=True)
+        margin = sorted_probs[0] - sorted_probs[1]
+        if best_prob is not None and (best_prob < CONFIDENCE_THRESHOLD or margin < MARGIN_THRESHOLD):
+            label = "safe"
+
     return jsonify(
         {
             "label": label,
-            "prob": float(max(scores.values())) if scores else None,
+            "prob": best_prob,
             "scores": scores,
         }
     )
@@ -797,7 +766,6 @@ def smoking_predict_from_frame() -> Any:
 
     Body JSON: { "image": "data:image/jpeg;base64,..." hoặc "base64_string" }
     """
-    _ensure_models_loaded()
     if smoking_model is None or not smoking_idx_to_label:
         return (
             jsonify(
@@ -895,7 +863,6 @@ def phone_predict_from_frame() -> Any:
 
     Body JSON: { "image": "data:image/jpeg;base64,..." hoặc "base64_string" }
     """
-    _ensure_models_loaded()
     if phone_model is None or not phone_idx_to_label:
         return (
             jsonify(
@@ -988,7 +955,6 @@ def phone_detect_from_frame() -> Any:
       }
     với x,y,w,h là toạ độ chuẩn hoá [0,1] theo width/height, (x,y) là tâm bbox.
     """
-    _ensure_models_loaded()
     if phone_yolo_model is None:
         return (
             jsonify(
@@ -1094,7 +1060,6 @@ def predict_hand() -> Any:
     → dự đoán ký hiệu tay.
     Body JSON: { "landmarks": [...] } độ dài khớp vec_len của model đã train.
     """
-    _ensure_models_loaded()
     if hand_model is None or not hand_idx_to_label:
         return (
             jsonify(
@@ -1191,7 +1156,6 @@ def hand_predict_from_frame() -> Any:
     rồi dùng hand model đã train để dự đoán ký hiệu tay.
     Body JSON: { "image": "data:image/jpeg;base64,..." hoặc "base64_string" }
     """
-    _ensure_models_loaded()
     if hand_model is None or not hand_idx_to_label:
         return (
             jsonify(
@@ -1323,11 +1287,11 @@ def identity_register() -> Any:
                 """
                 INSERT INTO driver_identity (driver_id, name, embedding_json, image_base64, created_at)
                 VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (driver_id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    embedding_json = EXCLUDED.embedding_json,
-                    image_base64 = EXCLUDED.image_base64,
-                    created_at = EXCLUDED.created_at
+                ON DUPLICATE KEY UPDATE
+                    name = VALUES(name),
+                    embedding_json = VALUES(embedding_json),
+                    image_base64 = VALUES(image_base64),
+                    created_at = VALUES(created_at)
                 """,
                 (driver_id, name, embedding_json, image_b64, created_at),
             )
@@ -1537,10 +1501,10 @@ def bind_driver_telegram_owner() -> Any:
                 INSERT INTO driver_telegram_owner
                     (driver_id, telegram_chat_id, telegram_user_id, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (driver_id) DO UPDATE SET
-                    telegram_chat_id = EXCLUDED.telegram_chat_id,
-                    telegram_user_id = EXCLUDED.telegram_user_id,
-                    updated_at = EXCLUDED.updated_at
+                ON DUPLICATE KEY UPDATE
+                    telegram_chat_id = VALUES(telegram_chat_id),
+                    telegram_user_id = VALUES(telegram_user_id),
+                    updated_at = VALUES(updated_at)
                 """,
                 (driver_id, chat_id, user_id, now, now),
             )
@@ -1664,11 +1628,10 @@ def request_identity_decision() -> Any:
                 INSERT INTO identity_decision_requests
                     (driver_id, status, reason, similarity, threshold, requested_at, expires_at, telegram_chat_id)
                 VALUES (%s, 'pending', %s, %s, %s, %s, %s, %s)
-                RETURNING request_id
                 """,
                 (driver_id, reason, similarity_val, threshold_val, now, expires, chat_id),
             )
-            request_id = int(cur.fetchone()[0])
+            request_id = int(cur.lastrowid)
 
             try:
                 msg_id = _telegram_send_decision_message(
@@ -1886,10 +1849,10 @@ def telegram_webhook() -> Any:
                         INSERT INTO driver_telegram_owner
                             (driver_id, telegram_chat_id, telegram_user_id, created_at, updated_at)
                         VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (driver_id) DO UPDATE SET
-                            telegram_chat_id = EXCLUDED.telegram_chat_id,
-                            telegram_user_id = EXCLUDED.telegram_user_id,
-                            updated_at = EXCLUDED.updated_at
+                        ON DUPLICATE KEY UPDATE
+                            telegram_chat_id = VALUES(telegram_chat_id),
+                            telegram_user_id = VALUES(telegram_user_id),
+                            updated_at = VALUES(updated_at)
                         """,
                         (driver_id, chat_id, user_id, now, now),
                     )
@@ -1922,11 +1885,10 @@ def driving_session_start() -> Any:
                 """
                 INSERT INTO driving_sessions (driver_id, label, started_at, ended_at)
                 VALUES (%s, %s, %s, NULL)
-                RETURNING id
                 """,
                 (driver_id, label, now),
             )
-            sid = cur.fetchone()[0]
+            sid = cur.lastrowid
         conn.commit()
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
@@ -2012,7 +1974,7 @@ def driving_session_alert() -> Any:
                 """
                 INSERT INTO driving_session_alerts (session_id, alert_type, count)
                 VALUES (%s, %s, %s)
-                ON CONFLICT (session_id, alert_type) DO UPDATE SET count = driving_session_alerts.count + EXCLUDED.count
+                ON DUPLICATE KEY UPDATE count = count + VALUES(count)
                 """,
                 (session_id, alert_type, delta),
             )
@@ -2149,7 +2111,7 @@ def driving_session_detail(session_id: int) -> Any:
     )
 
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 
 # phone pro
