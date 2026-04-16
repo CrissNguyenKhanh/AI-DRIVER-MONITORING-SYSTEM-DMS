@@ -111,6 +111,7 @@ phone_yolo_model = None
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")  # Render PostgreSQL internal URL
+POSTGRES_ACTIVE = bool(DATABASE_URL and POSTGRES_AVAILABLE)
 
 
 def get_mysql_conn():
@@ -122,76 +123,160 @@ def get_mysql_conn():
 
 
 def _ensure_identity_tables(cur) -> None:
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS driver_identity (
-            driver_id      VARCHAR(64) PRIMARY KEY,
-            name           VARCHAR(255),
-            embedding_json TEXT NOT NULL,
-            image_base64   TEXT,
-            created_at     TIMESTAMP NOT NULL
+    if POSTGRES_ACTIVE:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS driver_identity (
+                driver_id      VARCHAR(64) PRIMARY KEY,
+                name           VARCHAR(255),
+                embedding_json TEXT NOT NULL,
+                image_base64   TEXT,
+                created_at     TIMESTAMP NOT NULL
+            )
+            """
         )
-        """
-    )
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS driver_telegram_owner (
-            driver_id         VARCHAR(64) PRIMARY KEY,
-            telegram_chat_id  BIGINT NOT NULL,
-            telegram_user_id  BIGINT NULL,
-            created_at        TIMESTAMP NOT NULL,
-            updated_at        TIMESTAMP NOT NULL
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS driver_telegram_owner (
+                driver_id         VARCHAR(64) PRIMARY KEY,
+                telegram_chat_id  BIGINT NOT NULL,
+                telegram_user_id  BIGINT NULL,
+                created_at        TIMESTAMP NOT NULL,
+                updated_at        TIMESTAMP NOT NULL
+            )
+            """
         )
-        """
-    )
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS identity_decision_requests (
-            request_id           BIGSERIAL PRIMARY KEY,
-            driver_id            VARCHAR(64) NOT NULL,
-            status               VARCHAR(16) NOT NULL,
-            reason               VARCHAR(64) NULL,
-            similarity           DOUBLE PRECISION NULL,
-            threshold            DOUBLE PRECISION NULL,
-            requested_at         TIMESTAMP NOT NULL,
-            expires_at           TIMESTAMP NOT NULL,
-            decided_at           TIMESTAMP NULL,
-            decided_by_chat_id   BIGINT NULL,
-            telegram_chat_id     BIGINT NULL,
-            telegram_message_id  BIGINT NULL
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS identity_decision_requests (
+                request_id           BIGSERIAL PRIMARY KEY,
+                driver_id            VARCHAR(64) NOT NULL,
+                status               VARCHAR(16) NOT NULL,
+                reason               VARCHAR(64) NULL,
+                similarity           DOUBLE PRECISION NULL,
+                threshold            DOUBLE PRECISION NULL,
+                requested_at         TIMESTAMP NOT NULL,
+                expires_at           TIMESTAMP NOT NULL,
+                decided_at           TIMESTAMP NULL,
+                decided_by_chat_id   BIGINT NULL,
+                telegram_chat_id     BIGINT NULL,
+                telegram_message_id  BIGINT NULL
+            )
+            """
         )
-        """
-    )
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_identity_driver ON identity_decision_requests (driver_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_identity_status ON identity_decision_requests (status)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_identity_expires ON identity_decision_requests (expires_at)")
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_identity_driver ON identity_decision_requests (driver_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_identity_status ON identity_decision_requests (status)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_identity_expires ON identity_decision_requests (expires_at)"
+        )
+    else:
+        # MariaDB/MySQL schema
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS driver_identity (
+                driver_id      VARCHAR(64) PRIMARY KEY,
+                name           VARCHAR(255),
+                embedding_json TEXT NOT NULL,
+                image_base64   TEXT,
+                created_at     DATETIME NOT NULL
+            ) ENGINE=InnoDB
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS driver_telegram_owner (
+                driver_id         VARCHAR(64) PRIMARY KEY,
+                telegram_chat_id  BIGINT NOT NULL,
+                telegram_user_id  BIGINT NULL,
+                created_at        DATETIME NOT NULL,
+                updated_at        DATETIME NOT NULL
+            ) ENGINE=InnoDB
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS identity_decision_requests (
+                request_id           BIGINT AUTO_INCREMENT PRIMARY KEY,
+                driver_id            VARCHAR(64) NOT NULL,
+                status               VARCHAR(16) NOT NULL,
+                reason               VARCHAR(64) NULL,
+                similarity           DOUBLE NULL,
+                threshold            DOUBLE NULL,
+                requested_at         DATETIME NOT NULL,
+                expires_at           DATETIME NOT NULL,
+                decided_at           DATETIME NULL,
+                decided_by_chat_id   BIGINT NULL,
+                telegram_chat_id     BIGINT NULL,
+                telegram_message_id  BIGINT NULL,
+                INDEX idx_identity_driver (driver_id),
+                INDEX idx_identity_status (status),
+                INDEX idx_identity_expires (expires_at)
+            ) ENGINE=InnoDB
+            """
+        )
 
 
 def _ensure_driving_session_tables(cur) -> None:
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS driving_sessions (
-            id         BIGSERIAL PRIMARY KEY,
-            driver_id  VARCHAR(64) NULL,
-            label      VARCHAR(128) NULL,
-            started_at TIMESTAMP NOT NULL,
-            ended_at   TIMESTAMP NULL
+    if POSTGRES_ACTIVE:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS driving_sessions (
+                id         BIGSERIAL PRIMARY KEY,
+                driver_id  VARCHAR(64) NULL,
+                label      VARCHAR(128) NULL,
+                started_at TIMESTAMP NOT NULL,
+                ended_at   TIMESTAMP NULL
+            )
+            """
         )
-        """
-    )
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_driving_driver ON driving_sessions (driver_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_driving_started ON driving_sessions (started_at)")
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS driving_session_alerts (
-            session_id BIGINT NOT NULL,
-            alert_type VARCHAR(32) NOT NULL,
-            count      INT NOT NULL DEFAULT 0,
-            PRIMARY KEY (session_id, alert_type)
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_driving_driver ON driving_sessions (driver_id)"
         )
-        """
-    )
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_dsa_session ON driving_session_alerts (session_id)")
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_driving_started ON driving_sessions (started_at)"
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS driving_session_alerts (
+                session_id BIGINT NOT NULL,
+                alert_type VARCHAR(32) NOT NULL,
+                count      INT NOT NULL DEFAULT 0,
+                PRIMARY KEY (session_id, alert_type)
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_dsa_session ON driving_session_alerts (session_id)"
+        )
+    else:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS driving_sessions (
+                id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+                driver_id  VARCHAR(64) NULL,
+                label      VARCHAR(128) NULL,
+                started_at DATETIME NOT NULL,
+                ended_at   DATETIME NULL,
+                INDEX idx_driving_driver (driver_id),
+                INDEX idx_driving_started (started_at)
+            ) ENGINE=InnoDB
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS driving_session_alerts (
+                session_id BIGINT NOT NULL,
+                alert_type VARCHAR(32) NOT NULL,
+                count      INT NOT NULL DEFAULT 0,
+                PRIMARY KEY (session_id, alert_type),
+                INDEX idx_dsa_session (session_id)
+            ) ENGINE=InnoDB
+            """
+        )
 
 
 DRIVING_ALERT_TYPES = frozenset(
