@@ -264,6 +264,36 @@ def _telegram_send_text(chat_id: int, text: str) -> None:
     _telegram_call("sendMessage", {"chat_id": str(chat_id), "text": text})
 
 
+def _compat_joblib_load(path: Path) -> Any:
+    """
+    Load pickle and retry with NumPy BitGenerator compatibility patch.
+    Some environments pickle bit generator as class object (e.g. MT19937 class)
+    while others expect its string name.
+    """
+    try:
+        return joblib.load(path)
+    except Exception as exc:
+        if "is not a known BitGenerator module" not in str(exc):
+            raise
+        try:
+            import numpy.random._pickle as np_pickle  # type: ignore[attr-defined]  # noqa: PLC0415
+
+            orig_ctor = getattr(np_pickle, "__bit_generator_ctor", None)
+            if orig_ctor is None:
+                raise exc
+
+            def _patched_ctor(bit_generator_name: Any = "MT19937"):
+                if isinstance(bit_generator_name, type):
+                    bit_generator_name = bit_generator_name.__name__
+                return orig_ctor(bit_generator_name)
+
+            np_pickle.__bit_generator_ctor = _patched_ctor
+            app.logger.warning("Applied NumPy BitGenerator compatibility patch for %s", path)
+            return joblib.load(path)
+        except Exception:
+            raise exc
+
+
 def load_model() -> None:
     global artifact, model, idx_to_label
     if not MODEL_PATH.exists():
@@ -272,7 +302,7 @@ def load_model() -> None:
         idx_to_label = {}
         return
 
-    artifact = joblib.load(MODEL_PATH)
+    artifact = _compat_joblib_load(MODEL_PATH)
     model = artifact.get("model")
     label_to_idx = artifact.get("label_to_idx", {})
     idx_to_label = {v: k for k, v in label_to_idx.items()}
@@ -287,7 +317,7 @@ def load_hand_model() -> None:
         hand_vec_len = 126
         return
 
-    hand_artifact = joblib.load(HAND_MODEL_PATH)
+    hand_artifact = _compat_joblib_load(HAND_MODEL_PATH)
     hand_model = hand_artifact.get("model")
     label_to_idx = hand_artifact.get("label_to_idx", {})
     hand_idx_to_label = {v: k for k, v in label_to_idx.items()}
@@ -305,7 +335,7 @@ def load_smoking_model() -> None:
         smoking_idx_to_label = {}
         return
 
-    smoking_artifact = joblib.load(SMOKING_MODEL_PATH)
+    smoking_artifact = _compat_joblib_load(SMOKING_MODEL_PATH)
     smoking_model = smoking_artifact.get("model")
     label_to_idx = smoking_artifact.get("label_to_idx", {})
     smoking_idx_to_label = {v: k for k, v in label_to_idx.items()}
@@ -320,7 +350,7 @@ def load_phone_model() -> None:
         phone_image_size = None
         return
 
-    phone_artifact = joblib.load(PHONE_MODEL_PATH)
+    phone_artifact = _compat_joblib_load(PHONE_MODEL_PATH)
     phone_model = phone_artifact.get("model")
     label_to_idx = phone_artifact.get("label_to_idx", {})
     phone_idx_to_label = {v: k for k, v in label_to_idx.items()}
