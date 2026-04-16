@@ -2,6 +2,7 @@ from __future__ import annotations
 from flask_socketio import SocketIO, emit
 import base64
 import os
+import threading
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -294,6 +295,11 @@ def _compat_joblib_load(path: Path) -> Any:
             raise exc
 
 
+_model_train_lock = threading.Lock()
+_trained_fallback_landmark = False
+_trained_fallback_hand = False
+
+
 def load_model() -> None:
     global artifact, model, idx_to_label
     if not MODEL_PATH.exists():
@@ -302,7 +308,25 @@ def load_model() -> None:
         idx_to_label = {}
         return
 
-    artifact = _compat_joblib_load(MODEL_PATH)
+    try:
+        artifact = _compat_joblib_load(MODEL_PATH)
+    except Exception as exc:
+        # If pickle is incompatible across NumPy versions, train from CSV (small datasets)
+        app.logger.warning("load_model failed (%s). Training fallback...", exc)
+        with _model_train_lock:
+            global _trained_fallback_landmark
+            if not _trained_fallback_landmark:
+                from driver_training.train.train_landmarks import train_landmark_model
+
+                csv_path = BASE_DIR / "driver_training" / "collect" / "data" / "landmarks.csv"
+                train_landmark_model(
+                    csv_path=csv_path,
+                    model_path=MODEL_PATH,
+                    test_size=float(os.getenv("LANDMARK_TEST_SIZE", "0.2")),
+                    random_state=int(os.getenv("LANDMARK_RANDOM_STATE", "42")),
+                )
+                _trained_fallback_landmark = True
+        artifact = _compat_joblib_load(MODEL_PATH)
     model = artifact.get("model")
     label_to_idx = artifact.get("label_to_idx", {})
     idx_to_label = {v: k for k, v in label_to_idx.items()}
@@ -317,7 +341,24 @@ def load_hand_model() -> None:
         hand_vec_len = 126
         return
 
-    hand_artifact = _compat_joblib_load(HAND_MODEL_PATH)
+    try:
+        hand_artifact = _compat_joblib_load(HAND_MODEL_PATH)
+    except Exception as exc:
+        app.logger.warning("load_hand_model failed (%s). Training fallback...", exc)
+        with _model_train_lock:
+            global _trained_fallback_hand
+            if not _trained_fallback_hand:
+                from driver_training.train.train_hands import train_hand_model
+
+                csv_path = BASE_DIR / "driver_training" / "collect" / "hand_dataset.csv"
+                train_hand_model(
+                    csv_path=csv_path,
+                    model_path=HAND_MODEL_PATH,
+                    test_size=float(os.getenv("HAND_TEST_SIZE", "0.15")),
+                    random_state=int(os.getenv("HAND_RANDOM_STATE", "42")),
+                )
+                _trained_fallback_hand = True
+        hand_artifact = _compat_joblib_load(HAND_MODEL_PATH)
     hand_model = hand_artifact.get("model")
     label_to_idx = hand_artifact.get("label_to_idx", {})
     hand_idx_to_label = {v: k for k, v in label_to_idx.items()}
