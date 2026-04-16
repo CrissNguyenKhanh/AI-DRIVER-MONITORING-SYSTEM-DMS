@@ -471,7 +471,9 @@ def _ensure_face_mesh_loaded() -> None:
         refine_landmarks=True,
         min_detection_confidence=0.55,
         min_tracking_confidence=0.55,
-        static_image_mode=True,
+        # Match training collector (collect_landmarks.py): static_image_mode mặc định False
+        # để landmark ổn định hơn cho chuỗi frame liên tiếp.
+        static_image_mode=False,
     )
 
 
