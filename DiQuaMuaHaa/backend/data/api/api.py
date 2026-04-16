@@ -2515,4 +2515,12 @@ def handle_smoking_frame(data):
 
 
 if __name__ == "__main__":
-      socketio.run(app, host="0.0.0.0", port=8000, debug=True, allow_unsafe_werkzeug=True)
+    port = int(os.getenv("PORT", "8000"))
+    debug = os.getenv("DEBUG", "0").lower() in ("1", "true", "yes")
+    socketio.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        debug=debug,
+        allow_unsafe_werkzeug=True,
+    )
