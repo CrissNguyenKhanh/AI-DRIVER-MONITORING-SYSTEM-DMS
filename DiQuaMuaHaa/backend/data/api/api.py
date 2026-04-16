@@ -37,6 +37,20 @@ CORS(app, origins="*", supports_credentials=True)
 # Tránh lỗi server khi client gửi base64 ảnh quá lớn
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25MB
 
+# Khi worker crash / exception ngoài view, vẫn gửi CORS để browser không báo sai "CORS"
+@app.after_request
+def _cors_all_responses(response: Any):
+    response.headers.setdefault("Access-Control-Allow-Origin", "*")
+    response.headers.setdefault(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, X-Requested-With",
+    )
+    response.headers.setdefault(
+        "Access-Control-Allow-Methods",
+        "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+    )
+    return response
+
 
 @app.errorhandler(413)
 def too_large(_err):
@@ -61,6 +75,9 @@ MYSQL_CONFIG = {
     "charset": "utf8mb4",
     "cursorclass": pymysql.cursors.DictCursor,
 }
+
+# Mô hình landmark chỉ có 2 class (drowsy/yawning): nếu top1 - top2 < margin → coi là "safe" (không chắc)
+LANDMARK_AMBIGUOUS_MARGIN = float(os.getenv("LANDMARK_AMBIGUOUS_MARGIN", "0.12"))
 
 IDENTITY_SIM_THRESHOLD = float(os.getenv("IDENTITY_SIM_THRESHOLD", "0.975"))
 IDENTITY_MIN_REGISTER_SAMPLES = int(os.getenv("IDENTITY_MIN_REGISTER_SAMPLES", "3"))
@@ -711,77 +728,113 @@ def predict_from_frame() -> Any:
     rồi dùng model đã train để dự đoán label.
     Body JSON: { "image": "data:image/jpeg;base64,..." hoặc "base64_string" }
     """
-    _ensure_models_loaded()
-    if model is None or not idx_to_label:
+    try:
+        try:
+            _ensure_models_loaded()
+        except Exception as exc:
+            return (
+                jsonify(
+                    {
+                        "error": f"Không load được model/MediaPipe: {exc}",
+                        "model_path": str(MODEL_PATH),
+                    }
+                ),
+                503,
+            )
+
+        if model is None or not idx_to_label:
+            return (
+                jsonify(
+                    {
+                        "error": "Model chưa được load. Hãy train model trước (train_landmarks.py).",
+                        "model_path": str(MODEL_PATH),
+                    }
+                ),
+                500,
+            )
+
+        try:
+            payload = request.get_json(force=True, silent=False)
+            if payload is None:
+                raise ValueError("Body phải là JSON hợp lệ.")
+        except Exception:
+            return (
+                jsonify(
+                    {
+                        "error": "Không đọc được JSON body. Hãy gửi Content-Type: application/json.",
+                    }
+                ),
+                400,
+            )
+
+        image_b64 = payload.get("image")
+        if not image_b64 or not isinstance(image_b64, str):
+            return jsonify({"error": "Thiếu trường 'image' (base64) trong JSON body."}), 400
+
+        if image_b64.startswith("data:"):
+            image_b64 = image_b64.split(",", 1)[-1]
+
+        try:
+            vec = _image_base64_to_landmarks(image_b64)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        if vec is None:
+            return jsonify(
+                {
+                    "label": "no_face",
+                    "prob": None,
+                    "scores": {},
+                }
+            )
+
+        x = np.asarray(vec, dtype=np.float32).reshape(1, -1)
+
+        try:
+            pred_idx = int(model.predict(x)[0])
+            if hasattr(model, "predict_proba"):
+                proba = model.predict_proba(x)[0]
+            else:
+                proba = None
+        except Exception as exc:
+            return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
+
+        label = idx_to_label.get(pred_idx, str(pred_idx))
+        scores: Dict[str, float] = {}
+        if proba is not None:
+            for i, p in enumerate(proba):
+                scores[idx_to_label.get(i, str(i))] = float(p)
+
+        top_prob = float(max(scores.values())) if scores else None
+
+        # Dataset 2 class (drowsy/yawning): khi hai xác suất sát nhau → coi là bình thường (safe)
+        if proba is not None and len(proba) >= 2:
+            sorted_p = sorted(float(p) for p in proba)
+            margin = sorted_p[-1] - sorted_p[-2]
+            if margin < LANDMARK_AMBIGUOUS_MARGIN:
+                label = "safe"
+                top_prob = float(margin)
+
+        return jsonify(
+            {
+                "label": label,
+                "prob": top_prob,
+                "scores": scores,
+            }
+        )
+    except Exception as exc:
+        import traceback
+
+        app.logger.exception("predict_from_frame: %s", exc)
         return (
             jsonify(
                 {
-                    "error": "Model chưa được load. Hãy train model trước (train_landmarks.py).",
-                    "model_path": str(MODEL_PATH),
+                    "error": str(exc),
+                    "trace": traceback.format_exc()[-4000:],
                 }
             ),
             500,
         )
-
-    try:
-        payload = request.get_json(force=True, silent=False)
-        if payload is None:
-            raise ValueError("Body phải là JSON hợp lệ.")
-    except Exception:
-        return (
-            jsonify(
-                {
-                    "error": "Không đọc được JSON body. Hãy gửi Content-Type: application/json.",
-                }
-            ),
-            400,
-        )
-
-    image_b64 = payload.get("image")
-    if not image_b64 or not isinstance(image_b64, str):
-        return jsonify({"error": "Thiếu trường 'image' (base64) trong JSON body."}), 400
-
-    if image_b64.startswith("data:"):
-        image_b64 = image_b64.split(",", 1)[-1]
-
-    try:
-        vec = _image_base64_to_landmarks(image_b64)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-
-    if vec is None:
-        return jsonify(
-            {
-                "label": "no_face",
-                "prob": None,
-                "scores": {},
-            }
-        )
-
-    x = np.asarray(vec, dtype=np.float32).reshape(1, -1)
-
-    try:
-        pred_idx = int(model.predict(x)[0])
-        if hasattr(model, "predict_proba"):
-            proba = model.predict_proba(x)[0]
-        else:
-            proba = None
-    except Exception as exc:
-        return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
-
-    label = idx_to_label.get(pred_idx, str(pred_idx))
-    scores: Dict[str, float] = {}
-    if proba is not None:
-        for i, p in enumerate(proba):
-            scores[idx_to_label.get(i, str(i))] = float(p)
-
-    return jsonify(
-        {
-            "label": label,
-            "prob": float(max(scores.values())) if scores else None,
-            "scores": scores,
-        }
-    )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1191,71 +1244,97 @@ def hand_predict_from_frame() -> Any:
     rồi dùng hand model đã train để dự đoán ký hiệu tay.
     Body JSON: { "image": "data:image/jpeg;base64,..." hoặc "base64_string" }
     """
-    _ensure_models_loaded()
-    if hand_model is None or not hand_idx_to_label:
+    try:
+        try:
+            _ensure_models_loaded()
+        except Exception as exc:
+            return (
+                jsonify(
+                    {
+                        "error": f"Không load được model/MediaPipe: {exc}",
+                        "model_path": str(HAND_MODEL_PATH),
+                    }
+                ),
+                503,
+            )
+
+        if hand_model is None or not hand_idx_to_label:
+            return (
+                jsonify(
+                    {
+                        "error": "Hand model chưa được load. Hãy train model trước (train_hands.py).",
+                        "model_path": str(HAND_MODEL_PATH),
+                    }
+                ),
+                500,
+            )
+
+        try:
+            payload = request.get_json(force=True, silent=False)
+            if payload is None:
+                raise ValueError("Body phải là JSON hợp lệ.")
+        except Exception:
+            return (
+                jsonify(
+                    {
+                        "error": "Không đọc được JSON body. Hãy gửi Content-Type: application/json.",
+                    }
+                ),
+                400,
+            )
+
+        image_b64 = payload.get("image")
+        if not image_b64 or not isinstance(image_b64, str):
+            return jsonify({"error": "Thiếu trường 'image' (base64) trong JSON body."}), 400
+
+        if image_b64.startswith("data:"):
+            image_b64 = image_b64.split(",", 1)[-1]
+
+        try:
+            vec = _image_base64_to_hand_landmarks(image_b64)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        if vec is None:
+            return _json_hand_no_hand_in_frame()
+
+        x = np.asarray(vec, dtype=np.float32).reshape(1, -1)
+
+        try:
+            pred_idx = int(hand_model.predict(x)[0])
+            if hasattr(hand_model, "predict_proba"):
+                proba = hand_model.predict_proba(x)[0]
+            else:
+                proba = None
+        except Exception as exc:
+            return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
+
+        label = hand_idx_to_label.get(pred_idx, str(pred_idx))
+        scores: Dict[str, float] = {}
+        if proba is not None:
+            for i, p in enumerate(proba):
+                scores[hand_idx_to_label.get(i, str(i))] = float(p)
+
+        return jsonify(
+            {
+                "label": label,
+                "prob": float(max(scores.values())) if scores else None,
+                "scores": scores,
+            }
+        )
+    except Exception as exc:
+        import traceback
+
+        app.logger.exception("hand_predict_from_frame: %s", exc)
         return (
             jsonify(
                 {
-                    "error": "Hand model chưa được load. Hãy train model trước (train_hands.py).",
-                    "model_path": str(HAND_MODEL_PATH),
+                    "error": str(exc),
+                    "trace": traceback.format_exc()[-4000:],
                 }
             ),
             500,
         )
-
-    try:
-        payload = request.get_json(force=True, silent=False)
-        if payload is None:
-            raise ValueError("Body phải là JSON hợp lệ.")
-    except Exception:
-        return (
-            jsonify(
-                {
-                    "error": "Không đọc được JSON body. Hãy gửi Content-Type: application/json.",
-                }
-            ),
-            400,
-        )
-
-    image_b64 = payload.get("image")
-    if not image_b64 or not isinstance(image_b64, str):
-        return jsonify({"error": "Thiếu trường 'image' (base64) trong JSON body."}), 400
-
-    if image_b64.startswith("data:"):
-        image_b64 = image_b64.split(",", 1)[-1]
-
-    try:
-        vec = _image_base64_to_hand_landmarks(image_b64)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-
-    if vec is None:
-        return _json_hand_no_hand_in_frame()
-
-    x = np.asarray(vec, dtype=np.float32).reshape(1, -1)
-
-    try:
-        pred_idx = int(hand_model.predict(x)[0])
-        if hasattr(hand_model, "predict_proba"):
-            proba = hand_model.predict_proba(x)[0]
-        else:
-            proba = None
-    except Exception as exc:
-        return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
-
-    label = hand_idx_to_label.get(pred_idx, str(pred_idx))
-    scores: Dict[str, float] = {}
-    if proba is not None:
-        for i, p in enumerate(proba):
-            scores[hand_idx_to_label.get(i, str(i))] = float(p)
-
-    return jsonify(
-        {
-            "label": label,
-            "prob": float(max(scores.values())) if scores else None,
-            "scores": scores,
-        }
-    )
 
 
 # ═══════════════════════════════════════════════════════════════
