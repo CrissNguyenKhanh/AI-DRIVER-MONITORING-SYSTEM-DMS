@@ -267,32 +267,17 @@ def _telegram_send_text(chat_id: int, text: str) -> None:
 
 def _compat_joblib_load(path: Path) -> Any:
     """
-    Load pickle and retry with NumPy BitGenerator compatibility patch.
-    Some environments pickle bit generator as class object (e.g. MT19937 class)
-    while others expect its string name.
+    Load a joblib/pickle file.
+
+    Note: trước đây mình có thử "patch" NumPy BitGenerator để tương thích pickle
+    giữa các môi trường, nhưng việc patch sai có thể làm unpickle tạo lỗi mới
+    (do hàm patch nằm trong scope local và không thể picklable).
+
+    Chiến lược hiện tại: nếu joblib.load fail thì các hàm `load_model()` /
+    `load_hand_model()` sẽ kích hoạt "train fallback" (train lại từ CSV trong repo)
+    để tạo file pkl tương thích đúng với môi trường Render.
     """
-    try:
-        return joblib.load(path)
-    except Exception as exc:
-        if "is not a known BitGenerator module" not in str(exc):
-            raise
-        try:
-            import numpy.random._pickle as np_pickle  # type: ignore[attr-defined]  # noqa: PLC0415
-
-            orig_ctor = getattr(np_pickle, "__bit_generator_ctor", None)
-            if orig_ctor is None:
-                raise exc
-
-            def _patched_ctor(bit_generator_name: Any = "MT19937"):
-                if isinstance(bit_generator_name, type):
-                    bit_generator_name = bit_generator_name.__name__
-                return orig_ctor(bit_generator_name)
-
-            np_pickle.__bit_generator_ctor = _patched_ctor
-            app.logger.warning("Applied NumPy BitGenerator compatibility patch for %s", path)
-            return joblib.load(path)
-        except Exception:
-            raise exc
+    return joblib.load(path)
 
 
 _model_train_lock = threading.Lock()
