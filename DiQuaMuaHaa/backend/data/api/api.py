@@ -633,6 +633,7 @@ def _parse_landmarks(payload: Dict[str, Any]) -> List[float]:
 
 @app.post("/api/landmark/predict")
 def predict_landmark() -> Any:
+    _ensure_models_loaded()
     if model is None or not idx_to_label:
         return (
             jsonify(
@@ -697,6 +698,7 @@ def predict_from_frame() -> Any:
     rồi dùng model đã train để dự đoán label.
     Body JSON: { "image": "data:image/jpeg;base64,..." hoặc "base64_string" }
     """
+    _ensure_models_loaded()
     if model is None or not idx_to_label:
         return (
             jsonify(
@@ -782,6 +784,7 @@ def smoking_predict_from_frame() -> Any:
 
     Body JSON: { "image": "data:image/jpeg;base64,..." hoặc "base64_string" }
     """
+    _ensure_models_loaded()
     if smoking_model is None or not smoking_idx_to_label:
         return (
             jsonify(
@@ -879,6 +882,7 @@ def phone_predict_from_frame() -> Any:
 
     Body JSON: { "image": "data:image/jpeg;base64,..." hoặc "base64_string" }
     """
+    _ensure_models_loaded()
     if phone_model is None or not phone_idx_to_label:
         return (
             jsonify(
@@ -971,6 +975,7 @@ def phone_detect_from_frame() -> Any:
       }
     với x,y,w,h là toạ độ chuẩn hoá [0,1] theo width/height, (x,y) là tâm bbox.
     """
+    _ensure_models_loaded()
     if phone_yolo_model is None:
         return (
             jsonify(
@@ -1076,6 +1081,7 @@ def predict_hand() -> Any:
     → dự đoán ký hiệu tay.
     Body JSON: { "landmarks": [...] } độ dài khớp vec_len của model đã train.
     """
+    _ensure_models_loaded()
     if hand_model is None or not hand_idx_to_label:
         return (
             jsonify(
@@ -1172,6 +1178,7 @@ def hand_predict_from_frame() -> Any:
     rồi dùng hand model đã train để dự đoán ký hiệu tay.
     Body JSON: { "image": "data:image/jpeg;base64,..." hoặc "base64_string" }
     """
+    _ensure_models_loaded()
     if hand_model is None or not hand_idx_to_label:
         return (
             jsonify(
