@@ -146,7 +146,7 @@ def _ensure_identity_tables(cur) -> None:
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS identity_decision_requests (
-            request_id           BIGSERIAL PRIMARY KEY,
+            request_id           BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             driver_id            VARCHAR(64) NOT NULL,
             status               VARCHAR(16) NOT NULL,
             reason               VARCHAR(64) NULL,
@@ -170,7 +170,7 @@ def _ensure_driving_session_tables(cur) -> None:
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS driving_sessions (
-            id         BIGSERIAL PRIMARY KEY,
+            id         BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             driver_id  VARCHAR(64) NULL,
             label      VARCHAR(128) NULL,
             started_at TIMESTAMP NOT NULL,
@@ -1513,11 +1513,11 @@ def identity_register() -> Any:
                 """
                 INSERT INTO driver_identity (driver_id, name, embedding_json, image_base64, created_at)
                 VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (driver_id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    embedding_json = EXCLUDED.embedding_json,
-                    image_base64 = EXCLUDED.image_base64,
-                    created_at = EXCLUDED.created_at
+                ON DUPLICATE KEY UPDATE
+                    name = VALUES(name),
+                    embedding_json = VALUES(embedding_json),
+                    image_base64 = VALUES(image_base64),
+                    created_at = VALUES(created_at)
                 """,
                 (driver_id, name, embedding_json, image_b64, created_at),
             )
@@ -1727,10 +1727,10 @@ def bind_driver_telegram_owner() -> Any:
                 INSERT INTO driver_telegram_owner
                     (driver_id, telegram_chat_id, telegram_user_id, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (driver_id) DO UPDATE SET
-                    telegram_chat_id = EXCLUDED.telegram_chat_id,
-                    telegram_user_id = EXCLUDED.telegram_user_id,
-                    updated_at = EXCLUDED.updated_at
+                ON DUPLICATE KEY UPDATE
+                    telegram_chat_id = VALUES(telegram_chat_id),
+                    telegram_user_id = VALUES(telegram_user_id),
+                    updated_at = VALUES(updated_at)
                 """,
                 (driver_id, chat_id, user_id, now, now),
             )
@@ -2076,10 +2076,10 @@ def telegram_webhook() -> Any:
                         INSERT INTO driver_telegram_owner
                             (driver_id, telegram_chat_id, telegram_user_id, created_at, updated_at)
                         VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (driver_id) DO UPDATE SET
-                            telegram_chat_id = EXCLUDED.telegram_chat_id,
-                            telegram_user_id = EXCLUDED.telegram_user_id,
-                            updated_at = EXCLUDED.updated_at
+                        ON DUPLICATE KEY UPDATE
+                            telegram_chat_id = VALUES(telegram_chat_id),
+                            telegram_user_id = VALUES(telegram_user_id),
+                            updated_at = VALUES(updated_at)
                         """,
                         (driver_id, chat_id, user_id, now, now),
                     )
@@ -2202,7 +2202,7 @@ def driving_session_alert() -> Any:
                 """
                 INSERT INTO driving_session_alerts (session_id, alert_type, count)
                 VALUES (%s, %s, %s)
-                ON CONFLICT (session_id, alert_type) DO UPDATE SET count = driving_session_alerts.count + EXCLUDED.count
+                ON DUPLICATE KEY UPDATE count = driving_session_alerts.count + VALUES(count)
                 """,
                 (session_id, alert_type, delta),
             )

@@ -36,7 +36,7 @@ const DEFAULT_DRIVER_ID = "driver_001";
 const HISTORY_SIZE = 10;
 const CONSISTENT_FRAMES = 4;
 const MIN_PROB_FOR_LABEL = 0.6;
-const EAR_BLINK_THRESH = 0.21;
+const EAR_BLINK_THRESH = 0.29; // tăng từ 0.21 → 0.27 để hoạt động tốt với người đeo kính
 const EAR_HISTORY = 90;
 const EYES_CLOSED_WARN_MS = 3000;
 

@@ -1,4 +1,7 @@
 import os  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
+
+load_dotenv()  # Đọc file .env (chỉ có tác dụng khi dev local, Render dùng env vars thật)
 
 # Giảm xung đột BLAS đa luồng với eventlet/gunicorn (tránh crash im lặng → 500 HTML, mất CORS)
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
