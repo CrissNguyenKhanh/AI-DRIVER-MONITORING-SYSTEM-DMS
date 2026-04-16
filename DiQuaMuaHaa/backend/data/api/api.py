@@ -609,6 +609,34 @@ def _image_base64_to_landmarks(image_b64: str) -> List[float] | None:
     return coords
 
 
+def _image_base64_to_landmarks_for_predict(image_b64: str) -> List[float] | None:
+    """
+    Landmark cho endpoint dự đoán (landmark model).
+
+    Lý do có hàm riêng: trong `collect_landmarks.py` có `cv2.flip(frame, 1)` khi thu dữ liệu,
+    nên khi infer cần lật ngang để đồng nhất phân phối feature.
+    """
+    _ensure_face_mesh_loaded()
+    raw = base64.b64decode(image_b64)
+    arr = np.frombuffer(raw, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("Không decode được ảnh từ base64.")
+
+    # Match training data collection: flip horizontally.
+    img = cv2.flip(img, 1)
+
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    results = _face_mesh.process(rgb)
+    if results.multi_face_landmarks is None or len(results.multi_face_landmarks) == 0:
+        return None
+    lms = results.multi_face_landmarks[0]
+    coords = []
+    for lm in lms.landmark:
+        coords.extend([lm.x, lm.y, lm.z])
+    return coords
+
+
 def _image_base64_to_hand_landmarks(image_b64: str) -> List[float] | None:
     """Decode base64 → MediaPipe Hands → vector khớp hand_vec_len (63 hoặc 126)."""
     _ensure_models_loaded()
@@ -886,7 +914,7 @@ def predict_from_frame() -> Any:
             image_b64 = image_b64.split(",", 1)[-1]
 
         try:
-            vec = _image_base64_to_landmarks(image_b64)
+            vec = _image_base64_to_landmarks_for_predict(image_b64)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -916,15 +944,19 @@ def predict_from_frame() -> Any:
             for i, p in enumerate(proba):
                 scores[idx_to_label.get(i, str(i))] = float(p)
 
+        # Xác suất hiển thị: dùng "margin" giữa top1 và top2 để tránh lúc nào cũng 100%.
         top_prob = float(max(scores.values())) if scores else None
 
         # Dataset 2 class (drowsy/yawning): khi hai xác suất sát nhau → coi là bình thường (safe)
+        margin = None
         if proba is not None and len(proba) >= 2:
             sorted_p = sorted(float(p) for p in proba)
             margin = sorted_p[-1] - sorted_p[-2]
             if margin < LANDMARK_AMBIGUOUS_MARGIN:
                 label = "safe"
-                top_prob = float(margin)
+        # Nếu có margin thì gán vào prob để UI không báo 100% liên tục.
+        if margin is not None:
+            top_prob = float(margin)
 
         return jsonify(
             {
