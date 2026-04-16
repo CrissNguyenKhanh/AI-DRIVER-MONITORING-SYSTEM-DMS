@@ -16,6 +16,8 @@ services:
         sync: false
       - key: MYSQL_DATABASE
         value: diquamuaha
+      - key: DB_BACKEND
+        value: "postgres"
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_WEBHOOK_SECRET

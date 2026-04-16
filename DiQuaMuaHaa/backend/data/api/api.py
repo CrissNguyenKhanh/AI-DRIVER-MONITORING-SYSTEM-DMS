@@ -111,12 +111,16 @@ phone_yolo_model = None
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")  # Render PostgreSQL internal URL
-POSTGRES_ACTIVE = bool(DATABASE_URL and POSTGRES_AVAILABLE)
+DB_BACKEND = os.getenv("DB_BACKEND", "mysql").strip().lower()
+POSTGRES_ACTIVE = DB_BACKEND == "postgres" and bool(DATABASE_URL and POSTGRES_AVAILABLE)
 
 
 def get_mysql_conn():
-    """Kết nối database — tự động dùng PostgreSQL nếu có DATABASE_URL, fallback MySQL."""
-    if DATABASE_URL and POSTGRES_AVAILABLE:
+    """Kết nối database:
+    - Render: set DB_BACKEND=postgres (+ DATABASE_URL) để dùng PostgreSQL
+    - Local: mặc định DB_BACKEND=mysql để dùng MariaDB/MySQL
+    """
+    if POSTGRES_ACTIVE:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor)
         return conn
     return pymysql.connect(**MYSQL_CONFIG)
