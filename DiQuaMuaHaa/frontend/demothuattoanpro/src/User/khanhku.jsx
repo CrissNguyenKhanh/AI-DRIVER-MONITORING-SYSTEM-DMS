@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { getMedicalApiBase } from "../config/apiEndpoints";
+import { getMedicalApiBase } from "../shared/constants/apiEndpoints";
 import {
   Activity,
   AlertCircle,

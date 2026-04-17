@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { getDmsApiBase } from "../config/apiEndpoints";
-import { getWebcamSupportErrorMessage } from "../utils/cameraContext";
+import { getDmsApiBase } from "../shared/constants/apiEndpoints";
+import { getWebcamSupportErrorMessage } from "../shared/utils/cameraContext";
 import HandQuickAppsMenu, {
   executeQuickAppAction,
   handLabelToQuickAppKey,

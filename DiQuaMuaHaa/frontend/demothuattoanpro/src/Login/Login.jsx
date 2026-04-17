@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User, Lock, Mail, Phone, Activity, ArrowRight, Eye, EyeOff } from 'lucide-react';
-import { getMedicalApiBase } from '../config/apiEndpoints';
+import { getMedicalApiBase } from "../shared/constants/apiEndpoints";
 
 const Login = () => {
   const [isLogin, setIsLogin] = useState(true);

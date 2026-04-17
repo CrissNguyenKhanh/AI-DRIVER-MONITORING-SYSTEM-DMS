@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { getDmsApiBase } from "../config/apiEndpoints";
-import { getWebcamSupportErrorMessage } from "../utils/cameraContext";
-import { speakOwnerGreeting, warmSpeechVoices } from "../utils/speakOwnerGreeting";
+import { getDmsApiBase } from "../shared/constants/apiEndpoints";
+import { getWebcamSupportErrorMessage } from "../shared/utils/cameraContext";
+import { speakOwnerGreeting, warmSpeechVoices } from "../shared/utils/speakOwnerGreeting";
 
 const API_BASE = getDmsApiBase();
 const API_INTERVAL_MS = 900;

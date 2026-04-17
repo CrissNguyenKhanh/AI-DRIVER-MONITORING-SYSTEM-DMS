@@ -154,6 +154,10 @@ DiQuaMuaHaa/backend/
 - [ ] B4. Sua import/export theo tung cum thay doi (khong move 1 lan qua lon).
 - [ ] B5. Sau moi cum move: run lint + build (frontend), run app smoke test (backend).
 
+Tien do B3/B4 (theo batch nho):
+- [x] Batch 1 (Frontend leaf nodes): move CSS vao `src/styles`, move `config/apiEndpoints.js` + `utils/*` vao `src/shared/*`, update import lien quan.
+- [ ] Batch 2 tro di: cho xac nhan smoke test tu nguoi dung truoc khi tiep tuc.
+
 ### Giai doan C - Tach file logic lon
 - [ ] C1. Chon 2-3 file rat lon de tach dot 1 (uu tien `thucmuctest.jsx`, `OtoLiveMapPanel.jsx`, `api.py`).
 - [ ] C2. Tach theo layer: UI / hooks / services / utils / constants / types.
@@ -198,4 +202,4 @@ DiQuaMuaHaa/backend/
 
 ## 5) Huong dan cho AI tiep theo (handover ngan)
 
-Trang thai hien tai: da hoan tat Phase A va da xong B1-B2 trong Phase B. Da tao xong khung thu muc moi cho frontend/backend theo kien truc muc tieu (chi tao folder rong, chua move bat ky source file nao). Buoc tiep theo la B3: di chuyen file theo tung cum nho va cap nhat import/export an toan.
+Trang thai hien tai: da hoan tat Phase A, da xong B1-B2, va da hoan tat Batch 1 cua B3/B4 cho frontend (leaf nodes). Da move nhom style + shared utility/config va da cap nhat import toan frontend cho nhom nay; chua move cac large feature components (`systeamdetectface`, `hand-dection`, `User`). Dang dung lai de cho nguoi dung smoke test truoc khi lam batch tiep theo.

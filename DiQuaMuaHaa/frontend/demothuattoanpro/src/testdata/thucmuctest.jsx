@@ -4,18 +4,18 @@ import { io } from "socket.io-client";
 import OwnerVerifyGate from "../systeamdetectface/OwnerVerifyGate";
 import TelegramOwnerRejectOverlay from "../systeamdetectface/TelegramOwnerRejectOverlay";
 import DriverAuthenticatedWelcome from "../systeamdetectface/DriverAuthenticatedWelcome";
-import { getDmsApiBase } from "../config/apiEndpoints";
-import { getWebcamSupportErrorMessage } from "../utils/cameraContext";
+import { getDmsApiBase } from "../shared/constants/apiEndpoints";
+import { getWebcamSupportErrorMessage } from "../shared/utils/cameraContext";
 import {
   speakOwnerGreeting,
   warmSpeechVoices,
-} from "../utils/speakOwnerGreeting";
+} from "../shared/utils/speakOwnerGreeting";
 import {
   startDrivingSession,
   endDrivingSession,
   recordDrivingAlert,
   listDrivingSessions,
-} from "../utils/drivingSessionApi";
+} from "../shared/utils/drivingSessionApi";
 import VoiceCarAssistant from "../voice/VoiceCarAssistant";
 import FakeYouTubeLayout from "../voice/FakeYouTubeLayout";
 import HandQuickAppsMenu, {

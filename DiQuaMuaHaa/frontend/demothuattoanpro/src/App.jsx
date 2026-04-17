@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import "./App.css";
+import "./styles/App.css";
 
 import PatientStatistics from "./admin/PatientStatistics";
 import Login from "./Login/Login";
