@@ -20,7 +20,6 @@ Werkzeug==3.0.1
 # Machine Learning
 scikit-learn==1.7.2
 numpy==1.26.4
-scipy==1.11.4
 joblib==1.4.2
 threadpoolctl==3.5.0
 
