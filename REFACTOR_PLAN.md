@@ -171,7 +171,8 @@ Tien do C (theo batch nho):
 - [x] C-Batch 1: Phan tich + lap blueprint tach `src/testdata/thucmuctest.jsx` (chua code).
 - [x] C-Batch 2: Tach nhom Pure Utils/Constants/Services/Styles cho `thucmuctest.jsx` va noi import nguoc de giu hanh vi.
 - [x] C-Batch 3: Tach nhom Overlay & Telemetry components ra file rieng va noi import lai vao `thucmuctest.jsx`.
-- [ ] C-Batch 4 tro di: cho smoke test cua nguoi dung truoc khi tiep tuc tach hooks/UI blocks.
+- [x] C-Batch 4: Tach nhom Orchestration Hooks (socket streams, mediapipe engines, driving session, dms alerts, identity gate) ra cac custom hooks va noi call lai tu `thucmuctest.jsx`.
+- [ ] C-Batch 5 tro di: cho smoke test cua nguoi dung truoc khi tiep tuc tach hook tong hop va UI blocks con lai.
 
 ### Giai doan D - Khoa chat chat luong
 - [ ] D1. Them/chuẩn hoa lint rules cho max-lines va complexity.
@@ -210,4 +211,4 @@ Tien do C (theo batch nho):
 
 ## 5) Huong dan cho AI tiep theo (handover ngan)
 
-Trang thai hien tai: Phase B is 100% COMPLETE. Phase C dang o C-Batch 3 da hoan tat cho `src/testdata/thucmuctest.jsx`: da tach overlays/telemetry components ra file rieng va cap nhat import trong file goc, build + lint da pass. Dang dung lai de cho nguoi dung smoke test truoc khi sang C-Batch 4 (tach hooks orchestration va UI blocks).
+Trang thai hien tai: Phase B is 100% COMPLETE. Phase C dang o C-Batch 4 da hoan tat cho `src/testdata/thucmuctest.jsx`: da tach nhom orchestration effects/callbacks vao cac custom hooks (`useDmsSocketStreams`, `useMediaPipeEngines`, `useDrivingSession`, `useDmsAlerts`, `useIdentityGate`) va cap nhat hook calls trong file goc, build + lint da pass. Dang dung lai de cho nguoi dung smoke test truoc khi sang C-Batch 5 (tach hook tong hop/useDriverMonitorDMS va UI blocks tiep theo).

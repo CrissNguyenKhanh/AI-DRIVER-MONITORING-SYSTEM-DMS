@@ -1,19 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { io } from "socket.io-client";
 import OwnerVerifyGate from "../features/dms/components/OwnerVerifyGate";
 import TelegramOwnerRejectOverlay from "../features/dms/components/TelegramOwnerRejectOverlay";
 import DriverAuthenticatedWelcome from "../features/dms/components/DriverAuthenticatedWelcome";
 import { getWebcamSupportErrorMessage } from "../shared/utils/cameraContext";
-import {
-  speakOwnerGreeting,
-  warmSpeechVoices,
-} from "../shared/utils/speakOwnerGreeting";
-import {
-  startDrivingSession,
-  endDrivingSession,
-  recordDrivingAlert,
-  listDrivingSessions,
-} from "../shared/utils/drivingSessionApi";
 import VoiceCarAssistant from "../voice/VoiceCarAssistant";
 import FakeYouTubeLayout from "../voice/FakeYouTubeLayout";
 import HandQuickAppsMenu, {
@@ -77,6 +66,11 @@ import HandLandmarkOverlay from "../features/dms/components/overlays/HandLandmar
 import EyeCanvas from "../features/dms/components/telemetry/EyeCanvas";
 import WaveformCanvas from "../features/dms/components/telemetry/WaveformCanvas";
 import Head3D from "../features/dms/components/telemetry/Head3D";
+import useDmsSocketStreams from "../features/dms/hooks/useDmsSocketStreams.hook";
+import useMediaPipeEngines from "../features/dms/hooks/useMediaPipeEngines.hook";
+import useDrivingSession from "../features/dms/hooks/useDrivingSession.hook";
+import useDmsAlerts from "../features/dms/hooks/useDmsAlerts.hook";
+import useIdentityGate from "../features/dms/hooks/useIdentityGate.hook";
 
 // ─────────────────────────────────────────────────────────
 // PhoneFOMOOverlay — đọc từ phoneDetectionRef, vẽ RAF 60fps
@@ -131,10 +125,6 @@ export default function DriverMonitorDMS() {
   const wsSmokePendingRef = useRef(false);
   const wsSmokLastSentRef = useRef(0);
 
-  const drivingSessionIdRef = useRef(null);
-  const prevPhoneAlertRef = useRef(null);
-  const prevSmokingAlertRef = useRef(null);
-  const prevDrowsyAlertRef = useRef(null);
   const prevHandOpenRef = useRef("");
   const prevHandCloseRef = useRef("");
   const prevHandQuickRef = useRef("");
@@ -208,681 +198,137 @@ export default function DriverMonitorDMS() {
 
   const dismissAuthWelcome = useCallback(() => setAuthWelcomeProfile(null), []);
 
-  /** Phiên lái: bắt đầu khi active, kết thúc khi rời active (locked / idle / …). */
-  useEffect(() => {
-    if (status !== "active") {
-      const sid = drivingSessionIdRef.current;
-      drivingSessionIdRef.current = null;
-      setDrivingSessionId(null);
-      setDrivingSessionStartedAt(null);
-      prevPhoneAlertRef.current = null;
-      prevSmokingAlertRef.current = null;
-      prevDrowsyAlertRef.current = null;
-      setSessionAlertCounts({ phone: 0, smoking: 0, drowsy: 0 });
-      if (sid) {
-        endDrivingSession(API_BASE, sid).catch(() => {});
-      }
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      const { ok, data } = await startDrivingSession(API_BASE, { driverId });
-      if (cancelled) {
-        if (ok && data?.session_id) {
-          await endDrivingSession(API_BASE, data.session_id).catch(() => {});
-        }
-        return;
-      }
-      if (ok && data?.session_id) {
-        drivingSessionIdRef.current = data.session_id;
-        setDrivingSessionId(data.session_id);
-        setDrivingSessionStartedAt(data.started_at || "");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [status, driverId]);
+  const {
+    handleIdentityUnlock,
+    handleIdentityLock,
+    handleUpdateIdentity,
+  } = useIdentityGate({
+    API_BASE,
+    DRIVER_ID_KEY,
+    driverId,
+    setDriverId,
+    setIdentityError,
+    setIdentityLockCause,
+    setIdentityRejectLockedAt,
+    setStatus,
+    setAuthWelcomeProfile,
+    setDrowsyAlert,
+    setPhoneAlert,
+    setSmokingAlert,
+    setIdentityHasRegistered,
+    setIdentityOwner,
+    setIdentitySimilarity,
+    setIdentityThreshold,
+    setIdentitySamples,
+    stopAlarm,
+    alarmIntervalRef,
+    vibrateIntervalRef,
+  });
 
-  /** Khi vừa có session_id, một lần: baseline cảnh báo hiện tại (không tính sự kiện đang bật sẵn là “lần mới”). */
-  useEffect(() => {
-    if (!drivingSessionId || status !== "active") return;
-    prevPhoneAlertRef.current = phoneAlert;
-    prevSmokingAlertRef.current = smokingAlert;
-    prevDrowsyAlertRef.current = drowsyAlert;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ khi gán session mới
-  }, [drivingSessionId, status]);
+  useDrivingSession({
+    API_BASE,
+    status,
+    driverId,
+    phoneAlert,
+    smokingAlert,
+    drowsyAlert,
+    sessionLogOpen,
+    setDrivingSessionId,
+    setDrivingSessionStartedAt,
+    setSessionAlertCounts,
+    setSessionLogLoading,
+    setSessionLogItems,
+  });
 
-  /** Mỗi lần cảnh báo chuyển tắt → bật: ghi nhận một lần theo loại. */
-  useEffect(() => {
-    const sid = drivingSessionIdRef.current;
-    if (!sid || status !== "active") return;
+  useDmsSocketStreams({
+    API_BASE,
+    status,
+    videoRef,
+    socketRef,
+    wsReadyRef,
+    wsPendingRef,
+    wsLastSentRef,
+    wsSmokePendingRef,
+    wsSmokLastSentRef,
+    phoneDetectionRef,
+    smokingDetectionRef,
+    smokingActiveRef,
+    phoneActiveFilteredRef,
+    phoneOnStreakRef,
+    phoneOffStreakRef,
+    phoneLastBoxRef,
+    setWsConnected,
+    setPhoneError,
+    setPhoneHistory,
+    setSmokingHistory,
+    setPhoneActive,
+    setSmokingActive,
+    PHONE_YOLO_MIN_PROB,
+    PHONE_HISTORY_LEN,
+    PHONE_STABLE_FRAMES,
+    PHONE_OFF_FRAMES,
+    SMOKING_ENABLED,
+    SMOKING_HISTORY_LEN,
+    SMOKING_STABLE_FRAMES,
+    SMOKING_OFF_FRAMES,
+    SMOKING_MIN_PROB,
+    PHONE_WS_FPS,
+    SMOKING_WS_FPS,
+  });
 
-    if (phoneAlert !== null && prevPhoneAlertRef.current === null) {
-      recordDrivingAlert(API_BASE, sid, "phone").then((r) => {
-        if (r.ok)
-          setSessionAlertCounts((c) => ({ ...c, phone: c.phone + 1 }));
-      });
-    }
-    prevPhoneAlertRef.current = phoneAlert;
+  useMediaPipeEngines({
+    status,
+    videoRef,
+    faceMeshRef,
+    handsRef,
+    handLandmarksRef,
+    poseRef,
+    landmarksRef,
+    eyeDataRef,
+    earHistoryRef,
+    blinkStateRef,
+    blinkTimesRef,
+    blinkDurRef,
+    eyesClosedSinceRef,
+    eyesClosedSecRef,
+    L_EYE,
+    R_EYE,
+    computeEAR,
+    computePupilRadius,
+    estimateHeadPose,
+    EAR_BLINK_THRESH,
+    EAR_HISTORY,
+    setFrameCount,
+  });
 
-    if (smokingAlert !== null && prevSmokingAlertRef.current === null) {
-      recordDrivingAlert(API_BASE, sid, "smoking").then((r) => {
-        if (r.ok)
-          setSessionAlertCounts((c) => ({ ...c, smoking: c.smoking + 1 }));
-      });
-    }
-    prevSmokingAlertRef.current = smokingAlert;
-
-    if (drowsyAlert !== null && prevDrowsyAlertRef.current === null) {
-      recordDrivingAlert(API_BASE, sid, "drowsy").then((r) => {
-        if (r.ok)
-          setSessionAlertCounts((c) => ({ ...c, drowsy: c.drowsy + 1 }));
-      });
-    }
-    prevDrowsyAlertRef.current = drowsyAlert;
-  }, [phoneAlert, smokingAlert, drowsyAlert, status]);
-
-  const refreshSessionLog = useCallback(async () => {
-    setSessionLogLoading(true);
-    try {
-      const { ok, data } = await listDrivingSessions(API_BASE, {
-        limit: 25,
-        driverId,
-      });
-      if (ok && data?.sessions) setSessionLogItems(data.sessions);
-    } catch (_) {
-      setSessionLogItems([]);
-    } finally {
-      setSessionLogLoading(false);
-    }
-  }, [driverId]);
-
-  useEffect(() => {
-    if (sessionLogOpen) refreshSessionLog();
-  }, [sessionLogOpen, refreshSessionLog]);
-
-
-  // ── Owner identity gate callbacks (tách riêng khỏi thucmuctest) ──
-  const handleIdentityUnlock = useCallback(
-    async (detail) => {
-      setIdentityError("");
-      setIdentityLockCause(null);
-      setIdentityRejectLockedAt("");
-      setStatus((prev) => (prev === "active" ? prev : "active"));
-
-      const id =
-        (detail && (detail.driver_id || detail.driverId)) || driverId;
-
-      let merged = {
-        driver_id: id,
-        registered_name:
-          (detail && (detail.registered_name || detail.name)) || "",
-        profile_image_base64: detail && detail.profile_image_base64,
-        registered_at: detail && detail.registered_at,
-        similarity:
-          detail && typeof detail.similarity === "number"
-            ? detail.similarity
-            : null,
-        threshold:
-          detail && typeof detail.threshold === "number"
-            ? detail.threshold
-            : null,
-        samples_used: detail && detail.samples_used,
-        source: (detail && detail.source) || "face",
-      };
-
-      if (!merged.profile_image_base64 && id) {
-        try {
-          const r = await fetch(
-            `${API_BASE}/api/identity/driver_profile?driver_id=${encodeURIComponent(id)}`,
-          );
-          const d = await r.json();
-          if (r.ok && d.driver_id) {
-            merged = {
-              ...merged,
-              registered_name:
-                merged.registered_name || d.registered_name || id,
-              profile_image_base64:
-                merged.profile_image_base64 || d.profile_image_base64,
-              registered_at: merged.registered_at || d.registered_at,
-            };
-          }
-        } catch (_) {
-          /* ignore */
-        }
-      }
-
-      if (!merged.registered_name) merged.registered_name = id;
-
-      setAuthWelcomeProfile(merged);
-      speakOwnerGreeting(merged.registered_name);
-    },
-    [driverId],
-  );
-
-  const handleIdentityLock = useCallback((reason) => {
-    stopAlarm(alarmIntervalRef, vibrateIntervalRef);
-    setDrowsyAlert(null);
-    setPhoneAlert(null);
-    setSmokingAlert(null);
-    const msg = String(reason || "ENGINE OFF: NOT OWNER");
-    setIdentityError(msg);
-    if (/reject/i.test(msg)) {
-      setIdentityLockCause("owner_reject");
-      setIdentityRejectLockedAt(new Date().toLocaleString("vi-VN"));
-    } else {
-      setIdentityRejectLockedAt("");
-      if (msg.includes("NO RESPONSE") || /expired/i.test(msg))
-        setIdentityLockCause("owner_timeout");
-      else setIdentityLockCause("generic");
-    }
-    setStatus("locked");
-  }, []);
-
-  const handleUpdateIdentity = useCallback((payload) => {
-    const hasRegistered = Boolean(payload?.hasRegistered);
-    const isOwner = Boolean(payload?.isOwner);
-
-    setIdentityHasRegistered(hasRegistered);
-    setIdentityOwner(hasRegistered ? isOwner : null);
-    setIdentitySimilarity(
-      typeof payload?.similarity === "number" ? payload.similarity : null,
-    );
-    if (typeof payload?.threshold === "number") {
-      setIdentityThreshold(payload.threshold);
-    }
-    setIdentitySamples(typeof payload?.samplesUsed === "number" ? payload.samplesUsed : 0);
-    setIdentityError(payload?.error || "");
-  }, []);
-
-  // clock
-  useEffect(() => {
-    const id = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    warmSpeechVoices();
-  }, []);
-
-  useEffect(() => {
-    try {
-      const savedId = window.localStorage.getItem(DRIVER_ID_KEY);
-      if (savedId) setDriverId(savedId);
-    } catch (_) {}
-  }, []);
-
-  // ── WebSocket setup ──────────────────────────────────────
-  useEffect(() => {
-    const sock = io(API_BASE, {
-      transports: ["websocket"],
-      reconnectionAttempts: 10,
-      reconnectionDelay: 1000,
-    });
-    socketRef.current = sock;
-
-    sock.on("connect", () => {
-      wsReadyRef.current = true;
-      setWsConnected(true);
-      setPhoneError("");
-    });
-    sock.on("disconnect", () => {
-      wsReadyRef.current = false;
-      wsPendingRef.current = false;
-      setWsConnected(false);
-    });
-    sock.on("connect_error", () => {
-      wsReadyRef.current = false;
-      setPhoneError("WebSocket unreachable");
-    });
-
-    // ← kết quả smoking từ server
-    sock.on("smoking_result", (data) => {
-      if (!SMOKING_ENABLED) return;
-      wsSmokePendingRef.current = false;
-      const lbl = data?.label ? String(data.label) : "";
-      const prob = typeof data?.prob === "number" ? data.prob : 0;
-
-      setSmokingHistory((prev) => {
-        const n = prev.concat([{ label: lbl, prob }]);
-        const trimmed =
-          n.length > SMOKING_HISTORY_LEN
-            ? n.slice(n.length - SMOKING_HISTORY_LEN)
-            : n;
-
-        const recentOn = trimmed.slice(-SMOKING_STABLE_FRAMES);
-        const recentOff = trimmed.slice(-SMOKING_OFF_FRAMES);
-        const shouldTurnOn =
-          recentOn.length === SMOKING_STABLE_FRAMES &&
-          recentOn.every(
-            (h) => h.label === "smoking" && h.prob >= SMOKING_MIN_PROB,
-          );
-        const shouldTurnOff =
-          recentOff.length === SMOKING_OFF_FRAMES &&
-          recentOff.every(
-            (h) => h.label !== "smoking" || h.prob < SMOKING_MIN_PROB,
-          );
-
-        if (shouldTurnOn) {
-          smokingActiveRef.current = true;
-          setSmokingActive(true);
-        }
-        if (shouldTurnOff) {
-          smokingActiveRef.current = false;
-          setSmokingActive(false);
-        }
-
-        smokingDetectionRef.current = {
-          active: smokingActiveRef.current,
-          prob,
-          bbox: null,
-        };
-        return trimmed;
-      });
-    });
-
-    // ← kết quả YOLO từ server
-    sock.on("phone_result", (data) => {
-      wsPendingRef.current = false; // sẵn sàng nhận frame tiếp
-
-      const boxesArr = Array.isArray(data?.boxes) ? data.boxes : [];
-      const bestBox =
-        boxesArr
-          .filter((b) => b && (b.prob || 0) >= PHONE_YOLO_MIN_PROB)
-          .sort((a, b) => (b.prob || 0) - (a.prob || 0))[0] || null;
-
-      let yoloBox = null;
-      if (bestBox) {
-        const { x: cx, y: cy, w: bw, h: bh } = bestBox;
-        yoloBox = {
-          x1: Math.max(0, cx - bw / 2),
-          y1: Math.max(0, cy - bh / 2),
-          x2: Math.min(1, cx + bw / 2),
-          y2: Math.min(1, cy + bh / 2),
-        };
-      }
-
-      const rawProb = bestBox?.prob || 0;
-      // Phone bbox sanity check to reduce "lung tung" false positives
-      const candW = yoloBox ? yoloBox.x2 - yoloBox.x1 : 0;
-      const candH = yoloBox ? yoloBox.y2 - yoloBox.y1 : 0;
-      const sizeOk = yoloBox && candW >= 0.05 && candH >= 0.05 && candW <= 0.55 && candH <= 0.55;
-
-      // If bbox jumps too far from previous, treat it as unstable
-      let motionOk = true;
-      if (phoneLastBoxRef.current && yoloBox) {
-        const lastCx = (phoneLastBoxRef.current.x1 + phoneLastBoxRef.current.x2) / 2;
-        const lastCy = (phoneLastBoxRef.current.y1 + phoneLastBoxRef.current.y2) / 2;
-        const candCx = (yoloBox.x1 + yoloBox.x2) / 2;
-        const candCy = (yoloBox.y1 + yoloBox.y2) / 2;
-        const dx = Math.abs(candCx - lastCx);
-        const dy = Math.abs(candCy - lastCy);
-        // normalized threshold
-        if (dx > 0.35 || dy > 0.25) motionOk = false;
-      }
-
-      const strongDetected =
-        bestBox !== null &&
-        rawProb >= PHONE_YOLO_MIN_PROB &&
-        sizeOk &&
-        motionOk;
-
-      if (strongDetected && yoloBox) {
-        phoneLastBoxRef.current = yoloBox;
-      }
-
-      // Hysteresis filter: giảm nhấp nháy trạng thái phone
-      if (strongDetected) {
-        phoneOnStreakRef.current += 1;
-        phoneOffStreakRef.current = 0;
-      } else {
-        phoneOffStreakRef.current += 1;
-        phoneOnStreakRef.current = 0;
-      }
-
-      if (!phoneActiveFilteredRef.current) {
-        if (phoneOnStreakRef.current >= PHONE_STABLE_FRAMES) {
-          phoneActiveFilteredRef.current = true;
-          setPhoneActive(true);
-        }
-      } else {
-        if (phoneOffStreakRef.current >= PHONE_OFF_FRAMES) {
-          phoneActiveFilteredRef.current = false;
-          setPhoneActive(false);
-        }
-      }
-
-      const filteredActive = phoneActiveFilteredRef.current;
-      phoneDetectionRef.current = {
-        active: filteredActive,
-        prob: rawProb,
-        bbox: filteredActive ? phoneLastBoxRef.current || yoloBox : null,
-      };
-
-      setPhoneHistory((prev) => {
-        const n = prev.concat([
-          { label: strongDetected ? "phone" : "no_phone", prob: rawProb },
-        ]);
-        return n.length > PHONE_HISTORY_LEN
-          ? n.slice(n.length - PHONE_HISTORY_LEN)
-          : n;
-      });
-    });
-
-    return () => {
-      sock.disconnect();
-    };
-  }, []);
-
-  // ── Phone WebSocket send loop — RAF-based, ~15fps ────────
-  useEffect(() => {
-    if (!status || status !== "active") return;
-    let rafId;
-    const interval = 1000 / PHONE_WS_FPS; // ~67ms
-
-    function loop() {
-      rafId = requestAnimationFrame(loop);
-      const now = Date.now();
-      const sock = socketRef.current;
-      const vid = videoRef.current;
-
-      // chỉ gửi khi: socket ready, không đang pending, đủ interval
-      if (!sock || !wsReadyRef.current || wsPendingRef.current) return;
-      if (now - wsLastSentRef.current < interval) return;
-      if (!vid || vid.readyState < 2) return;
-
-      // capture frame nhỏ hơn để giảm latency
-      const c = document.createElement("canvas");
-      c.width = 320;
-      c.height = 240; // downscale: YOLO vẫn detect tốt ở 320x240
-      c.getContext("2d").drawImage(vid, 0, 0, 320, 240);
-      const image = c.toDataURL("image/jpeg", 0.6); // quality 0.6 đủ cho YOLO
-
-      wsPendingRef.current = true;
-      wsLastSentRef.current = now;
-      sock.emit("phone_frame", { image });
-    }
-
-    loop();
-    return () => cancelAnimationFrame(rafId);
-  }, [status, driverId]);
-
-  // ── Smoking WebSocket send loop — RAF-based, ~4fps ─────────
-  useEffect(() => {
-    if (!SMOKING_ENABLED) return;
-    if (!status || status !== "active") return;
-    let rafId;
-    const interval = 1000 / SMOKING_WS_FPS; // ~250ms
-
-    function loop() {
-      rafId = requestAnimationFrame(loop);
-      const now = Date.now();
-      const sock = socketRef.current;
-      const vid = videoRef.current;
-      if (!sock || !wsReadyRef.current || wsSmokePendingRef.current) return;
-      if (now - wsSmokLastSentRef.current < interval) return;
-      if (!vid || vid.readyState < 2) return;
-
-      // capture frame full size cho smoking (landmark perlu ảnh rõ)
-      const c = document.createElement("canvas");
-      c.width = vid.videoWidth || 640;
-      c.height = vid.videoHeight || 480;
-      c.getContext("2d").drawImage(vid, 0, 0);
-      const image = c.toDataURL("image/jpeg", 0.7);
-
-      wsSmokePendingRef.current = true;
-      wsSmokLastSentRef.current = now;
-      sock.emit("smoking_frame", { image });
-    }
-
-    loop();
-    return () => cancelAnimationFrame(rafId);
-  }, [status]);
-  useEffect(() => {
-    function loadScript(src) {
-      return new Promise((res, rej) => {
-        if (document.querySelector('script[src="' + src + '"]')) {
-          res();
-          return;
-        }
-        const s = document.createElement("script");
-        s.src = src;
-        s.onload = res;
-        s.onerror = rej;
-        document.head.appendChild(s);
-      });
-    }
-    async function init() {
-      try {
-        await loadScript(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js",
-        );
-        const FM = window.FaceMesh;
-        if (!FM) return;
-        const fm = new FM({
-          locateFile: (f) =>
-            "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/" + f,
-        });
-        fm.setOptions({
-          maxNumFaces: 1,
-          refineLandmarks: true,
-          minDetectionConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-        });
-        fm.onResults((results) => {
-          if (!results.multiFaceLandmarks || !results.multiFaceLandmarks[0]) {
-            landmarksRef.current = [];
-            return;
-          }
-          const lm = results.multiFaceLandmarks[0];
-          landmarksRef.current = lm;
-          poseRef.current = estimateHeadPose(lm);
-          const earL = computeEAR(lm, L_EYE),
-            earR = computeEAR(lm, R_EYE);
-          const prL = computePupilRadius(lm, L_EYE.iris) * 100;
-          const leOX = (lm[L_EYE.outer].x + lm[L_EYE.inner].x) / 2,
-            leOY = (lm[L_EYE.outer].y + lm[L_EYE.inner].y) / 2;
-          const eyeSpan =
-            Math.abs(lm[L_EYE.outer].x - lm[L_EYE.inner].x) + 0.001;
-          const lGY = ((lm[L_EYE.iris[0]].x - leOX) / eyeSpan) * 2,
-            lGP = ((lm[L_EYE.iris[0]].y - leOY) / eyeSpan) * 2;
-          const reOX = (lm[R_EYE.outer].x + lm[R_EYE.inner].x) / 2,
-            reOY = (lm[R_EYE.outer].y + lm[R_EYE.inner].y) / 2;
-          const rGY = ((lm[R_EYE.iris[0]].x - reOX) / eyeSpan) * 2,
-            rGP = ((lm[R_EYE.iris[0]].y - reOY) / eyeSpan) * 2;
-          const now = Date.now();
-          const isBlinkL = earL < EAR_BLINK_THRESH,
-            isBlinkR = earR < EAR_BLINK_THRESH,
-            isBlink = isBlinkL && isBlinkR;
-          if (isBlink && !blinkStateRef.current.left) {
-            blinkTimesRef.current.push(now);
-            blinkDurRef.current.start = now;
-          }
-          if (
-            !isBlink &&
-            blinkStateRef.current.left &&
-            blinkDurRef.current.start
-          )
-            blinkDurRef.current.dur = (now - blinkDurRef.current.start) / 1000;
-          blinkStateRef.current = { left: isBlinkL, right: isBlinkR };
-          blinkTimesRef.current = blinkTimesRef.current.filter(
-            (t) => now - t < 60000,
-          );
-          if (isBlinkL && isBlinkR) {
-            if (eyesClosedSinceRef.current === null)
-              eyesClosedSinceRef.current = now;
-            eyesClosedSecRef.current =
-              (now - eyesClosedSinceRef.current) / 1000;
-          } else {
-            eyesClosedSinceRef.current = null;
-            eyesClosedSecRef.current = 0;
-          }
-          eyeDataRef.current = {
-            left: {
-              ear: earL,
-              blinking: isBlinkL,
-              yaw: lGY,
-              pitch: lGP,
-              pupilR: prL,
-            },
-            right: {
-              ear: earR,
-              blinking: isBlinkR,
-              yaw: rGY,
-              pitch: rGP,
-              pupilR: prL * 0.98,
-            },
-          };
-          earHistoryRef.current.left = earHistoryRef.current.left
-            .slice(-(EAR_HISTORY - 1))
-            .concat([earL]);
-          earHistoryRef.current.right = earHistoryRef.current.right
-            .slice(-(EAR_HISTORY - 1))
-            .concat([earR]);
-        });
-        faceMeshRef.current = fm;
-      } catch (e) {
-        console.warn("MediaPipe FaceMesh init error", e);
-      }
-      try {
-        await loadScript(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js",
-        );
-        const H = window.Hands;
-        if (!H) return;
-        const hands = new H({
-          locateFile: (f) =>
-            "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + f,
-        });
-        hands.setOptions({
-          maxNumHands: 2,
-          modelComplexity: 0,
-          // Không bật selfieMode: graph đã flip sẽ lệch với overlay (mx = W−x) giống FaceMesh → skeleton chồng mặt.
-          selfieMode: false,
-          minDetectionConfidence: 0.35,
-          minTrackingConfidence: 0.35,
-        });
-        hands.onResults((results) => {
-          if (!results.multiHandLandmarks || !results.multiHandLandmarks.length) {
-            handLandmarksRef.current = [];
-            return;
-          }
-          handLandmarksRef.current = results.multiHandLandmarks.map((raw) =>
-            raw.map((p) => ({ x: p.x, y: p.y, z: p.z })),
-          );
-        });
-        await hands.initialize();
-        handsRef.current = hands;
-      } catch (e) {
-        console.warn("MediaPipe Hands init error", e);
-      }
-    }
-    init();
-    const dispId = setInterval(() => {
-      const p = poseRef.current;
-      setDisplayPose({ yaw: p.yaw, pitch: p.pitch, roll: p.roll });
-      const ed = eyeDataRef.current,
-        now = Date.now();
-      setDisplayEye({
-        blinkRate: blinkTimesRef.current.length,
-        blinkDur: blinkDurRef.current.dur,
-        pupilL: ed.left.pupilR ? ed.left.pupilR.toFixed(1) : "33.5",
-        lYaw: ed.left.yaw ? (-ed.left.yaw * 18).toFixed(1) : "-11.8",
-        lPitch: ed.left.pitch ? (-ed.left.pitch * 18).toFixed(1) : "-21.6",
-        rYaw: ed.right.yaw ? (-ed.right.yaw * 18).toFixed(1) : "-19.9",
-        rPitch: ed.right.pitch ? (-ed.right.pitch * 18).toFixed(1) : "-25.1",
-        lX: (62 + Math.sin(now / 1100) * 3).toFixed(1),
-        lY: (3.9 + Math.cos(now / 900) * 1.2).toFixed(1),
-        lZ: (-2.7 + Math.sin(now / 1300) * 0.8).toFixed(1),
-        rX: (63.2 + Math.cos(now / 1200) * 2.8).toFixed(1),
-        rY: (9.7 + Math.sin(now / 800) * 1.5).toFixed(1),
-        rZ: (-3.3 + Math.cos(now / 1400) * 0.9).toFixed(1),
-      });
-      setFrameCount((f) => f);
-      // ── smoking continuous timer ──
-      if (smokingDetectionRef.current?.active) {
-        if (smokingSinceRef.current === null)
-          smokingSinceRef.current = Date.now();
-        smokingSecRef.current = (Date.now() - smokingSinceRef.current) / 1000;
-      } else {
-        smokingSinceRef.current = null;
-        smokingSecRef.current = 0;
-      }
-      if (smokingSecRef.current >= SMOKING_WARN_MS / 1000) {
-        setSmokingAlert(smokingSecRef.current);
-        if (!alarmIntervalRef.current)
-          startAlarm(audioCtxRef, alarmIntervalRef, vibrateIntervalRef);
-      } else {
-        setSmokingAlert(null);
-      }
-      // ── phone continuous timer ──
-      if (phoneDetectionRef.current?.active) {
-        if (phoneSinceRef.current === null) phoneSinceRef.current = Date.now();
-        phoneSecRef.current = (Date.now() - phoneSinceRef.current) / 1000;
-      } else {
-        phoneSinceRef.current = null;
-        phoneSecRef.current = 0;
-      }
-      if (phoneSecRef.current >= PHONE_WARN_MS / 1000) {
-        setPhoneAlert(phoneSecRef.current);
-        if (!alarmIntervalRef.current)
-          startAlarm(audioCtxRef, alarmIntervalRef, vibrateIntervalRef);
-      } else {
-        setPhoneAlert(null);
-      }
-      // ── drowsy timer (priority cao nhất) ──
-      const closedSec = eyesClosedSecRef.current;
-      if (closedSec >= EYES_CLOSED_WARN_MS / 1000) {
-        setDrowsyAlert(closedSec);
-        if (!alarmIntervalRef.current)
-          startAlarm(audioCtxRef, alarmIntervalRef, vibrateIntervalRef);
-      } else {
-        setDrowsyAlert(null);
-        // stop alarm chỉ khi cả 3 đều không active
-        const anyAlert =
-          phoneSecRef.current >= PHONE_WARN_MS / 1000 ||
-          smokingSecRef.current >= SMOKING_WARN_MS / 1000;
-        if (alarmIntervalRef.current && !anyAlert)
-          stopAlarm(alarmIntervalRef, vibrateIntervalRef);
-      }
-    }, 250);
-    return () => clearInterval(dispId);
-  }, []);
-
-  // ── Face mesh + Hands: một RAF, gửi tuần tự (hai graph WebGL song song hay làm mất kết quả tay)
-  useEffect(() => {
-    if (status !== "active") return;
-    let running = true,
-      last = 0;
-    async function loop(now) {
-      if (!running) return;
-      if (now - last >= 33) {
-        last = now;
-        const fm = faceMeshRef.current,
-          hs = handsRef.current,
-          vid = videoRef.current;
-        if (vid && vid.readyState >= 2) {
-          if (fm) {
-            try {
-              await fm.send({ image: vid });
-            } catch (_) {}
-          }
-          if (hs) {
-            try {
-              await hs.send({ image: vid });
-            } catch (_) {}
-          }
-        }
-        setFrameCount((f) => f + 1);
-      }
-      requestAnimationFrame(loop);
-    }
-    requestAnimationFrame(loop);
-    return () => {
-      running = false;
-    };
-  }, [status]);
+  useDmsAlerts({
+    setTime,
+    poseRef,
+    eyeDataRef,
+    blinkTimesRef,
+    blinkDurRef,
+    smokingDetectionRef,
+    smokingSinceRef,
+    smokingSecRef,
+    phoneDetectionRef,
+    phoneSinceRef,
+    phoneSecRef,
+    eyesClosedSecRef,
+    alarmIntervalRef,
+    vibrateIntervalRef,
+    audioCtxRef,
+    setDisplayPose,
+    setDisplayEye,
+    setFrameCount,
+    setSmokingAlert,
+    setPhoneAlert,
+    setDrowsyAlert,
+    startAlarm,
+    stopAlarm,
+    SMOKING_WARN_MS,
+    PHONE_WARN_MS,
+    EYES_CLOSED_WARN_MS,
+  });
 
   async function startWebcam() {
     const supportErr = getWebcamSupportErrorMessage();
