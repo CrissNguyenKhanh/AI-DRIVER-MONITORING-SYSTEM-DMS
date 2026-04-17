@@ -170,7 +170,8 @@ Tien do B3/B4 (theo batch nho):
 Tien do C (theo batch nho):
 - [x] C-Batch 1: Phan tich + lap blueprint tach `src/testdata/thucmuctest.jsx` (chua code).
 - [x] C-Batch 2: Tach nhom Pure Utils/Constants/Services/Styles cho `thucmuctest.jsx` va noi import nguoc de giu hanh vi.
-- [ ] C-Batch 3 tro di: cho smoke test cua nguoi dung truoc khi tiep tuc tach overlays/hooks/UI blocks.
+- [x] C-Batch 3: Tach nhom Overlay & Telemetry components ra file rieng va noi import lai vao `thucmuctest.jsx`.
+- [ ] C-Batch 4 tro di: cho smoke test cua nguoi dung truoc khi tiep tuc tach hooks/UI blocks.
 
 ### Giai doan D - Khoa chat chat luong
 - [ ] D1. Them/chuẩn hoa lint rules cho max-lines va complexity.
@@ -209,4 +210,4 @@ Tien do C (theo batch nho):
 
 ## 5) Huong dan cho AI tiep theo (handover ngan)
 
-Trang thai hien tai: Phase B is 100% COMPLETE. Phase C dang o C-Batch 2 da hoan tat cho `src/testdata/thucmuctest.jsx`: da tach constants/utils/services/styles ra file rieng va cap nhat import trong file goc, build + lint da pass. Dang dung lai de cho nguoi dung smoke test truoc khi sang C-Batch 3 (tach overlays/hooks/UI blocks).
+Trang thai hien tai: Phase B is 100% COMPLETE. Phase C dang o C-Batch 3 da hoan tat cho `src/testdata/thucmuctest.jsx`: da tach overlays/telemetry components ra file rieng va cap nhat import trong file goc, build + lint da pass. Dang dung lai de cho nguoi dung smoke test truoc khi sang C-Batch 4 (tach hooks orchestration va UI blocks).
