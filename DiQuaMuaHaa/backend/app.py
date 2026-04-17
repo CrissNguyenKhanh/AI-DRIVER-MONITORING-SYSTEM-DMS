@@ -13,7 +13,7 @@ import eventlet  # noqa: E402
 
 eventlet.monkey_patch()  # PHẢI gọi trước import Flask/SocketIO
 
-from data.api.api import app, socketio  # noqa: E402
+from src.api.routes.api import app, socketio  # noqa: E402
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))

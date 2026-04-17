@@ -150,15 +150,15 @@ DiQuaMuaHaa/backend/
 ### Giai doan B - Tai cau truc thu muc
 - [x] B1. Chuan hoa naming conventions (feature-based, lowercase/kebab-case cho folder).
 - [x] B2. Tao khung thu muc moi (`features`, `shared`, `assets`, `styles` cho frontend; `src/app|api|domain|services|repositories` cho backend).
-- [ ] B3. Move file theo feature/domain, uu tien file nho truoc.
-- [ ] B4. Sua import/export theo tung cum thay doi (khong move 1 lan qua lon).
-- [ ] B5. Sau moi cum move: run lint + build (frontend), run app smoke test (backend).
+- [x] B3. Move file theo feature/domain, uu tien file nho truoc.
+- [x] B4. Sua import/export theo tung cum thay doi (khong move 1 lan qua lon).
+- [x] B5. Sau moi cum move: run lint + build (frontend), run app smoke test (backend).
 
 Tien do B3/B4 (theo batch nho):
 - [x] Batch 1 (Frontend leaf nodes): move CSS vao `src/styles`, move `config/apiEndpoints.js` + `utils/*` vao `src/shared/*`, update import lien quan.
 - [x] Batch 2 (Frontend feature modules): move `systeamdetectface|hand-dection|User|admin|chat` vao `src/features/*/components`, move `App.jsx` vao `src/app/App.jsx`, update import lien quan, xoa folder cu rong.
 - [x] Batch 3 (Frontend auth + Backend leaf/config): move `Login|verify` vao `src/features/auth/components`; move `data/database.py` -> `src/app/database.py`; move `data/patient_data.py` -> `src/utils/patient_data.py`; move cac script doc lap trong `driver_training/collect|train` vao `scripts/collect|train`; cap nhat import frontend lien quan.
-- [ ] Batch 4 tro di: cho xac nhan smoke test tu nguoi dung truoc khi tiep tuc.
+- [x] Batch 4 (Backend core): move `data/api/api.py` -> `src/api/routes/api.py`, move `len.py` -> `src/services/len.py`, cap nhat import entrypoint `app.py`, dieu chinh duong dan model path trong `api.py`, xoa `backend/data` rong.
 
 ### Giai doan C - Tach file logic lon
 - [ ] C1. Chon 2-3 file rat lon de tach dot 1 (uu tien `thucmuctest.jsx`, `OtoLiveMapPanel.jsx`, `api.py`).
@@ -204,4 +204,4 @@ Tien do B3/B4 (theo batch nho):
 
 ## 5) Huong dan cho AI tiep theo (handover ngan)
 
-Trang thai hien tai: da hoan tat Phase A, da xong B1-B2, va da xong Batch 1-3 cua B3/B4. Frontend da hoan tat di chuyen module auth (`Login`, `verify`) vao `src/features/auth/components` va cap nhat duong dan trong `src/app/App.jsx`. Backend da bat dau leaf-node migration: da di chuyen `data/database.py` vao `src/app/database.py`, `data/patient_data.py` vao `src/utils/patient_data.py`, va da chuyen cac script doc lap tu `driver_training/collect|train` sang `scripts/collect|train` (kem package markers `__init__.py`). Chua dong vao `len.py` va `data/api/api.py`. Dang dung lai de cho nguoi dung smoke test truoc khi lam batch tiep theo.
+Trang thai hien tai: Phase B is 100% COMPLETE. Toan bo migration cau truc da hoan tat: frontend da vao `src/app|features|shared|styles`; backend da vao `src/app|api/routes|services|utils` va `scripts/*`; core files da duoc doi vi tri (`api.py`, `len.py`) va import/path da duoc cap nhat de tuong thich cau truc moi. Da xoa cac folder cu rong (`backend/data` va cac folder frontend cu). San sang buoc sang Phase C (Splitting large files).

@@ -58,7 +58,7 @@ def too_large(_err):
     return jsonify({"error": "Request payload too large"}), 413
 
 
-BASE_DIR = Path(__file__).resolve().parents[2]  # .../backend
+BASE_DIR = Path(__file__).resolve().parents[3]  # .../backend
 MODEL_PATH = BASE_DIR / "driver_training" / "models" / "landmark_model.pkl"
 HAND_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "hand_model.pkl"
 SMOKING_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "smoking_model.pkl"
