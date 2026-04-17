@@ -1006,19 +1006,97 @@ def _get_face_embedding_from_image(image_b64: str) -> List[float] | None:
 
 @app.get("/")
 def index() -> Any:
-    return jsonify({
-        "status": "ok",
-        "message": "DMS Backend is running",
-        "endpoints": [
-            "POST /api/hand/predict_from_frame",
-            "POST /api/landmark/predict_from_frame",
-            "POST /api/identity/register",
-            "POST /api/identity/verify",
-            "GET  /api/identity/driver_profile",
-            "POST /api/identity/request_decision",
-            "GET  /api/identity/decision_status",
-        ]
-    })
+    frontend_url = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
+    register_url = f"{frontend_url}/test5" if frontend_url else "/test5"
+    html = f"""<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DMS Backend</title>
+  <style>
+    :root {{
+      color-scheme: dark;
+    }}
+    * {{
+      box-sizing: border-box;
+      font-family: Inter, Segoe UI, Roboto, Arial, sans-serif;
+    }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at 20% 20%, #1f2a44, #0b1220 55%);
+      color: #e5e7eb;
+      padding: 24px;
+    }}
+    .card {{
+      width: min(560px, 96vw);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      background: rgba(15, 23, 42, 0.75);
+      border-radius: 18px;
+      padding: 28px;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+    }}
+    h1 {{
+      margin: 0 0 12px;
+      font-size: 28px;
+    }}
+    p {{
+      margin: 8px 0;
+      color: #cbd5e1;
+      line-height: 1.55;
+    }}
+    .actions {{
+      margin-top: 22px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }}
+    .btn {{
+      border: 0;
+      border-radius: 12px;
+      padding: 11px 16px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }}
+    .btn-primary {{
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: #fff;
+    }}
+    .btn-secondary {{
+      background: #1f2937;
+      color: #e5e7eb;
+      border: 1px solid #374151;
+    }}
+    code {{
+      color: #93c5fd;
+      background: rgba(30, 41, 59, 0.7);
+      padding: 2px 6px;
+      border-radius: 6px;
+    }}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>AI Driver Monitoring System</h1>
+    <p>Backend đang hoạt động bình thường.</p>
+    <p>Bạn có thể vào trang đăng ký khuôn mặt để bắt đầu nhận diện tài xế.</p>
+    <div class="actions">
+      <a class="btn btn-primary" href="{register_url}">Dang ky khuon mat</a>
+      <a class="btn btn-secondary" href="/api/ping-db">Kiem tra ket noi DB</a>
+    </div>
+    <p style="margin-top: 16px;">Duong dan dang ky: <code>{register_url}</code></p>
+  </main>
+</body>
+</html>"""
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 @app.get("/api/ping-db")
