@@ -1,16 +1,16 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import "./styles/App.css";
+import "../styles/App.css";
 
-import PatientStatistics from "./admin/PatientStatistics";
-import Login from "./Login/Login";
-import MedicalDiagnosisAI from "./User/khanhku";
-import MedicalRecordConfirmation from "./User/vippoint";
-import EnhancedPatientStatistics from "./User/endhaintstatics";
-import Thumuctest from "./testdata/thucmuctest";
-import DectionHand from "./hand-dection/dectionhand";
-import VerifyPro from "./verify/verifypro";
+import PatientStatistics from "../features/admin/components/PatientStatistics";
+import Login from "../Login/Login";
+import MedicalDiagnosisAI from "../features/user/components/khanhku";
+import MedicalRecordConfirmation from "../features/user/components/vippoint";
+import EnhancedPatientStatistics from "../features/user/components/endhaintstatics";
+import Thumuctest from "../testdata/thucmuctest";
+import DectionHand from "../features/gestures/components/dectionhand";
+import VerifyPro from "../verify/verifypro";
 
-import FaceDetect from "./systeamdetectface/face_detect";
+import FaceDetect from "../features/dms/components/face_detect";
 function App() {
   return (
     <Router>

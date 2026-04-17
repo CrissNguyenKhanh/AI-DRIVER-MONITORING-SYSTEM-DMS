@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { CheckCircle, XCircle, AlertTriangle, Clock, User } from "lucide-react";
-import { getMedicalApiBase } from "../shared/constants/apiEndpoints";
+import { getMedicalApiBase } from "../../../shared/constants/apiEndpoints";
 
 const MedicalRecordConfirmation = () => {
   const [records, setRecords] = useState([]);

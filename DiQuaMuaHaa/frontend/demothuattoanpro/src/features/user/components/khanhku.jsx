@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { getMedicalApiBase } from "../shared/constants/apiEndpoints";
+import { getMedicalApiBase } from "../../../shared/constants/apiEndpoints";
 import {
   Activity,
   AlertCircle,
@@ -16,7 +16,7 @@ import {
   StopCircle,
   RefreshCw
 } from "lucide-react";
-import DoctorChatbot from "../chat/DoctorChatbot";
+import DoctorChatbot from "../../chat/components/DoctorChatbot";
 
 const MedicalDiagnosisAI = () => {
   // --- States cho Chẩn đoán Triệu chứng ---

@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
 import { io } from "socket.io-client";
-import OwnerVerifyGate from "../systeamdetectface/OwnerVerifyGate";
-import TelegramOwnerRejectOverlay from "../systeamdetectface/TelegramOwnerRejectOverlay";
-import DriverAuthenticatedWelcome from "../systeamdetectface/DriverAuthenticatedWelcome";
+import OwnerVerifyGate from "../features/dms/components/OwnerVerifyGate";
+import TelegramOwnerRejectOverlay from "../features/dms/components/TelegramOwnerRejectOverlay";
+import DriverAuthenticatedWelcome from "../features/dms/components/DriverAuthenticatedWelcome";
 import { getDmsApiBase } from "../shared/constants/apiEndpoints";
 import { getWebcamSupportErrorMessage } from "../shared/utils/cameraContext";
 import {
@@ -23,7 +23,7 @@ import HandQuickAppsMenu, {
   handLabelToQuickAppKey,
   HAND_LABEL_CLOSES_MENU,
   HAND_LABEL_OPENS_MENU,
-} from "../systeamdetectface/HandQuickAppsMenu";
+} from "../features/dms/components/HandQuickAppsMenu";
 
 const API_BASE = getDmsApiBase();
 const API_INTERVAL_MS = 1000; // landmark + smoking vẫn 1s

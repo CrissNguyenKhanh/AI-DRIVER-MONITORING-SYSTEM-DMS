@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { getDmsApiBase } from "../shared/constants/apiEndpoints";
+import { getDmsApiBase } from "../../../shared/constants/apiEndpoints";
 
 const DEFAULT_API_BASE = getDmsApiBase();
 const DEFAULT_VERIFY_INTERVAL_MS = 1200;

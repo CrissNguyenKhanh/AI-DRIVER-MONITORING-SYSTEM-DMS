@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Activity, AlertCircle, CheckCircle, TrendingUp, Users, Calendar, Save } from "lucide-react";
-import { getMedicalApiBase } from "../shared/constants/apiEndpoints";
+import { getMedicalApiBase } from "../../../shared/constants/apiEndpoints";
 
 const MedicalDiagnosisAI = () => {
   const [formData, setFormData] = useState({

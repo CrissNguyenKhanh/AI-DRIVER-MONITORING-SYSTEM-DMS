@@ -156,7 +156,8 @@ DiQuaMuaHaa/backend/
 
 Tien do B3/B4 (theo batch nho):
 - [x] Batch 1 (Frontend leaf nodes): move CSS vao `src/styles`, move `config/apiEndpoints.js` + `utils/*` vao `src/shared/*`, update import lien quan.
-- [ ] Batch 2 tro di: cho xac nhan smoke test tu nguoi dung truoc khi tiep tuc.
+- [x] Batch 2 (Frontend feature modules): move `systeamdetectface|hand-dection|User|admin|chat` vao `src/features/*/components`, move `App.jsx` vao `src/app/App.jsx`, update import lien quan, xoa folder cu rong.
+- [ ] Batch 3 tro di: cho xac nhan smoke test tu nguoi dung truoc khi tiep tuc.
 
 ### Giai doan C - Tach file logic lon
 - [ ] C1. Chon 2-3 file rat lon de tach dot 1 (uu tien `thucmuctest.jsx`, `OtoLiveMapPanel.jsx`, `api.py`).
@@ -202,4 +203,4 @@ Tien do B3/B4 (theo batch nho):
 
 ## 5) Huong dan cho AI tiep theo (handover ngan)
 
-Trang thai hien tai: da hoan tat Phase A, da xong B1-B2, va da hoan tat Batch 1 cua B3/B4 cho frontend (leaf nodes). Da move nhom style + shared utility/config va da cap nhat import toan frontend cho nhom nay; chua move cac large feature components (`systeamdetectface`, `hand-dection`, `User`). Dang dung lai de cho nguoi dung smoke test truoc khi lam batch tiep theo.
+Trang thai hien tai: da hoan tat Phase A, da xong B1-B2, da xong Batch 1 va Batch 2 cua B3/B4 cho frontend. Cac nhom feature lon da duoc move vao `src/features/*/components`, `App.jsx` da duoc doi sang `src/app/App.jsx`, `main.jsx` da trỏ sang app moi, va cac folder cu (`systeamdetectface`, `hand-dection`, `User`, `admin`, `chat`) da duoc xoa. Dang dung lai de cho nguoi dung smoke test truoc khi tiep tuc batch tiep theo.

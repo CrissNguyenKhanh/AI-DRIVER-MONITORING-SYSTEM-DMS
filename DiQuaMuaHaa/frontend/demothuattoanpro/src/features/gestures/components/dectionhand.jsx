@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
-import { getDmsApiBase } from "../shared/constants/apiEndpoints";
-import { getWebcamSupportErrorMessage } from "../shared/utils/cameraContext";
+import { getDmsApiBase } from "../../../shared/constants/apiEndpoints";
+import { getWebcamSupportErrorMessage } from "../../../shared/utils/cameraContext";
 import HandQuickAppsMenu, {
   executeQuickAppAction,
   handLabelToQuickAppKey,
   HAND_LABEL_CLOSES_MENU,
   HAND_LABEL_OPENS_MENU,
-} from "../systeamdetectface/HandQuickAppsMenu";
+} from "../../dms/components/HandQuickAppsMenu";
 
 import sukunaVideo from "./video/khanhvideo.mp4";
 const API_INTERVAL_MS = 1000; // ms, tần suất gọi API khi webcam bật

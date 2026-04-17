@@ -24,7 +24,7 @@ import {
   Shield,
   Thermometer,
 } from "lucide-react";
-import { getMedicalApiBase } from "../shared/constants/apiEndpoints";
+import { getMedicalApiBase } from "../../../shared/constants/apiEndpoints";
 
 const COLORS = [
   "#3b82f6",
