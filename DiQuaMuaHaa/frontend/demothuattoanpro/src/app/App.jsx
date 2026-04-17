@@ -9,7 +9,7 @@ function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<Login />} />
+        <Route path="/" element={<DriverMonitorDMS />} />
         {/* Hệ thống giám sát lái xe DMS */}
         <Route path="/dms" element={<DriverMonitorDMS />} />
         {/* Trang thống kê Admin */}
