@@ -32,8 +32,8 @@ Pillow==10.0.1
 opencv-python-headless==4.8.1.78
 mediapipe==0.10.9
 
-# YOLO (phone detection) — lazy load chỉ khi gọi /api/phone/detect (tránh OOM startup)
-ultralytics==8.0.196
+# YOLO phone detection dùng ONNX (không cần PyTorch, tiết kiệm ~200MB RAM)
+onnxruntime-cpu==1.19.2
 
 # Optional
 pandas==2.1.3

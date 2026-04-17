@@ -64,6 +64,7 @@ HAND_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "hand_model.pkl"
 SMOKING_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "smoking_model.pkl"
 PHONE_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "phone_model.pkl"
 PHONE_YOLO_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "phone_yolo.pt"
+PHONE_YOLO_ONNX_PATH  = BASE_DIR / "driver_training" / "models" / "phone_yolo.onnx"
 
 # MySQL config — đọc từ biến môi trường để tương thích Render / Cloud
 # Trên Render: vào Environment → thêm MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE
@@ -108,7 +109,8 @@ phone_model = None
 phone_idx_to_label: Dict[int, str] = {}
 phone_image_size: int | None = None
 
-phone_yolo_model = None
+phone_yolo_model = None          # ultralytics YOLO (fallback, cần PyTorch)
+phone_yolo_onnx  = None          # onnxruntime InferenceSession (ưu tiên, nhẹ ~40MB)
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")  # Render PostgreSQL internal URL
@@ -529,12 +531,33 @@ def load_phone_model() -> None:
 
 
 def load_phone_yolo_model() -> None:
-    global phone_yolo_model
+    """Ưu tiên ONNX (nhẹ, không cần PyTorch). Fallback sang .pt nếu không có .onnx."""
+    global phone_yolo_model, phone_yolo_onnx
+
+    # --- ONNX (onnxruntime-cpu, ~40MB) ---
+    if PHONE_YOLO_ONNX_PATH.exists():
+        try:
+            import onnxruntime as ort  # noqa: PLC0415
+            sess_opts = ort.SessionOptions()
+            sess_opts.inter_op_num_threads = 1
+            sess_opts.intra_op_num_threads = 1
+            phone_yolo_onnx = ort.InferenceSession(
+                str(PHONE_YOLO_ONNX_PATH),
+                sess_options=sess_opts,
+                providers=["CPUExecutionProvider"],
+            )
+            phone_yolo_model = None
+            app.logger.info("phone_yolo.onnx loaded OK (onnxruntime)")
+            return
+        except Exception as exc:
+            app.logger.warning("phone_yolo.onnx load failed, trying .pt: %s", exc)
+            phone_yolo_onnx = None
+
+    # --- Fallback: ultralytics .pt (cần PyTorch ~200MB) ---
     if not PHONE_YOLO_MODEL_PATH.exists() or not YOLO_AVAILABLE:
         phone_yolo_model = None
         return
     try:
-        # PyTorch 2.6+ đổi default weights_only=True → patch để load .pt cũ
         import torch as _torch
         _orig = _torch.load
         def _patched(f, *a, **kw):
@@ -543,10 +566,95 @@ def load_phone_yolo_model() -> None:
         _torch.load = _patched
         phone_yolo_model = YOLO(str(PHONE_YOLO_MODEL_PATH))
         _torch.load = _orig
-        app.logger.info("phone_yolo.pt loaded OK")
+        app.logger.info("phone_yolo.pt loaded OK (ultralytics fallback)")
     except Exception as exc:
         app.logger.warning("phone_yolo.pt load failed: %s", exc)
         phone_yolo_model = None
+
+
+# --- ONNX inference helpers ---
+
+def _yolo_letterbox(img, new_size: int = 640):
+    """Resize + pad về new_size x new_size (letterbox). Trả về (img_padded, scale, (pad_w, pad_h))."""
+    h, w = img.shape[:2]
+    scale = min(new_size / h, new_size / w)
+    nw, nh = int(round(w * scale)), int(round(h * scale))
+    img_r = cv2.resize(img, (nw, nh))
+    pad_w = (new_size - nw) / 2
+    pad_h = (new_size - nh) / 2
+    top, bottom = int(round(pad_h - 0.1)), int(round(pad_h + 0.1))
+    left, right  = int(round(pad_w - 0.1)), int(round(pad_w + 0.1))
+    img_p = cv2.copyMakeBorder(img_r, top, bottom, left, right,
+                                cv2.BORDER_CONSTANT, value=(114, 114, 114))
+    return img_p, scale, (pad_w, pad_h)
+
+
+def _yolo_onnx_detect(session, img_bgr, conf_thres: float = 0.4, iou_thres: float = 0.5):
+    """
+    Chạy inference với onnxruntime session. Output YOLOv8: (1, 5, 8400).
+    Trả về list dict {"label","x","y","w","h","prob"} với tọa độ chuẩn hóa [0,1].
+    """
+    orig_h, orig_w = img_bgr.shape[:2]
+    img_pad, scale, (pad_w, pad_h) = _yolo_letterbox(img_bgr, 640)
+
+    # Preprocess: BGR → RGB, HWC → CHW, normalize
+    inp = cv2.cvtColor(img_pad, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    inp = np.transpose(inp, (2, 0, 1))[np.newaxis]  # (1,3,640,640)
+
+    input_name = session.get_inputs()[0].name
+    output = session.run(None, {input_name: inp})[0]  # (1, 5, 8400)
+    preds = output[0].T  # (8400, 5): cx,cy,w,h,conf
+
+    # Filter confidence
+    mask = preds[:, 4] >= conf_thres
+    preds = preds[mask]
+    if len(preds) == 0:
+        return []
+
+    # cx,cy,w,h in 640-space → x1,y1,x2,y2
+    cx, cy, w, h = preds[:, 0], preds[:, 1], preds[:, 2], preds[:, 3]
+    x1 = cx - w / 2
+    y1 = cy - h / 2
+    x2 = cx + w / 2
+    y2 = cy + h / 2
+    confs = preds[:, 4]
+
+    # NMS via cv2
+    boxes_cv = np.stack([x1, y1, w, h], axis=1).tolist()
+    scores_cv = confs.tolist()
+    indices = cv2.dnn.NMSBoxes(boxes_cv, scores_cv, conf_thres, iou_thres)
+    if len(indices) == 0:
+        return []
+    indices = [int(i) for i in (indices.flatten() if hasattr(indices, "flatten") else indices)]
+
+    result = []
+    for idx in indices:
+        # Undo letterbox padding, scale về original image
+        bx1 = (float(x1[idx]) - pad_w) / scale
+        by1 = (float(y1[idx]) - pad_h) / scale
+        bx2 = (float(x2[idx]) - pad_w) / scale
+        by2 = (float(y2[idx]) - pad_h) / scale
+
+        # Chuẩn hóa [0,1] theo kích thước gốc
+        bx1 = max(0.0, bx1 / orig_w)
+        by1 = max(0.0, by1 / orig_h)
+        bx2 = min(1.0, bx2 / orig_w)
+        by2 = min(1.0, by2 / orig_h)
+
+        bw = bx2 - bx1
+        bh = by2 - by1
+        if bw <= 0 or bh <= 0:
+            continue
+
+        result.append({
+            "label": "phone",
+            "x": float(bx1 + bw / 2),   # tâm x
+            "y": float(by1 + bh / 2),   # tâm y
+            "w": float(bw),
+            "h": float(bh),
+            "prob": float(confs[idx]),
+        })
+    return result
 
 
 # Lazy loading — chỉ load khi có request đầu tiên, tránh OOM lúc startup (Render 512MB)
@@ -621,6 +729,10 @@ def _ensure_yolo_loaded() -> None:
         return
     load_phone_yolo_model()
     _yolo_loaded = True
+
+
+def _yolo_available() -> bool:
+    return phone_yolo_onnx is not None or phone_yolo_model is not None
 
 
 NUM_LANDMARKS_PER_HAND = 21
@@ -1307,12 +1419,12 @@ def phone_detect_from_frame() -> Any:
     """
     _ensure_models_loaded()
     _ensure_yolo_loaded()
-    if phone_yolo_model is None:
+    if not _yolo_available():
         return (
             jsonify(
                 {
-                    "error": "YOLO phone model chưa được load. Hãy train và lưu phone_yolo.pt, sau đó restart API.",
-                    "model_path": str(PHONE_YOLO_MODEL_PATH),
+                    "error": "YOLO phone model chưa được load. Cần phone_yolo.onnx hoặc phone_yolo.pt.",
+                    "model_path": str(PHONE_YOLO_ONNX_PATH),
                 }
             ),
             500,
@@ -1349,8 +1461,11 @@ def phone_detect_from_frame() -> Any:
     if img is None:
         return jsonify({"error": "Không decode được ảnh từ base64."}), 400
 
-    # Run YOLO
+    # Run YOLO — ưu tiên ONNX
     try:
+        if phone_yolo_onnx is not None:
+            return jsonify({"boxes": _yolo_onnx_detect(phone_yolo_onnx, img, conf_thres=0.4)})
+
         results = phone_yolo_model(img, conf=0.4, iou=0.5, verbose=False)[0]  # type: ignore[attr-defined]
     except Exception as exc:
         return jsonify({"error": f"Lỗi YOLO detect: {exc}"}), 500
@@ -1358,7 +1473,6 @@ def phone_detect_from_frame() -> Any:
     boxes_out: List[Dict[str, Any]] = []
 
     if results.boxes is not None and len(results.boxes) > 0:  # type: ignore[truthy-function]
-        # xywhn: normalized center x,y,w,h in [0,1]
         xywhn = results.boxes.xywhn.cpu().numpy()  # type: ignore[attr-defined]
         confs = results.boxes.conf.cpu().numpy()  # type: ignore[attr-defined]
         clss = results.boxes.cls.cpu().numpy().astype(int)  # type: ignore[attr-defined]
@@ -2512,7 +2626,7 @@ def handle_phone_frame(data):
     Server trả: { "boxes": [...] } hoặc { "error": "..." }
     """
     _ensure_yolo_loaded()
-    if phone_yolo_model is None:
+    if not _yolo_available():
         emit("phone_result", {"boxes": [], "error": "YOLO model not loaded"})
         return
 
@@ -2528,6 +2642,11 @@ def handle_phone_frame(data):
             emit("phone_result", {"boxes": []})
             return
 
+        # Ưu tiên ONNX (nhẹ, không cần PyTorch)
+        if phone_yolo_onnx is not None:
+            emit("phone_result", {"boxes": _yolo_onnx_detect(phone_yolo_onnx, img, conf_thres=0.4)})
+            return
+
         results = phone_yolo_model(img, conf=0.55, iou=0.5, verbose=False)[0]
         boxes_out = []
         if results.boxes is not None and len(results.boxes) > 0:
@@ -2541,17 +2660,12 @@ def handle_phone_frame(data):
                     if isinstance(names, dict)
                     else str(int(cls_idx))
                 )
-                boxes_out.append(
-                    {
-                        "label": label,
-                        "x": float(cx),
-                        "y": float(cy),
-                        "w": float(w),
-                        "h": float(h),
-                        "prob": float(c),
-                    }
-                )
-
+                boxes_out.append({
+                    "label": label,
+                    "x": float(cx), "y": float(cy),
+                    "w": float(w),  "h": float(h),
+                    "prob": float(c),
+                })
         emit("phone_result", {"boxes": boxes_out})
     except Exception as exc:
         emit("phone_result", {"boxes": [], "error": str(exc)})
