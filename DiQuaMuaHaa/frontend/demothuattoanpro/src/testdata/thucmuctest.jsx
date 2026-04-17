@@ -4,7 +4,6 @@ import { io } from "socket.io-client";
 import OwnerVerifyGate from "../features/dms/components/OwnerVerifyGate";
 import TelegramOwnerRejectOverlay from "../features/dms/components/TelegramOwnerRejectOverlay";
 import DriverAuthenticatedWelcome from "../features/dms/components/DriverAuthenticatedWelcome";
-import { getDmsApiBase } from "../shared/constants/apiEndpoints";
 import { getWebcamSupportErrorMessage } from "../shared/utils/cameraContext";
 import {
   speakOwnerGreeting,
@@ -24,168 +23,59 @@ import HandQuickAppsMenu, {
   HAND_LABEL_CLOSES_MENU,
   HAND_LABEL_OPENS_MENU,
 } from "../features/dms/components/HandQuickAppsMenu";
-
-const API_BASE = getDmsApiBase();
-const API_INTERVAL_MS = 1000; // landmark + smoking vẫn 1s
-const HAND_API_INTERVAL_MS = 1000;
-const HAND_QUICK_CONFIDENCE = 0.75;
-const IDENTITY_BURST_FRAMES = 2;
-const IDENTITY_BURST_GAP_MS = 110;
-const DRIVER_ID_KEY = "driver_owner_id_v1";
-const DEFAULT_DRIVER_ID = "driver_001";
-const HISTORY_SIZE = 10;
-const CONSISTENT_FRAMES = 4;
-const MIN_PROB_FOR_LABEL = 0.6;
-const EAR_BLINK_THRESH = 0.29; // tăng từ 0.21 → 0.27 để hoạt động tốt với người đeo kính
-const EAR_HISTORY = 90;
-const EYES_CLOSED_WARN_MS = 3000;
-
-// ── PHONE — WebSocket YOLO, ~15fps ──────────────────────────
-const PHONE_WS_FPS = 15;
-const PHONE_YOLO_MIN_PROB = 0.55;
-const PHONE_HISTORY_LEN = 20;
-const PHONE_WARN_MS = 3000;
-const PHONE_STABLE_FRAMES = 4; // cần 4 lần liên tiếp mới bật cảnh báo
-const PHONE_OFF_FRAMES = 6; // cần 6 lần liên tiếp mất cảnh báo mới tắt
-// ── SMOKING — WebSocket landmark, ~4fps (không cần nhanh hơn) ──
-const SMOKING_WS_FPS = 4;
-const SMOKING_MIN_PROB = 0.82;
-const SMOKING_HISTORY_LEN = 24;
-const SMOKING_STABLE_FRAMES = 10; // cần 10 frames liên tiếp mới bật (~10s * 4fps = 40 frames... thực tế 10 api calls)
-const SMOKING_OFF_FRAMES = 14;
-const SMOKING_WARN_MS = 4000;
-// ─────────────────────────────────────────────────────────────
-
-// Tạm tắt smoking trong test để tập trung fix phone detection
-const SMOKING_ENABLED = false;
-
-// ── IDENTITY AUTH (vehicle UUID) ──────────────────────────────
-const ID_AUTH_LOCK_INTRUDER_FRAMES = 3; // liên tiếp không chính chủ thì khóa về auth
-const ID_AUTH_UNLOCK_FRAMES = 2; // liên tiếp chính chủ thì mở về active
-const ID_AUTH_RETRY_INTERVAL_MS = 1200;
-
-const LABEL_MAP = {
-  safe: { vi: "NORMAL", level: "good", color: "#00f5a0" },
-  drowsy: { vi: "DROWSY", level: "warning", color: "#ffc940" },
-  yawning: { vi: "YAWNING", level: "warning", color: "#ffc940" },
-  angry: { vi: "DISTRACTED", level: "risk", color: "#ff4560" },
-  stressed: { vi: "STRESSED", level: "risk", color: "#ff6b6b" },
-  unknown: { vi: "ANALYZING", level: "unknown", color: "#4a90d9" },
-  no_face: { vi: "NO FACE", level: "unknown", color: "#4a90d9" },
-};
-
-const STATUS_ICONS = [
-  { id: "camera", label: "Camera", icon: "📷" },
-  { id: "attentive", label: "Attentive", icon: "🧠" },
-  { id: "awake", label: "Awake", icon: "👁" },
-  { id: "seatbelt", label: "Seatbelt", icon: "🔒" },
-  { id: "cabin", label: "Cabin", icon: "💡" },
-  { id: "phone", label: "Phone", icon: "📱" },
-  { id: "smoking", label: "Smoking", icon: "🚬" },
-];
-
-const L_EYE = {
-  p1: 33,
-  p2: 160,
-  p3: 158,
-  p4: 133,
-  p5: 153,
-  p6: 144,
-  outer: 33,
-  inner: 133,
-  iris: [468, 469, 470, 471, 472],
-};
-const R_EYE = {
-  p1: 362,
-  p2: 385,
-  p3: 387,
-  p4: 263,
-  p5: 373,
-  p6: 380,
-  outer: 263,
-  inner: 362,
-  iris: [473, 474, 475, 476, 477],
-};
-const LEFT_EYE_IDX = [
-  33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246,
-];
-const RIGHT_EYE_IDX = [
-  362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384,
-  398,
-];
-const FACE_OVAL_IDX = [
-  10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378,
-  400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21,
-  54, 103, 67, 109,
-];
-const LIPS_IDX = [
-  61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84,
-  181, 91, 146,
-];
-
-/** Nối 21 điểm — topology MediaPipe Hands */
-const HAND_CONNECTIONS = [
-  [0, 1],
-  [1, 2],
-  [2, 3],
-  [3, 4],
-  [0, 5],
-  [5, 6],
-  [6, 7],
-  [7, 8],
-  [5, 9],
-  [9, 10],
-  [10, 11],
-  [11, 12],
-  [9, 13],
-  [13, 14],
-  [14, 15],
-  [15, 16],
-  [13, 17],
-  [17, 18],
-  [18, 19],
-  [19, 20],
-  [0, 17],
-];
-
-function distPts(a, b) {
-  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
-}
-function computeEAR(lm, eye) {
-  const p1 = lm[eye.p1],
-    p2 = lm[eye.p2],
-    p3 = lm[eye.p3],
-    p4 = lm[eye.p4],
-    p5 = lm[eye.p5],
-    p6 = lm[eye.p6];
-  if (!p1 || !p4) return 0.3;
-  return (distPts(p2, p6) + distPts(p3, p5)) / (2.0 * distPts(p1, p4) + 0.001);
-}
-function computePupilRadius(lm, irisIdx) {
-  if (!lm[irisIdx[0]]) return 0;
-  const c = lm[irisIdx[0]];
-  return (
-    irisIdx
-      .slice(1)
-      .map((i) => distPts(c, lm[i]))
-      .reduce((a, b) => a + b, 0) / 4
-  );
-}
-function estimateHeadPose(lm) {
-  if (!lm || lm.length < 468) return { yaw: 0, pitch: 0, roll: 0 };
-  const nose = lm[1],
-    chin = lm[152],
-    lEye = lm[33],
-    rEye = lm[263];
-  const eyeMidX = (lEye.x + rEye.x) / 2;
-  const eyeWidth = Math.abs(rEye.x - lEye.x);
-  const yaw = ((nose.x - eyeMidX) / (eyeWidth + 0.001)) * 2.2;
-  const eyeMidY = (lEye.y + rEye.y) / 2;
-  const faceH = Math.abs(chin.y - eyeMidY) + 0.001;
-  const pitch = ((nose.y - eyeMidY) / faceH - 0.42) * 2.5;
-  const roll = Math.atan2(rEye.y - lEye.y, rEye.x - lEye.x);
-  return { yaw: -yaw, pitch: -pitch, roll: -roll };
-}
+import {
+  API_BASE,
+  API_INTERVAL_MS,
+  HAND_API_INTERVAL_MS,
+  HAND_QUICK_CONFIDENCE,
+  IDENTITY_BURST_FRAMES,
+  IDENTITY_BURST_GAP_MS,
+  DRIVER_ID_KEY,
+  DEFAULT_DRIVER_ID,
+  HISTORY_SIZE,
+  CONSISTENT_FRAMES,
+  MIN_PROB_FOR_LABEL,
+  EAR_BLINK_THRESH,
+  EAR_HISTORY,
+  EYES_CLOSED_WARN_MS,
+  PHONE_WS_FPS,
+  PHONE_YOLO_MIN_PROB,
+  PHONE_HISTORY_LEN,
+  PHONE_WARN_MS,
+  PHONE_STABLE_FRAMES,
+  PHONE_OFF_FRAMES,
+  SMOKING_WS_FPS,
+  SMOKING_MIN_PROB,
+  SMOKING_HISTORY_LEN,
+  SMOKING_STABLE_FRAMES,
+  SMOKING_OFF_FRAMES,
+  SMOKING_WARN_MS,
+  SMOKING_ENABLED,
+  ID_AUTH_LOCK_INTRUDER_FRAMES,
+  ID_AUTH_UNLOCK_FRAMES,
+  ID_AUTH_RETRY_INTERVAL_MS,
+  LABEL_MAP,
+  STATUS_ICONS,
+} from "../features/dms/constants/monitor.constants";
+import {
+  L_EYE,
+  R_EYE,
+  LEFT_EYE_IDX,
+  RIGHT_EYE_IDX,
+  FACE_OVAL_IDX,
+  LIPS_IDX,
+  HAND_CONNECTIONS,
+  computeEAR,
+  computePupilRadius,
+  estimateHeadPose,
+} from "../features/dms/utils/visionMath.utils";
+import { getSmoothedLabel } from "../features/dms/utils/labelSmoothing.utils";
+import {
+  captureFrame,
+  captureBurstFrames,
+} from "../features/dms/services/frameCapture.service";
+import { startAlarm, stopAlarm } from "../features/dms/services/alarm.service";
+import "../features/dms/styles/driver-monitor.animations.css";
 
 // ─────────────────────────────────────────────────────────
 // PhoneFOMOOverlay — đọc từ phoneDetectionRef, vẽ RAF 60fps
@@ -1401,56 +1291,6 @@ export default function DriverMonitorDMS() {
     if (sessionLogOpen) refreshSessionLog();
   }, [sessionLogOpen, refreshSessionLog]);
 
-  // ── Audio helpers ──
-  function getAudioCtx() {
-    if (!audioCtxRef.current)
-      audioCtxRef.current = new (
-        window.AudioContext || window.webkitAudioContext
-      )();
-    return audioCtxRef.current;
-  }
-  function playBeep(freq, dur, vol) {
-    try {
-      const ctx = getAudioCtx();
-      const osc = ctx.createOscillator(),
-        g = ctx.createGain();
-      osc.connect(g);
-      g.connect(ctx.destination);
-      osc.type = "square";
-      osc.frequency.setValueAtTime(freq, ctx.currentTime);
-      g.gain.setValueAtTime(vol, ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + dur);
-    } catch (_) {}
-  }
-  function startAlarm() {
-    stopAlarm();
-    playBeep(880, 0.18, 0.7);
-    setTimeout(() => playBeep(660, 0.18, 0.7), 200);
-    alarmIntervalRef.current = setInterval(() => {
-      playBeep(880, 0.18, 0.7);
-      setTimeout(() => playBeep(660, 0.18, 0.7), 200);
-    }, 900);
-    if (navigator.vibrate) {
-      navigator.vibrate([300, 150, 300, 150, 300]);
-      vibrateIntervalRef.current = setInterval(
-        () => navigator.vibrate([300, 150, 300, 150, 300]),
-        1500,
-      );
-    }
-  }
-  function stopAlarm() {
-    if (alarmIntervalRef.current) {
-      clearInterval(alarmIntervalRef.current);
-      alarmIntervalRef.current = null;
-    }
-    if (vibrateIntervalRef.current) {
-      clearInterval(vibrateIntervalRef.current);
-      vibrateIntervalRef.current = null;
-    }
-    if (navigator.vibrate) navigator.vibrate(0);
-  }
 
   // ── Owner identity gate callbacks (tách riêng khỏi thucmuctest) ──
   const handleIdentityUnlock = useCallback(
@@ -1511,7 +1351,7 @@ export default function DriverMonitorDMS() {
   );
 
   const handleIdentityLock = useCallback((reason) => {
-    stopAlarm();
+    stopAlarm(alarmIntervalRef, vibrateIntervalRef);
     setDrowsyAlert(null);
     setPhoneAlert(null);
     setSmokingAlert(null);
@@ -1960,7 +1800,8 @@ export default function DriverMonitorDMS() {
       }
       if (smokingSecRef.current >= SMOKING_WARN_MS / 1000) {
         setSmokingAlert(smokingSecRef.current);
-        if (!alarmIntervalRef.current) startAlarm();
+        if (!alarmIntervalRef.current)
+          startAlarm(audioCtxRef, alarmIntervalRef, vibrateIntervalRef);
       } else {
         setSmokingAlert(null);
       }
@@ -1974,7 +1815,8 @@ export default function DriverMonitorDMS() {
       }
       if (phoneSecRef.current >= PHONE_WARN_MS / 1000) {
         setPhoneAlert(phoneSecRef.current);
-        if (!alarmIntervalRef.current) startAlarm();
+        if (!alarmIntervalRef.current)
+          startAlarm(audioCtxRef, alarmIntervalRef, vibrateIntervalRef);
       } else {
         setPhoneAlert(null);
       }
@@ -1982,14 +1824,16 @@ export default function DriverMonitorDMS() {
       const closedSec = eyesClosedSecRef.current;
       if (closedSec >= EYES_CLOSED_WARN_MS / 1000) {
         setDrowsyAlert(closedSec);
-        if (!alarmIntervalRef.current) startAlarm();
+        if (!alarmIntervalRef.current)
+          startAlarm(audioCtxRef, alarmIntervalRef, vibrateIntervalRef);
       } else {
         setDrowsyAlert(null);
         // stop alarm chỉ khi cả 3 đều không active
         const anyAlert =
           phoneSecRef.current >= PHONE_WARN_MS / 1000 ||
           smokingSecRef.current >= SMOKING_WARN_MS / 1000;
-        if (alarmIntervalRef.current && !anyAlert) stopAlarm();
+        if (alarmIntervalRef.current && !anyAlert)
+          stopAlarm(alarmIntervalRef, vibrateIntervalRef);
       }
     }, 250);
     return () => clearInterval(dispId);
@@ -2060,7 +1904,7 @@ export default function DriverMonitorDMS() {
     handLandmarksRef.current = [];
     setStatus("idle");
     poseRef.current = { yaw: 0, pitch: 0, roll: 0 };
-    stopAlarm();
+    stopAlarm(alarmIntervalRef, vibrateIntervalRef);
     setDrowsyAlert(null);
     eyesClosedSinceRef.current = null;
     eyesClosedSecRef.current = 0;
@@ -2095,41 +1939,6 @@ export default function DriverMonitorDMS() {
     return () => stopWebcam();
   }, []);
 
-  function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-  function captureFrame(vid, quality = 0.7) {
-    if (!vid || vid.readyState < 2) return null;
-
-    // Downscale để giảm request payload base64
-    const maxW = 480;
-    const srcW = vid.videoWidth || 640;
-    const srcH = vid.videoHeight || 480;
-    const scale = Math.min(1, maxW / srcW);
-    const targetW = Math.max(1, Math.round(srcW * scale));
-    const targetH = Math.max(1, Math.round(srcH * scale));
-
-    const c = document.createElement("canvas");
-    c.width = targetW;
-    c.height = targetH;
-    const ctx = c.getContext("2d");
-    if (!ctx) return null;
-    ctx.drawImage(vid, 0, 0, targetW, targetH);
-    return c.toDataURL("image/jpeg", quality);
-  }
-  async function captureBurstFrames(
-    vid,
-    count = IDENTITY_BURST_FRAMES,
-    gapMs = IDENTITY_BURST_GAP_MS,
-  ) {
-    const frames = [];
-    for (let i = 0; i < count; i++) {
-      const frame = captureFrame(vid, 0.7);
-      if (frame) frames.push(frame);
-      if (i < count - 1) await sleep(gapMs);
-    }
-    return frames;
-  }
 
   // ── REST API loop: landmark + smoking (giữ 1s) ──────────
   useEffect(() => {
@@ -2146,7 +1955,11 @@ export default function DriverMonitorDMS() {
       try {
         setApiLoading(true);
         setApiError("");
-        const frames = await captureBurstFrames(vid);
+        const frames = await captureBurstFrames(
+          vid,
+          IDENTITY_BURST_FRAMES,
+          IDENTITY_BURST_GAP_MS,
+        );
         const image = frames[0] || captureFrame(vid, 0.75);
         if (!image) {
           throw new Error("Không lấy được hình ảnh webcam");
@@ -2273,20 +2086,12 @@ export default function DriverMonitorDMS() {
   }, [status, handApiResult, appMenuOpen]);
 
   // ── Smoothed label ──
-  let smoothedLabel = apiResult?.label || "unknown";
-  if (history.length > 0) {
-    const rel = history.filter((h) => h.prob >= MIN_PROB_FOR_LABEL);
-    if (rel.length > 0) {
-      const cnt = {};
-      rel.forEach((h) => {
-        cnt[h.label] = (cnt[h.label] || 0) + 1;
-      });
-      const maj = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0][0];
-      const rec = rel.slice(-CONSISTENT_FRAMES);
-      if (rec.length === CONSISTENT_FRAMES && rec.every((h) => h.label === maj))
-        smoothedLabel = maj;
-    }
-  }
+  const smoothedLabel = getSmoothedLabel(
+    apiResult,
+    history,
+    MIN_PROB_FOR_LABEL,
+    CONSISTENT_FRAMES,
+  );
   const currentLabel = smoothedLabel;
   const info = LABEL_MAP[currentLabel] || LABEL_MAP.unknown;
   const isAlert = info.level === "risk" || info.level === "warning";
@@ -3303,7 +3108,7 @@ export default function DriverMonitorDMS() {
               </div>
               <button
                 onClick={() => {
-                  stopAlarm();
+                  stopAlarm(alarmIntervalRef, vibrateIntervalRef);
                   setDrowsyAlert(null);
                   eyesClosedSinceRef.current = null;
                   eyesClosedSecRef.current = 0;
@@ -3555,7 +3360,7 @@ export default function DriverMonitorDMS() {
                 </div>
                 <button
                   onClick={() => {
-                    stopAlarm();
+                    stopAlarm(alarmIntervalRef, vibrateIntervalRef);
                     setSmokingAlert(null);
                     smokingSinceRef.current = null;
                     smokingSecRef.current = 0;
@@ -3813,7 +3618,7 @@ export default function DriverMonitorDMS() {
                 {/* nút bỏ qua */}
                 <button
                   onClick={() => {
-                    stopAlarm();
+                    stopAlarm(alarmIntervalRef, vibrateIntervalRef);
                     setPhoneAlert(null);
                     phoneSinceRef.current = null;
                     phoneSecRef.current = 0;
@@ -4292,29 +4097,6 @@ export default function DriverMonitorDMS() {
         open={youtubeMockOpen}
         onClose={() => setYoutubeMockOpen(false)}
       />
-
-      <style>{`
-        @keyframes borderPulse{0%,100%{opacity:0.9}50%{opacity:0.15}}
-        @keyframes alarmBorder{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(255,30,30,0)}50%{opacity:0.3;box-shadow:inset 0 0 40px rgba(255,30,30,0.4)}}
-        @keyframes phoneAlarmBorder{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(255,140,0,0)}50%{opacity:0.3;box-shadow:inset 0 0 40px rgba(255,140,0,0.45)}}
-        @keyframes phoneBg{0%{background:rgba(0,0,0,0.72)}100%{background:rgba(60,25,0,0.82)}}
-        @keyframes smokingBorder{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(255,60,0,0)}50%{opacity:0.3;box-shadow:inset 0 0 40px rgba(255,60,0,0.45)}}
-        @keyframes smokingBg{0%{background:rgba(0,0,0,0.72)}100%{background:rgba(50,10,0,0.85)}}
-        @keyframes smokingBorder{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(255,60,0,0)}50%{opacity:0.3;box-shadow:inset 0 0 40px rgba(255,60,0,0.45)}}
-        @keyframes smokingBg{0%{background:rgba(0,0,0,0.72)}100%{background:rgba(50,15,0,0.82)}}
-        @keyframes glow{0%,100%{opacity:1}50%{opacity:0.35}}
-        @keyframes blink{0%,100%{opacity:1}50%{opacity:0.2}}
-        @keyframes loadBar{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}
-        @keyframes drowsyBg{0%{background:rgba(0,0,0,0.75)}100%{background:rgba(90,0,0,0.85)}}
-        @keyframes iconBounce{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-8px) scale(1.1)}}
-        @keyframes textFlash{0%,100%{opacity:1;letter-spacing:0.1em}50%{opacity:0.75;letter-spacing:0.15em}}
-        @keyframes badgePulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.05);opacity:0.8}}
-        @keyframes cornerFlash{0%,100%{opacity:0.35}50%{opacity:0.8}}
-        *{box-sizing:border-box}
-        ::-webkit-scrollbar{width:3px}
-        ::-webkit-scrollbar-track{background:#000}
-        ::-webkit-scrollbar-thumb{background:#1a3a50;border-radius:2px}
-      `}</style>
     </div>
   );
 }
