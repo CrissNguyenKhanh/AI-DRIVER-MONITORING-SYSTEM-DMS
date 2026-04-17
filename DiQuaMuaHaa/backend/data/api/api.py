@@ -877,7 +877,13 @@ def index() -> Any:
 
 @app.get("/api/ping-db")
 def ping_db() -> Any:
-    """Test MySQL connection — chỉ dùng để debug, xoá sau khi xong."""
+    """Test database connection — hỗ trợ cả MySQL và PostgreSQL."""
+    debug = {
+        "DB_BACKEND": os.getenv("DB_BACKEND", "(not set)"),
+        "POSTGRES_ACTIVE": POSTGRES_ACTIVE,
+        "POSTGRES_AVAILABLE": POSTGRES_AVAILABLE,
+        "DATABASE_URL_set": bool(os.getenv("DATABASE_URL", "")),
+    }
     try:
         conn = get_mysql_conn()
         with conn.cursor() as cur:
@@ -885,16 +891,17 @@ def ping_db() -> Any:
         conn.close()
         return jsonify({
             "status": "ok",
-            "message": "MySQL connected!",
-            "host": os.getenv("MYSQL_HOST", "N/A"),
-            "database": os.getenv("MYSQL_DATABASE", "N/A"),
+            "backend": "postgres" if POSTGRES_ACTIVE else "mysql",
+            "host": "postgres (internal)" if POSTGRES_ACTIVE else os.getenv("MYSQL_HOST", "N/A"),
+            "database": "diquamuasha" if POSTGRES_ACTIVE else os.getenv("MYSQL_DATABASE", "N/A"),
+            "debug": debug,
         })
     except Exception as exc:
         return jsonify({
             "status": "error",
             "error": str(exc),
-            "host": os.getenv("MYSQL_HOST", "N/A"),
-            "database": os.getenv("MYSQL_DATABASE", "N/A"),
+            "backend": "postgres" if POSTGRES_ACTIVE else "mysql",
+            "debug": debug,
         }), 500
 
 
