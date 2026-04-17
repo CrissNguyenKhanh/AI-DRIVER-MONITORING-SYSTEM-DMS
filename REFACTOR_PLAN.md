@@ -148,8 +148,8 @@ DiQuaMuaHaa/backend/
 - [x] A5. Cap nhat `.gitignore` neu can (venv, artefacts, temp outputs).
 
 ### Giai doan B - Tai cau truc thu muc
-- [ ] B1. Chuan hoa naming conventions (feature-based, lowercase/kebab-case cho folder).
-- [ ] B2. Tao khung thu muc moi (`features`, `shared`, `assets`, `styles` cho frontend; `src/app|api|domain|services|repositories` cho backend).
+- [x] B1. Chuan hoa naming conventions (feature-based, lowercase/kebab-case cho folder).
+- [x] B2. Tao khung thu muc moi (`features`, `shared`, `assets`, `styles` cho frontend; `src/app|api|domain|services|repositories` cho backend).
 - [ ] B3. Move file theo feature/domain, uu tien file nho truoc.
 - [ ] B4. Sua import/export theo tung cum thay doi (khong move 1 lan qua lon).
 - [ ] B5. Sau moi cum move: run lint + build (frontend), run app smoke test (backend).
@@ -198,4 +198,4 @@ DiQuaMuaHaa/backend/
 
 ## 5) Huong dan cho AI tiep theo (handover ngan)
 
-Trang thai hien tai: da hoan tat toan bo Phase A (A1-A5). Da xoa 3 muc duoc xac nhan (thu muc rong trung lap, `quicktest.py`, `test_camp.py`), da giu nguyen cac muc Need-confirmation, da bo sung `venv/` va `.venv/` trong `DiQuaMuaHaa/backend/.gitignore`, va da pass smoke test (frontend build + backend py_compile). San sang chuyen sang Phase B (tai cau truc thu muc) sau khi nguoi dung xac nhan.
+Trang thai hien tai: da hoan tat Phase A va da xong B1-B2 trong Phase B. Da tao xong khung thu muc moi cho frontend/backend theo kien truc muc tieu (chi tao folder rong, chua move bat ky source file nao). Buoc tiep theo la B3: di chuyen file theo tung cum nho va cap nhat import/export an toan.
