@@ -86,6 +86,11 @@ LANDMARK_FLIP_INPUT = os.getenv("LANDMARK_FLIP_INPUT", "0") == "1"
 # Trên Render 512MB: set DISABLE_HAND_DETECT=1 để bỏ qua MediaPipe Hands + hand_model (~80MB)
 DISABLE_HAND_DETECT = os.getenv("DISABLE_HAND_DETECT", "0") == "1"
 
+# Phone YOLO/ONNX tốn ~80–100MB RAM — trên Render mặc định tắt (RENDER=true).
+# Local: cài thêm `pip install onnxruntime` (xem requirements-phone.txt) rồi set DISABLE_PHONE_YOLO=0
+_ON_RENDER = os.getenv("RENDER", "").lower() in ("true", "1", "yes")
+DISABLE_PHONE_YOLO = os.getenv("DISABLE_PHONE_YOLO", "1" if _ON_RENDER else "0") == "1"
+
 IDENTITY_SIM_THRESHOLD = float(os.getenv("IDENTITY_SIM_THRESHOLD", "0.975"))
 IDENTITY_MIN_REGISTER_SAMPLES = int(os.getenv("IDENTITY_MIN_REGISTER_SAMPLES", "3"))
 IDENTITY_MIN_VERIFY_SAMPLES = int(os.getenv("IDENTITY_MIN_VERIFY_SAMPLES", "2"))
@@ -534,10 +539,16 @@ def load_phone_model() -> None:
 
 
 def load_phone_yolo_model() -> None:
-    """Ưu tiên ONNX (nhẹ, không cần PyTorch). Fallback sang .pt nếu không có .onnx."""
+    """Ưu tiên ONNX (onnxruntime). Fallback sang .pt nếu không có .onnx."""
     global phone_yolo_model, phone_yolo_onnx
 
-    # --- ONNX (onnxruntime-cpu, ~40MB) ---
+    if DISABLE_PHONE_YOLO:
+        phone_yolo_model = None
+        phone_yolo_onnx = None
+        app.logger.info("phone YOLO disabled (DISABLE_PHONE_YOLO / Render 512MB)")
+        return
+
+    # --- ONNX (onnxruntime, ~80MB RAM) ---
     if PHONE_YOLO_ONNX_PATH.exists():
         try:
             import onnxruntime as ort  # noqa: PLC0415
@@ -741,6 +752,8 @@ def _ensure_yolo_loaded() -> None:
 
 
 def _yolo_available() -> bool:
+    if DISABLE_PHONE_YOLO:
+        return False
     return phone_yolo_onnx is not None or phone_yolo_model is not None
 
 
@@ -888,6 +901,8 @@ def _image_base64_to_hand_landmarks(image_b64: str) -> List[float] | None:
     )
 
 
+
+ 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
     """Tính cosine similarity giữa hai vector embedding."""
     if not a or not b or len(a) != len(b):
@@ -1427,13 +1442,22 @@ def phone_detect_from_frame() -> Any:
       }
     với x,y,w,h là toạ độ chuẩn hoá [0,1] theo width/height, (x,y) là tâm bbox.
     """
+    if DISABLE_PHONE_YOLO:
+        return jsonify(
+            {
+                "boxes": [],
+                "disabled": True,
+                "reason": "Phone detection tắt trên server (tiết kiệm RAM). Cài onnxruntime + DISABLE_PHONE_YOLO=0 để bật.",
+            }
+        )
+
     _ensure_models_loaded()
     _ensure_yolo_loaded()
     if not _yolo_available():
         return (
             jsonify(
                 {
-                    "error": "YOLO phone model chưa được load. Cần phone_yolo.onnx hoặc phone_yolo.pt.",
+                    "error": "YOLO phone model chưa được load. Cài onnxruntime và có phone_yolo.onnx, hoặc ultralytics + phone_yolo.pt.",
                     "model_path": str(PHONE_YOLO_ONNX_PATH),
                 }
             ),
@@ -2635,6 +2659,10 @@ def handle_phone_frame(data):
     Client gửi: { "image": "data:image/jpeg;base64,..." }
     Server trả: { "boxes": [...] } hoặc { "error": "..." }
     """
+    if DISABLE_PHONE_YOLO:
+        emit("phone_result", {"boxes": [], "disabled": True})
+        return
+
     _ensure_yolo_loaded()
     if not _yolo_available():
         emit("phone_result", {"boxes": [], "error": "YOLO model not loaded"})
@@ -2683,6 +2711,11 @@ def handle_phone_frame(data):
 
     # Important: phone_frame should ONLY run phone inference.
     return
+    
+    
+    
+    
+    
 
 
 @socketio.on("smoking_frame")

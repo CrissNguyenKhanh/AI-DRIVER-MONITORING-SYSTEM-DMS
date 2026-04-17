@@ -29,5 +29,4 @@ Pillow==10.0.1
 opencv-python-headless==4.8.1.78
 mediapipe==0.10.9
 
-# YOLO phone detection dùng ONNX (không cần PyTorch, ~80MB)
-onnxruntime==1.19.2
+# Phone YOLO (onnxruntime ~80MB) — không cài trên Render 512MB; xem requirements-phone.txt

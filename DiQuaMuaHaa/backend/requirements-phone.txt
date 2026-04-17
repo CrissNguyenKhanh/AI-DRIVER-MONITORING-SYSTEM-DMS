@@ -1,0 +1,4 @@
+# Tùy chọn — chỉ cần khi bật detect điện thoại (YOLO ONNX) ở local / máy RAM đủ lớn
+# Cài: pip install -r requirements.txt -r requirements-phone.txt
+# Và set DISABLE_PHONE_YOLO=0
+onnxruntime==1.19.2
