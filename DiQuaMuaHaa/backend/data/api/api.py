@@ -83,6 +83,9 @@ LANDMARK_AMBIGUOUS_MARGIN = float(os.getenv("LANDMARK_AMBIGUOUS_MARGIN", "0.05")
 LANDMARK_MIN_CONFIDENCE = float(os.getenv("LANDMARK_MIN_CONFIDENCE", "0.52"))
 LANDMARK_FLIP_INPUT = os.getenv("LANDMARK_FLIP_INPUT", "0") == "1"
 
+# Trên Render 512MB: set DISABLE_HAND_DETECT=1 để bỏ qua MediaPipe Hands + hand_model (~80MB)
+DISABLE_HAND_DETECT = os.getenv("DISABLE_HAND_DETECT", "0") == "1"
+
 IDENTITY_SIM_THRESHOLD = float(os.getenv("IDENTITY_SIM_THRESHOLD", "0.975"))
 IDENTITY_MIN_REGISTER_SAMPLES = int(os.getenv("IDENTITY_MIN_REGISTER_SAMPLES", "3"))
 IDENTITY_MIN_VERIFY_SAMPLES = int(os.getenv("IDENTITY_MIN_VERIFY_SAMPLES", "2"))
@@ -687,7 +690,9 @@ def _ensure_face_mesh_loaded() -> None:
 
 
 def _ensure_models_loaded() -> None:
-    """Load sklearn .pkl + MediaPipe Hands; FaceMesh dùng chung qua _ensure_face_mesh_loaded()."""
+    """Load sklearn .pkl + MediaPipe Hands; FaceMesh dùng chung qua _ensure_face_mesh_loaded().
+    Nếu DISABLE_HAND_DETECT=1 thì bỏ qua MediaPipe Hands + hand_model (~80MB tiết kiệm RAM).
+    """
     global _models_loaded, _hands, joblib
 
     _ensure_face_mesh_loaded()
@@ -699,24 +704,28 @@ def _ensure_models_loaded() -> None:
 
     joblib = _joblib
 
-    load_hand_model()
-    load_model()
+    load_model()  # landmark sklearn model (luôn cần)
 
-    import mediapipe as mp  # noqa: PLC0415
+    if not DISABLE_HAND_DETECT:
+        load_hand_model()
+        import mediapipe as mp  # noqa: PLC0415
+        if _hands is None:
+            _hands = mp.solutions.hands.Hands(
+                static_image_mode=True,
+                max_num_hands=2,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5,
+            )
 
-    if _hands is None:
-        _hands = mp.solutions.hands.Hands(
-            static_image_mode=True,
-            max_num_hands=2,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5,
+    if DISABLE_HAND_DETECT:
+        _models_loaded = model is not None and bool(idx_to_label)
+    else:
+        _models_loaded = (
+            model is not None
+            and bool(idx_to_label)
+            and hand_model is not None
+            and bool(hand_idx_to_label)
         )
-    _models_loaded = (
-        model is not None
-        and bool(idx_to_label)
-        and hand_model is not None
-        and bool(hand_idx_to_label)
-    )
 
 
 # YOLO load riêng — lazy, chỉ chạy khi endpoint phone/detect được gọi lần đầu
@@ -869,6 +878,7 @@ def _image_base64_to_hand_landmarks(image_b64: str) -> List[float] | None:
     raw = base64.b64decode(image_b64)
     arr = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    
     if img is None:
         raise ValueError("Không decode được ảnh từ base64.")
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
