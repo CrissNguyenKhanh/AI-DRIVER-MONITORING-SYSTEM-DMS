@@ -2,14 +2,24 @@ import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import profileImage from "../images/image.png";
 
+const WEB3_CLIENT_KEY = String(
+  import.meta.env.VITE_WEB3FORMS_ACCESS_KEY ?? "",
+).trim();
+
+const CONTACT_EMAIL =
+  import.meta.env.VITE_CONTACT_EMAIL ?? "quockhanhdz295@gmail.com";
+
 const Khanhregister = () => {
   const navigate = useNavigate();
+
   const [phase, setPhase] = useState("welcome");
   const [showHero, setShowHero] = useState(false);
   const [glitch, setGlitch] = useState(false);
 
   const [contactEmail, setContactEmail] = useState("");
   const [contactMessage, setContactMessage] = useState("");
+  const [showMiniContact, setShowMiniContact] = useState(true);
+  const [sendingMiniContact, setSendingMiniContact] = useState(false);
 
   const canvasRef = useRef(null);
   const animRef = useRef(null);
@@ -44,16 +54,19 @@ const Khanhregister = () => {
       particlesRef.current.forEach((p) => {
         p.y += p.vy;
         p.x += p.vx;
+
         if (p.y < -4) {
           p.y = canvas.height + 4;
           p.x = Math.random() * canvas.width;
         }
+
         ctx.globalAlpha = p.opacity;
         ctx.fillStyle = p.color;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
         ctx.fill();
       });
+
       ctx.globalAlpha = 1;
       animRef.current = requestAnimationFrame(animate);
     };
@@ -87,23 +100,66 @@ const Khanhregister = () => {
     triggerGlitch(() => navigate("/test5"));
   };
 
-  const handleMiniContactSubmit = (e) => {
+  const openMailtoDraft = ({ email, message }) => {
+    const subject = "Contact to Khanh";
+    const body = `Gmail: ${email}\n\nMo ta:\n${message}`;
+
+    window.location.href = `mailto:${encodeURIComponent(
+      CONTACT_EMAIL,
+    )}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  };
+
+  const handleMiniContactSubmit = async (e) => {
     e.preventDefault();
 
-    if (!contactEmail.trim() || !contactMessage.trim()) {
+    const email = contactEmail.trim();
+    const message = contactMessage.trim();
+
+    if (!email || !message) {
       alert("Vui long nhap gmail va mo ta.");
       return;
     }
 
-    const subject = "Contact to Khanh";
-    const body = `Gmail: ${contactEmail}\n\nMo ta:\n${contactMessage}`;
+    try {
+      setSendingMiniContact(true);
 
-    window.location.href = `mailto:quockhanhdz295@gmail.com?subject=${encodeURIComponent(
-      subject,
-    )}&body=${encodeURIComponent(body)}`;
+      if (WEB3_CLIENT_KEY) {
+        const res = await fetch("https://api.web3forms.com/submit", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            access_key: WEB3_CLIENT_KEY,
+            subject: "Contact to Khanh",
+            name: "Mini Contact",
+            email,
+            message: `Gmail: ${email}\n\nMo ta:\n${message}`,
+          }),
+        });
 
-    setContactEmail("");
-    setContactMessage("");
+        const data = await res.json().catch(() => ({}));
+
+        if (res.ok && data.success) {
+          alert("Gui thanh cong. Khanh se phan hoi qua email som.");
+          setContactEmail("");
+          setContactMessage("");
+          setShowMiniContact(false);
+          return;
+        }
+
+        alert(data.message || "Gui that bai, se mo mail app de gui thu cong.");
+        openMailtoDraft({ email, message });
+        return;
+      }
+
+      openMailtoDraft({ email, message });
+    } catch (error) {
+      openMailtoDraft({ email, message });
+    } finally {
+      setSendingMiniContact(false);
+    }
   };
 
   return (
@@ -769,6 +825,7 @@ const Khanhregister = () => {
           width: min(380px, calc(100vw - 32px));
           z-index: 1000;
           padding: 18px;
+          padding-top: 46px;
           border: 1px solid rgba(0, 220, 255, 0.2);
           background:
             linear-gradient(180deg, rgba(10, 18, 34, 0.94), rgba(6, 10, 20, 0.97));
@@ -789,6 +846,34 @@ const Khanhregister = () => {
           background:
             linear-gradient(135deg, rgba(0,220,255,0.08), transparent 28%, transparent 70%, rgba(255,45,120,0.08)),
             linear-gradient(180deg, rgba(255,255,255,0.02), transparent 28%);
+        }
+
+        .kw-mini-close {
+          position: absolute;
+          top: 10px;
+          right: 10px;
+          width: 32px;
+          height: 32px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(255,255,255,0.04);
+          color: rgba(255,255,255,0.78);
+          border-radius: 10px;
+          cursor: pointer;
+          font-size: 20px;
+          line-height: 1;
+          transition:
+            background 0.2s ease,
+            transform 0.2s ease,
+            border-color 0.2s ease,
+            color 0.2s ease;
+          z-index: 2;
+        }
+
+        .kw-mini-close:hover {
+          background: rgba(255,45,120,0.12);
+          border-color: rgba(255,45,120,0.45);
+          color: #fff;
+          transform: scale(1.05);
         }
 
         .kw-mini-title {
@@ -872,11 +957,12 @@ const Khanhregister = () => {
             border-color 0.22s ease,
             background 0.22s ease,
             color 0.22s ease,
-            box-shadow 0.22s ease;
+            box-shadow 0.22s ease,
+            opacity 0.22s ease;
           box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
         }
 
-        .kw-mini-btn:hover {
+        .kw-mini-btn:hover:not(:disabled) {
           color: #fff;
           border-color: rgba(255, 45, 120, 0.8);
           background: linear-gradient(180deg, rgba(255,45,120,0.22), rgba(255,45,120,0.08));
@@ -884,8 +970,38 @@ const Khanhregister = () => {
           transform: translateY(-1px);
         }
 
-        .kw-mini-btn:active {
+        .kw-mini-btn:active:not(:disabled) {
           transform: translateY(0);
+        }
+
+        .kw-mini-btn:disabled {
+          opacity: 0.65;
+          cursor: not-allowed;
+        }
+
+        .kw-mini-contact-toggle {
+          position: fixed;
+          right: 24px;
+          bottom: 24px;
+          z-index: 1000;
+          min-height: 46px;
+          padding: 12px 18px;
+          border-radius: 999px;
+          border: 1px solid rgba(0,220,255,0.26);
+          background: rgba(8, 16, 30, 0.92);
+          color: #ecfbff;
+          font-family: "Orbitron", monospace;
+          font-size: 11px;
+          letter-spacing: 2px;
+          text-transform: uppercase;
+          cursor: pointer;
+          box-shadow: 0 10px 26px rgba(0,0,0,0.34);
+          transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .kw-mini-contact-toggle:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 16px 30px rgba(0,0,0,0.4);
         }
 
         @media (max-width: 980px) {
@@ -975,7 +1091,15 @@ const Khanhregister = () => {
             bottom: 12px;
             width: auto;
             padding: 16px;
+            padding-top: 46px;
             border-radius: 16px;
+          }
+
+          .kw-mini-contact-toggle {
+            left: 12px;
+            right: 12px;
+            bottom: 12px;
+            width: auto;
           }
 
           .kw-mini-title {
@@ -1164,27 +1288,54 @@ const Khanhregister = () => {
           )}
         </div>
 
-        <div className="kw-mini-contact">
-          <div className="kw-mini-title">Contact to Khanh</div>
-          <form className="kw-mini-form" onSubmit={handleMiniContactSubmit}>
-            <input
-              className="kw-mini-input"
-              type="email"
-              placeholder="Nhap gmail cua ban"
-              value={contactEmail}
-              onChange={(e) => setContactEmail(e.target.value)}
-            />
-            <textarea
-              className="kw-mini-textarea"
-              placeholder="Nhap mo ta..."
-              value={contactMessage}
-              onChange={(e) => setContactMessage(e.target.value)}
-            />
-            <button type="submit" className="kw-mini-btn">
-              Gui
+        {showMiniContact && (
+          <div className="kw-mini-contact">
+            <button
+              type="button"
+              className="kw-mini-close"
+              onClick={() => setShowMiniContact(false)}
+              aria-label="Dong form lien he"
+              title="Dong"
+            >
+              ×
             </button>
-          </form>
-        </div>
+
+            <div className="kw-mini-title">Contact to Khanh</div>
+
+            <form className="kw-mini-form" onSubmit={handleMiniContactSubmit}>
+              <input
+                className="kw-mini-input"
+                type="email"
+                placeholder="Nhap gmail cua ban"
+                value={contactEmail}
+                onChange={(e) => setContactEmail(e.target.value)}
+              />
+              <textarea
+                className="kw-mini-textarea"
+                placeholder="Nhap mo ta..."
+                value={contactMessage}
+                onChange={(e) => setContactMessage(e.target.value)}
+              />
+              <button
+                type="submit"
+                className="kw-mini-btn"
+                disabled={sendingMiniContact}
+              >
+                {sendingMiniContact ? "Dang gui..." : "Gui"}
+              </button>
+            </form>
+          </div>
+        )}
+
+        {!showMiniContact && (
+          <button
+            type="button"
+            className="kw-mini-contact-toggle"
+            onClick={() => setShowMiniContact(true)}
+          >
+            Contact
+          </button>
+        )}
       </div>
     </>
   );
