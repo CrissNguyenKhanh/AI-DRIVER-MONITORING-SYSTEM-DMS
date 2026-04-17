@@ -141,11 +141,11 @@ DiQuaMuaHaa/backend/
 ## 3) Lo trinh thuc hien (Roadmap)
 
 ### Giai doan A - Don dep
-- [ ] A1. Tao danh sach file/folder nghi ngo rac va kiem tra reference (import/usages) toan repo.
-- [ ] A2. Danh dau muc "safe to delete" va "need confirmation".
-- [ ] A3. Xin xac nhan thu cong truoc khi xoa bat ky file/folder nao.
-- [ ] A4. Xoa tung nhom nho, sau moi nhom chay build/test toi thieu de dam bao an toan.
-- [ ] A5. Cap nhat `.gitignore` neu can (venv, artefacts, temp outputs).
+- [x] A1. Tao danh sach file/folder nghi ngo rac va kiem tra reference (import/usages) toan repo.
+- [x] A2. Danh dau muc "safe to delete" va "need confirmation".
+- [x] A3. Xin xac nhan thu cong truoc khi xoa bat ky file/folder nao.
+- [x] A4. Xoa tung nhom nho, sau moi nhom chay build/test toi thieu de dam bao an toan.
+- [x] A5. Cap nhat `.gitignore` neu can (venv, artefacts, temp outputs).
 
 ### Giai doan B - Tai cau truc thu muc
 - [ ] B1. Chuan hoa naming conventions (feature-based, lowercase/kebab-case cho folder).
@@ -198,4 +198,4 @@ DiQuaMuaHaa/backend/
 
 ## 5) Huong dan cho AI tiep theo (handover ngan)
 
-Trang thai hien tai: du an da duoc danh gia so bo va da co danh sach diem nong (file lon + thu muc nghi ngo rac). Chua xoa file, chua move file, chua tach logic. Buoc tiep theo la thuc hien Giai doan A theo thu tu: (1) quet usage/import de xac nhan file nao that su khong duoc dung, (2) dua danh sach cho nguoi dung xac nhan, (3) xoa theo tung nhom nho va verify sau moi nhom. Neu doi AI/doi tai khoan, chi can bao AI doc file `REFACTOR_PLAN.md` va tiep tuc tu checklist A1.
+Trang thai hien tai: da hoan tat toan bo Phase A (A1-A5). Da xoa 3 muc duoc xac nhan (thu muc rong trung lap, `quicktest.py`, `test_camp.py`), da giu nguyen cac muc Need-confirmation, da bo sung `venv/` va `.venv/` trong `DiQuaMuaHaa/backend/.gitignore`, va da pass smoke test (frontend build + backend py_compile). San sang chuyen sang Phase B (tai cau truc thu muc) sau khi nguoi dung xac nhan.
