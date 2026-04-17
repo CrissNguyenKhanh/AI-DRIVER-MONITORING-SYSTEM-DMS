@@ -77,8 +77,9 @@ MYSQL_CONFIG = {
     "cursorclass": pymysql.cursors.DictCursor,
 }
 
-# Mô hình landmark chỉ có 2 class (drowsy/yawning): nếu top1 - top2 < margin → coi là "safe" (không chắc)
-LANDMARK_AMBIGUOUS_MARGIN = float(os.getenv("LANDMARK_AMBIGUOUS_MARGIN", "0.12"))
+# Model landmark 2-class (safe/drowsy): nếu top1 - top2 < margin hoặc top1 < confidence → "safe"
+LANDMARK_AMBIGUOUS_MARGIN = float(os.getenv("LANDMARK_AMBIGUOUS_MARGIN", "0.05"))
+LANDMARK_MIN_CONFIDENCE = float(os.getenv("LANDMARK_MIN_CONFIDENCE", "0.52"))
 LANDMARK_FLIP_INPUT = os.getenv("LANDMARK_FLIP_INPUT", "0") == "1"
 
 IDENTITY_SIM_THRESHOLD = float(os.getenv("IDENTITY_SIM_THRESHOLD", "0.975"))
@@ -533,8 +534,18 @@ def load_phone_yolo_model() -> None:
         phone_yolo_model = None
         return
     try:
+        # PyTorch 2.6+ đổi default weights_only=True → patch để load .pt cũ
+        import torch as _torch
+        _orig = _torch.load
+        def _patched(f, *a, **kw):
+            kw.setdefault("weights_only", False)
+            return _orig(f, *a, **kw)
+        _torch.load = _patched
         phone_yolo_model = YOLO(str(PHONE_YOLO_MODEL_PATH))
-    except Exception:
+        _torch.load = _orig
+        app.logger.info("phone_yolo.pt loaded OK")
+    except Exception as exc:
+        app.logger.warning("phone_yolo.pt load failed: %s", exc)
         phone_yolo_model = None
 
 
@@ -598,6 +609,18 @@ def _ensure_models_loaded() -> None:
         and hand_model is not None
         and bool(hand_idx_to_label)
     )
+
+
+# YOLO load riêng — lazy, chỉ chạy khi endpoint phone/detect được gọi lần đầu
+# Không gộp vào _ensure_models_loaded() để tránh tốn RAM (PyTorch ~150MB) khi không cần
+_yolo_loaded = False
+
+def _ensure_yolo_loaded() -> None:
+    global _yolo_loaded
+    if _yolo_loaded:
+        return
+    load_phone_yolo_model()
+    _yolo_loaded = True
 
 
 NUM_LANDMARKS_PER_HAND = 21
@@ -701,12 +724,11 @@ def _image_base64_to_landmarks(image_b64: str) -> List[float] | None:
     return coords
 
 
-def _image_base64_to_landmarks_for_predict(image_b64: str) -> List[float] | None:
+def _image_base64_to_landmarks_for_predict(image_b64: str, flip: bool = False) -> List[float] | None:
     """
     Landmark cho endpoint dự đoán (landmark model).
-
-    Lý do có hàm riêng: trong `collect_landmarks.py` có `cv2.flip(frame, 1)` khi thu dữ liệu,
-    nên khi infer cần lật ngang để đồng nhất phân phối feature.
+    flip=False: khớp Kaggle training data (ảnh thẳng, không mirror).
+    flip=True: fallback cho webcam data được thu với cv2.flip(frame,1).
     """
     _ensure_face_mesh_loaded()
     raw = base64.b64decode(image_b64)
@@ -715,9 +737,7 @@ def _image_base64_to_landmarks_for_predict(image_b64: str) -> List[float] | None
     if img is None:
         raise ValueError("Không decode được ảnh từ base64.")
 
-    # Frontend có thể đã mirror (CSS transform scaleX(-1)).
-    # Để tránh double-mirror, mặc định không flip; có thể bật bằng biến môi trường.
-    if LANDMARK_FLIP_INPUT:
+    if LANDMARK_FLIP_INPUT or flip:
         img = cv2.flip(img, 1)
 
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -1007,10 +1027,15 @@ def predict_from_frame() -> Any:
         if image_b64.startswith("data:"):
             image_b64 = image_b64.split(",", 1)[-1]
 
-        try:
-            vec = _image_base64_to_landmarks_for_predict(image_b64)
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
+        # Thử flip=False trước (khớp Kaggle training), fallback flip=True
+        vec = None
+        for flip_val in (False, True):
+            try:
+                vec = _image_base64_to_landmarks_for_predict(image_b64, flip=flip_val)
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+            if vec is not None:
+                break
 
         if vec is None:
             return jsonify(
@@ -1038,24 +1063,19 @@ def predict_from_frame() -> Any:
             for i, p in enumerate(proba):
                 scores[idx_to_label.get(i, str(i))] = float(p)
 
-        # Xác suất hiển thị: dùng "margin" giữa top1 và top2 để tránh lúc nào cũng 100%.
-        top_prob = float(max(scores.values())) if scores else None
+        best_prob = float(max(scores.values())) if scores else None
 
-        # Dataset 2 class (drowsy/yawning): khi hai xác suất sát nhau → coi là bình thường (safe)
-        margin = None
-        if proba is not None and len(proba) >= 2:
-            sorted_p = sorted(float(p) for p in proba)
-            margin = sorted_p[-1] - sorted_p[-2]
-            if margin < LANDMARK_AMBIGUOUS_MARGIN:
+        # Nếu model không đủ tự tin → safe (tránh false positive khi mặt bình thường)
+        if scores and len(scores) >= 2:
+            sorted_p = sorted(scores.values(), reverse=True)
+            margin = sorted_p[0] - sorted_p[1]
+            if best_prob is not None and (best_prob < LANDMARK_MIN_CONFIDENCE or margin < LANDMARK_AMBIGUOUS_MARGIN):
                 label = "safe"
-        # Nếu có margin thì gán vào prob để UI không báo 100% liên tục.
-        if margin is not None:
-            top_prob = float(margin)
 
         return jsonify(
             {
                 "label": label,
-                "prob": top_prob,
+                "prob": best_prob,
                 "scores": scores,
             }
         )
@@ -1279,6 +1299,7 @@ def phone_detect_from_frame() -> Any:
     với x,y,w,h là toạ độ chuẩn hoá [0,1] theo width/height, (x,y) là tâm bbox.
     """
     _ensure_models_loaded()
+    _ensure_yolo_loaded()
     if phone_yolo_model is None:
         return (
             jsonify(
@@ -2483,6 +2504,7 @@ def handle_phone_frame(data):
     Client gửi: { "image": "data:image/jpeg;base64,..." }
     Server trả: { "boxes": [...] } hoặc { "error": "..." }
     """
+    _ensure_yolo_loaded()
     if phone_yolo_model is None:
         emit("phone_result", {"boxes": [], "error": "YOLO model not loaded"})
         return
