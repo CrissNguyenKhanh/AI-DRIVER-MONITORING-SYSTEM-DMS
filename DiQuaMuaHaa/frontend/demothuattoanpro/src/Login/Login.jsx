@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, Lock, Mail, Phone, Activity, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { getMedicalApiBase } from '../config/apiEndpoints';
+import FaceDetect from '../systeamdetectface/face_detect';
 
 const Login = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -31,7 +32,7 @@ const Login = () => {
     setError('');
 
     try {
-      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
+      const endpoint = isLogin ? '/api/auth/login' : '/test5';
       
       // Chuẩn bị payload khớp với backend
       const payload = isLogin 

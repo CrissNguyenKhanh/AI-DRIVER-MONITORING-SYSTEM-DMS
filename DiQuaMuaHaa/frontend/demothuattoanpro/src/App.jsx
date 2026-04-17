@@ -9,13 +9,14 @@ import EnhancedPatientStatistics from "./User/endhaintstatics";
 import Thumuctest from "./testdata/thucmuctest";
 import DectionHand from "./hand-dection/dectionhand";
 import VerifyPro from "./verify/verifypro";
+import Khanhregister from "./Khanhregister";
 
 import FaceDetect from "./systeamdetectface/face_detect";
 function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<Login />} />
+        <Route path="/" element={<Khanhregister />} />
         {/* Trang thống kê */}
         <Route path="/admin" element={<PatientStatistics />} />
         {/* Trang Spam Detector */}
