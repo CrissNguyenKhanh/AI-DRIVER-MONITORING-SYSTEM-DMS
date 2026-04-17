@@ -172,7 +172,7 @@ Tien do C (theo batch nho):
 - [x] C-Batch 2: Tach nhom Pure Utils/Constants/Services/Styles cho `thucmuctest.jsx` va noi import nguoc de giu hanh vi.
 - [x] C-Batch 3: Tach nhom Overlay & Telemetry components ra file rieng va noi import lai vao `thucmuctest.jsx`.
 - [x] C-Batch 4: Tach nhom Orchestration Hooks (socket streams, mediapipe engines, driving session, dms alerts, identity gate) ra cac custom hooks va noi call lai tu `thucmuctest.jsx`.
-- [ ] C-Batch 5 tro di: cho smoke test cua nguoi dung truoc khi tiep tuc tach hook tong hop va UI blocks con lai.
+- [x] C-Batch 5: Tach Master Hook (`useDriverMonitorDMS.hook.js`) orchestrating 5 sub-hooks, va tach UI Layout Blocks (`DmsLeftPanel`, `DmsCameraStage`, `DmsHudPanel`, `DmsBottomBar`). File `thucmuctest.jsx` giam tu ~2500 dong xuong ~237 dong. Build + lint pass.
 
 ### Giai doan D - Khoa chat chat luong
 - [ ] D1. Them/chuẩn hoa lint rules cho max-lines va complexity.
@@ -211,4 +211,12 @@ Tien do C (theo batch nho):
 
 ## 5) Huong dan cho AI tiep theo (handover ngan)
 
-Trang thai hien tai: Phase B is 100% COMPLETE. Phase C dang o C-Batch 4 da hoan tat cho `src/testdata/thucmuctest.jsx`: da tach nhom orchestration effects/callbacks vao cac custom hooks (`useDmsSocketStreams`, `useMediaPipeEngines`, `useDrivingSession`, `useDmsAlerts`, `useIdentityGate`) va cap nhat hook calls trong file goc, build + lint da pass. Dang dung lai de cho nguoi dung smoke test truoc khi sang C-Batch 5 (tach hook tong hop/useDriverMonitorDMS va UI blocks tiep theo).
+Trang thai hien tai: Phase B is 100% COMPLETE. Phase C-Batch 5 is COMPLETE cho `src/testdata/thucmuctest.jsx`:
+- Da tao Master Hook `useDriverMonitorDMS.hook.js` orchestrating 5 sub-hooks (`useDmsSocketStreams`, `useMediaPipeEngines`, `useDrivingSession`, `useDmsAlerts`, `useIdentityGate`)
+- Da tach UI Layout Blocks: `DmsLeftPanel.jsx`, `DmsCameraStage.jsx`, `DmsHudPanel.jsx`, `DmsBottomBar.jsx`
+- File `thucmuctest.jsx` giam tu ~2560 dong xuong con ~237 dong (90% reduction)
+- Build + lint pass
+
+Tien do tiep theo:
+- C-Batch 6+: Tach tiep cac file lon khac nhu `OtoLiveMapPanel.jsx`, `api.py` backend
+- Phase D: Khoa chat chat luong (lint rules, CI/CD checks)
