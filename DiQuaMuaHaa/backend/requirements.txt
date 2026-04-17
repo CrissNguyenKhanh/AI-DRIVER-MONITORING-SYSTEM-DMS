@@ -12,6 +12,7 @@ gunicorn==21.2.0
 
 # Database — chỉ cần psycopg2 trên Render (PostgreSQL)
 psycopg2-binary==2.9.9
+PyMySQL==1.1.0
 
 # JWT & Security
 Flask-JWT-Extended==4.5.3

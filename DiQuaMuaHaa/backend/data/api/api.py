@@ -11,7 +11,12 @@ import numpy as np
 # cv2 và joblib được import lazy trong _ensure_models_loaded() để giảm RAM startup
 cv2 = None  # type: ignore[assignment]
 joblib = None  # type: ignore[assignment]
-import pymysql
+try:
+    import pymysql
+
+    MYSQL_AVAILABLE = True
+except ImportError:
+    MYSQL_AVAILABLE = False
 try:
     import psycopg2
     import psycopg2.extras
@@ -134,6 +139,10 @@ def get_mysql_conn():
     if POSTGRES_ACTIVE:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor)
         return conn
+    if not MYSQL_AVAILABLE:
+        raise RuntimeError(
+            "DB_BACKEND=mysql nhưng thiếu PyMySQL. Cài PyMySQL hoặc đặt DB_BACKEND=postgres trên Render."
+        )
     return pymysql.connect(**MYSQL_CONFIG)
 
 
