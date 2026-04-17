@@ -1,38 +1,85 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
 const Khanhregister = () => {
   const navigate = useNavigate();
-  const [phase, setPhase] = useState("welcome"); // welcome | nav
+  const [phase, setPhase] = useState("welcome");
   const [showNav, setShowNav] = useState(false);
-  const [particles, setParticles] = useState([]);
   const [glitch, setGlitch] = useState(false);
+  const canvasRef = useRef(null);
+  const animRef = useRef(null);
+  const particlesRef = useRef([]);
 
+  // Particle canvas
   useEffect(() => {
-    const pts = Array.from({ length: 40 }, (_, i) => ({
-      id: i,
-      x: Math.random() * 100,
-      y: Math.random() * 100,
-      size: Math.random() * 3 + 1,
-      speed: Math.random() * 20 + 10,
-      delay: Math.random() * 5,
-      opacity: Math.random() * 0.5 + 0.1,
-    }));
-    setParticles(pts);
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+
+    const resize = () => {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+    };
+
+    const init = () => {
+      resize();
+      particlesRef.current = Array.from({ length: 40 }, () => ({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        size: Math.random() * 1.8 + 0.4,
+        vy: -(Math.random() * 0.6 + 0.2),
+        vx: (Math.random() - 0.5) * 0.2,
+        opacity: Math.random() * 0.45 + 0.05,
+        color: Math.random() > 0.65 ? "#ff2d78" : "#00dcff",
+      }));
+    };
+
+    const animate = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      particlesRef.current.forEach((p) => {
+        p.y += p.vy;
+        p.x += p.vx;
+        if (p.y < -4) {
+          p.y = canvas.height + 4;
+          p.x = Math.random() * canvas.width;
+        }
+        ctx.globalAlpha = p.opacity;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+      animRef.current = requestAnimationFrame(animate);
+    };
+
+    init();
+    animate();
+    window.addEventListener("resize", resize);
+    return () => {
+      window.removeEventListener("resize", resize);
+      cancelAnimationFrame(animRef.current);
+    };
   }, []);
 
-  const handleStart = () => {
+  const triggerGlitch = (cb) => {
     setGlitch(true);
     setTimeout(() => {
       setGlitch(false);
+      cb();
+    }, 560);
+  };
+
+  const handleStart = () => {
+    triggerGlitch(() => {
       setPhase("nav");
-      setTimeout(() => setShowNav(true), 50);
-    }, 600);
+      setTimeout(() => setShowNav(true), 40);
+    });
   };
 
   const handleRegister = () => {
-    setGlitch(true);
-    setTimeout(() => navigate("/test5"), 500);
+    triggerGlitch(() => navigate("/test5"));
   };
 
   return (
@@ -40,531 +87,542 @@ const Khanhregister = () => {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Space+Mono:wght@400;700&display=swap');
 
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
         :root {
-          --cyan: #00f5ff;
-          --magenta: #ff006e;
-          --gold: #ffd700;
-          --dark: #020408;
-          --mid: #0a0f1a;
-          --glow-cyan: 0 0 20px #00f5ff88, 0 0 60px #00f5ff33;
-          --glow-magenta: 0 0 20px #ff006e88, 0 0 60px #ff006e33;
+          --c: #00dcff;
+          --m: #ff2d78;
+          --bg: #040810;
+          --mid: #0a1020;
         }
 
-        .universe {
+        .kw-universe {
           min-height: 100vh;
-          background: var(--dark);
+          background: var(--bg);
           font-family: 'Space Mono', monospace;
-          overflow: hidden;
-          position: relative;
           display: flex;
           align-items: center;
           justify-content: center;
+          position: relative;
+          overflow: hidden;
         }
 
-        /* Grid Background */
-        .universe::before {
-          content: '';
+        /* ── Background layers ── */
+        .kw-grid {
           position: fixed;
           inset: 0;
           background-image:
-            linear-gradient(rgba(0,245,255,0.04) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(0,245,255,0.04) 1px, transparent 1px);
-          background-size: 60px 60px;
-          animation: gridMove 20s linear infinite;
+            linear-gradient(rgba(0,220,255,0.035) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(0,220,255,0.035) 1px, transparent 1px);
+          background-size: 52px 52px;
+          animation: kw-grid-drift 18s linear infinite;
+          pointer-events: none;
+        }
+        @keyframes kw-grid-drift {
+          0% { background-position: 0 0; }
+          100% { background-position: 0 52px; }
+        }
+
+        .kw-vignette {
+          position: fixed;
+          inset: 0;
+          background: radial-gradient(ellipse 80% 80% at 50% 50%, transparent 30%, var(--bg) 100%);
           pointer-events: none;
         }
 
-        @keyframes gridMove {
-          0% { transform: translateY(0); }
-          100% { transform: translateY(60px); }
-        }
-
-        /* Particles */
-        .particle {
+        .kw-canvas-particles {
           position: fixed;
-          border-radius: 50%;
-          background: var(--cyan);
+          inset: 0;
+          width: 100%;
+          height: 100%;
           pointer-events: none;
-          animation: drift linear infinite;
         }
 
-        @keyframes drift {
-          0% { transform: translateY(100vh) translateX(0); opacity: 0; }
-          10% { opacity: 1; }
-          90% { opacity: 1; }
-          100% { transform: translateY(-20px) translateX(30px); opacity: 0; }
-        }
-
-        /* Scanline */
-        .scanline {
+        /* ── Scanline ── */
+        .kw-scan {
           position: fixed;
-          top: 0; left: 0; right: 0;
-          height: 2px;
-          background: linear-gradient(90deg, transparent, var(--cyan), transparent);
-          animation: scan 4s linear infinite;
-          opacity: 0.4;
+          left: 0; right: 0;
+          height: 1px;
+          background: linear-gradient(90deg, transparent 0%, rgba(0,220,255,0.6) 50%, transparent 100%);
+          animation: kw-scan 5s linear infinite;
+          opacity: 0.45;
           pointer-events: none;
           z-index: 999;
         }
-
-        @keyframes scan {
-          0% { top: -2px; }
-          100% { top: 100vh; }
+        @keyframes kw-scan {
+          0% { top: -1px; opacity: 0; }
+          5% { opacity: 0.45; }
+          95% { opacity: 0.35; }
+          100% { top: 100vh; opacity: 0; }
         }
 
-        /* Corner decorations */
-        .corner {
+        /* ── Corners ── */
+        .kw-corner {
           position: fixed;
-          width: 60px;
-          height: 60px;
+          width: 28px; height: 28px;
           pointer-events: none;
-          z-index: 10;
+          z-index: 100;
         }
-        .corner-tl { top: 20px; left: 20px; border-top: 2px solid var(--cyan); border-left: 2px solid var(--cyan); box-shadow: inset var(--glow-cyan); }
-        .corner-tr { top: 20px; right: 20px; border-top: 2px solid var(--magenta); border-right: 2px solid var(--magenta); }
-        .corner-bl { bottom: 20px; left: 20px; border-bottom: 2px solid var(--magenta); border-left: 2px solid var(--magenta); }
-        .corner-br { bottom: 20px; right: 20px; border-bottom: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+        .kw-corner svg { width: 28px; height: 28px; }
+        .kw-c-tl { top: 18px; left: 18px; }
+        .kw-c-tr { top: 18px; right: 18px; transform: scaleX(-1); }
+        .kw-c-bl { bottom: 18px; left: 18px; transform: scaleY(-1); }
+        .kw-c-br { bottom: 18px; right: 18px; transform: scale(-1); }
 
-        /* Status bar */
-        .status-bar {
+        /* ── Status bar ── */
+        .kw-status {
           position: fixed;
-          bottom: 20px;
+          bottom: 14px;
           left: 50%;
           transform: translateX(-50%);
-          color: rgba(0,245,255,0.4);
-          font-size: 10px;
+          color: rgba(0,220,255,0.28);
+          font-size: 9px;
           letter-spacing: 3px;
           text-transform: uppercase;
+          white-space: nowrap;
           pointer-events: none;
+          z-index: 100;
         }
 
-        /* ===== WELCOME SCREEN ===== */
-        .welcome-screen {
-          text-align: center;
+        /* ── Content shell ── */
+        .kw-content {
           position: relative;
           z-index: 10;
+          text-align: center;
+          padding: 2rem;
+          width: 100%;
+          max-width: 480px;
         }
 
-        .badge {
-          display: inline-block;
-          border: 1px solid rgba(0,245,255,0.3);
-          color: var(--cyan);
-          font-size: 10px;
-          letter-spacing: 5px;
-          padding: 6px 20px;
-          margin-bottom: 40px;
-          text-transform: uppercase;
-          position: relative;
-          overflow: hidden;
-        }
-
-        .badge::before {
-          content: '';
-          position: absolute;
-          top: 0; left: -100%;
-          width: 100%; height: 100%;
-          background: linear-gradient(90deg, transparent, rgba(0,245,255,0.15), transparent);
-          animation: shimmer 2s infinite;
-        }
-
-        @keyframes shimmer {
-          100% { left: 100%; }
-        }
-
-        .main-title {
-          font-family: 'Orbitron', monospace;
-          font-size: clamp(3rem, 10vw, 8rem);
-          font-weight: 900;
-          line-height: 0.9;
-          color: white;
-          text-transform: uppercase;
-          letter-spacing: -2px;
-          position: relative;
-          margin-bottom: 10px;
-        }
-
-        .main-title .line1 {
-          display: block;
-          color: white;
-          text-shadow: var(--glow-cyan);
-        }
-
-        .main-title .line2 {
-          display: block;
-          -webkit-text-stroke: 1px var(--cyan);
-          color: transparent;
-          text-shadow: none;
-          filter: drop-shadow(0 0 20px var(--cyan));
-        }
-
-        .main-title .line3 {
-          display: block;
-          color: var(--magenta);
-          text-shadow: var(--glow-magenta);
-          font-size: 0.5em;
-          letter-spacing: 8px;
-          font-weight: 400;
-        }
-
-        .subtitle {
-          color: rgba(255,255,255,0.4);
-          font-size: 12px;
-          letter-spacing: 4px;
-          text-transform: uppercase;
-          margin: 30px 0 60px;
-        }
-
-        .start-btn {
-          position: relative;
-          display: inline-block;
-          padding: 18px 70px;
-          font-family: 'Orbitron', monospace;
-          font-size: 14px;
-          font-weight: 700;
-          letter-spacing: 6px;
-          text-transform: uppercase;
-          color: var(--dark);
-          background: var(--cyan);
-          border: none;
-          cursor: pointer;
-          clip-path: polygon(12px 0%, 100% 0%, calc(100% - 12px) 100%, 0% 100%);
-          transition: all 0.3s;
-          box-shadow: var(--glow-cyan);
-        }
-
-        .start-btn:hover {
-          background: white;
-          box-shadow: 0 0 40px #00f5ffcc, 0 0 80px #00f5ff55;
-          transform: scale(1.05);
-        }
-
-        .start-btn:active {
-          transform: scale(0.98);
-        }
-
-        .start-btn::after {
-          content: '›';
-          margin-left: 12px;
-          font-size: 18px;
-        }
-
-        /* Glitch effect */
-        .glitch {
-          animation: glitchAnim 0.6s steps(2) forwards;
-        }
-
-        @keyframes glitchAnim {
-          0% { filter: none; }
-          20% { filter: hue-rotate(90deg) saturate(3); transform: skewX(-5deg) scale(1.02); opacity: 0.8; }
-          40% { filter: hue-rotate(-90deg); transform: skewX(5deg); }
-          60% { filter: invert(0.3); transform: translateX(-5px); opacity: 0.6; }
-          80% { filter: hue-rotate(180deg); transform: scaleY(0.98); opacity: 0.9; }
+        /* ── Glitch ── */
+        .kw-glitch { animation: kw-glitch-anim 0.56s steps(2) forwards; }
+        @keyframes kw-glitch-anim {
+          0%   { filter: none; }
+          20%  { filter: hue-rotate(80deg) saturate(4); transform: skewX(-4deg); opacity: 0.85; }
+          40%  { filter: hue-rotate(-80deg); transform: skewX(4deg) scaleY(0.99); }
+          60%  { filter: invert(0.2); transform: translateX(-3px); opacity: 0.7; }
+          80%  { filter: hue-rotate(160deg); transform: none; opacity: 0.9; }
           100% { filter: none; transform: none; opacity: 0; }
         }
 
-        /* ===== NAV SCREEN ===== */
-        .nav-screen {
-          text-align: center;
-          position: relative;
-          z-index: 10;
-          opacity: 0;
-          transform: translateY(30px) scale(0.95);
-          transition: all 0.7s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-
-        .nav-screen.visible {
-          opacity: 1;
-          transform: translateY(0) scale(1);
-        }
-
-        .nav-label {
-          color: var(--cyan);
-          font-size: 10px;
-          letter-spacing: 8px;
+        /* ═══════════════════════════════
+           WELCOME PHASE
+        ═══════════════════════════════ */
+        .kw-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          border: 1px solid rgba(0,220,255,0.22);
+          color: rgba(0,220,255,0.65);
+          font-size: 9px;
+          letter-spacing: 5px;
+          padding: 6px 20px;
+          margin-bottom: 48px;
           text-transform: uppercase;
-          margin-bottom: 60px;
+        }
+        .kw-badge-dot {
+          width: 5px; height: 5px;
+          border-radius: 50%;
+          background: var(--c);
+          animation: kw-pulse 2s ease-in-out infinite;
+          flex-shrink: 0;
+        }
+        @keyframes kw-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50%       { opacity: 0.35; transform: scale(0.65); }
+        }
+
+        .kw-main-title { font-family: 'Orbitron', monospace; line-height: 1; }
+        .kw-t1 {
+          display: block;
+          font-size: clamp(3.2rem, 12vw, 5.5rem);
+          font-weight: 900;
+          color: #fff;
+          letter-spacing: -2px;
+          text-shadow: 0 0 60px rgba(0,220,255,0.2);
+        }
+        .kw-t2 {
+          display: block;
+          font-size: clamp(1.8rem, 7vw, 3rem);
+          font-weight: 400;
+          color: transparent;
+          -webkit-text-stroke: 1px rgba(0,220,255,0.55);
+          letter-spacing: 6px;
+          margin: 4px 0;
+        }
+        .kw-t3 {
+          display: block;
+          font-size: clamp(0.6rem, 2.2vw, 0.85rem);
+          font-weight: 400;
+          color: var(--m);
+          letter-spacing: 10px;
+          margin-top: 14px;
+          text-shadow: 0 0 30px rgba(255,45,120,0.35);
+        }
+
+        .kw-divider {
           display: flex;
           align-items: center;
-          justify-content: center;
-          gap: 16px;
+          gap: 14px;
+          margin: 32px 0;
+          opacity: 0.28;
         }
+        .kw-div-line {
+          flex: 1; height: 1px;
+          background: linear-gradient(90deg, transparent, var(--c));
+        }
+        .kw-div-line:last-child {
+          background: linear-gradient(90deg, var(--c), transparent);
+        }
+        .kw-div-dot { font-size: 7px; color: var(--c); }
 
-        .nav-label::before,
-        .nav-label::after {
-          content: '';
-          width: 60px;
-          height: 1px;
-          background: linear-gradient(90deg, transparent, var(--cyan));
-        }
-        .nav-label::after {
-          background: linear-gradient(90deg, var(--cyan), transparent);
-        }
-
-        .menu-container {
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
-          align-items: center;
-          margin-bottom: 60px;
-        }
-
-        .menu-item {
-          position: relative;
-          width: 360px;
-          padding: 20px 40px;
-          background: rgba(0, 245, 255, 0.03);
-          border: 1px solid rgba(0, 245, 255, 0.15);
-          color: rgba(255,255,255,0.7);
-          font-family: 'Orbitron', monospace;
-          font-size: 13px;
-          font-weight: 700;
+        .kw-subtitle {
+          color: rgba(255,255,255,0.28);
+          font-size: 10px;
           letter-spacing: 4px;
           text-transform: uppercase;
-          cursor: pointer;
-          transition: all 0.3s;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          overflow: hidden;
-          animation: slideInItem 0.5s cubic-bezier(0.16,1,0.3,1) both;
+          margin-bottom: 48px;
         }
-
-        .menu-item:nth-child(1) { animation-delay: 0.1s; }
-        .menu-item:nth-child(2) { animation-delay: 0.2s; }
-        .menu-item:nth-child(3) { animation-delay: 0.3s; }
-
-        @keyframes slideInItem {
-          from { opacity: 0; transform: translateX(-40px); }
-          to { opacity: 1; transform: translateX(0); }
+        .kw-cursor {
+          display: inline-block;
+          width: 7px; height: 1em;
+          background: rgba(0,220,255,0.65);
+          margin-left: 3px;
+          vertical-align: middle;
+          animation: kw-blink 1.1s step-end infinite;
         }
+        @keyframes kw-blink { 50% { opacity: 0; } }
 
-        .menu-item::before {
-          content: '';
-          position: absolute;
-          left: 0; top: 0; bottom: 0;
-          width: 3px;
-          background: var(--cyan);
-          transform: scaleY(0);
-          transition: transform 0.3s;
-        }
-
-        .menu-item:hover::before { transform: scaleY(1); }
-
-        .menu-item:hover {
-          background: rgba(0, 245, 255, 0.08);
-          border-color: var(--cyan);
-          color: white;
-          transform: translateX(8px);
-          box-shadow: var(--glow-cyan);
-        }
-
-        .menu-item.highlight {
-          border-color: var(--magenta);
-          color: var(--magenta);
-          background: rgba(255, 0, 110, 0.05);
-        }
-
-        .menu-item.highlight::before {
-          background: var(--magenta);
-        }
-
-        .menu-item.highlight:hover {
-          background: rgba(255, 0, 110, 0.12);
-          color: white;
-          transform: translateX(8px);
-          box-shadow: var(--glow-magenta);
-          border-color: var(--magenta);
-        }
-
-        .menu-item-num {
-          font-size: 10px;
-          color: rgba(0,245,255,0.4);
-          letter-spacing: 2px;
-        }
-
-        .menu-item.highlight .menu-item-num {
-          color: rgba(255,0,110,0.5);
-        }
-
-        .menu-item-arrow {
-          opacity: 0;
-          transform: translateX(-8px);
-          transition: all 0.3s;
-          font-size: 16px;
-        }
-
-        .menu-item:hover .menu-item-arrow {
-          opacity: 1;
-          transform: translateX(0);
-        }
-
-        .bottom-info {
-          color: rgba(255,255,255,0.2);
-          font-size: 10px;
-          letter-spacing: 3px;
-          animation: fadeIn 1s 0.6s both;
-        }
-
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-
-        /* Register CTA */
-        .register-cta {
-          margin-top: 10px;
-        }
-
-        .register-btn {
+        .kw-start-btn {
           position: relative;
           display: inline-flex;
           align-items: center;
-          gap: 16px;
-          padding: 22px 80px;
+          gap: 14px;
+          padding: 16px 56px;
           font-family: 'Orbitron', monospace;
-          font-size: 16px;
-          font-weight: 900;
-          letter-spacing: 6px;
+          font-size: 12px;
+          font-weight: 700;
+          letter-spacing: 5px;
           text-transform: uppercase;
-          color: white;
-          background: transparent;
-          border: 2px solid var(--magenta);
+          color: var(--bg);
+          background: var(--c);
+          border: none;
           cursor: pointer;
-          transition: all 0.4s;
+          clip-path: polygon(14px 0%, 100% 0%, calc(100% - 14px) 100%, 0% 100%);
+          transition: background 0.25s, transform 0.15s;
+          outline: none;
           overflow: hidden;
-          animation: slideInItem 0.5s 0.4s both;
         }
-
-        .register-btn::before {
+        .kw-start-btn::before {
           content: '';
           position: absolute;
           inset: 0;
-          background: var(--magenta);
-          transform: translateX(-101%);
-          transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+          background: rgba(255,255,255,0.18);
+          transform: translateX(-110%) skewX(-20deg);
+          transition: transform 0.5s;
         }
+        .kw-start-btn:hover::before { transform: translateX(110%) skewX(-20deg); }
+        .kw-start-btn:hover { background: #fff; transform: scale(1.04); }
+        .kw-start-btn:active { transform: scale(0.97); }
 
-        .register-btn:hover::before { transform: translateX(0); }
-        .register-btn:hover { box-shadow: var(--glow-magenta); }
+        .kw-start-icon {
+          width: 13px; height: 13px;
+          border-top: 2px solid currentColor;
+          border-right: 2px solid currentColor;
+          transform: rotate(45deg);
+          flex-shrink: 0;
+          transition: transform 0.25s;
+        }
+        .kw-start-btn:hover .kw-start-icon { transform: rotate(45deg) translate(3px,-3px); }
 
-        .register-btn span {
+        /* ═══════════════════════════════
+           NAV PHASE
+        ═══════════════════════════════ */
+        .kw-nav {
+          opacity: 0;
+          transform: translateY(22px);
+          transition: opacity 0.6s ease, transform 0.6s ease;
+        }
+        .kw-nav.visible { opacity: 1; transform: translateY(0); }
+
+        .kw-nav-label {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 14px;
+          color: rgba(0,220,255,0.45);
+          font-size: 9px;
+          letter-spacing: 6px;
+          text-transform: uppercase;
+          margin-bottom: 48px;
+        }
+        .kw-nav-line { flex: 1; max-width: 60px; height: 1px; background: rgba(0,220,255,0.25); }
+
+        .kw-menu { display: flex; flex-direction: column; gap: 10px; margin-bottom: 36px; }
+
+        .kw-item {
           position: relative;
-          z-index: 1;
+          display: flex;
+          align-items: center;
+          padding: 16px 24px;
+          border: 1px solid rgba(0,220,255,0.12);
+          background: rgba(0,220,255,0.02);
+          cursor: pointer;
+          transition: all 0.26s;
+          overflow: hidden;
+          animation: kw-slide-in 0.44s cubic-bezier(0.16,1,0.3,1) both;
+        }
+        .kw-item:nth-child(1) { animation-delay: 0.08s; }
+        .kw-item:nth-child(2) { animation-delay: 0.16s; }
+        .kw-item:nth-child(3) { animation-delay: 0.24s; }
+
+        @keyframes kw-slide-in {
+          from { opacity: 0; transform: translateX(-26px); }
+          to   { opacity: 1; transform: translateX(0); }
         }
 
-        .register-btn .icon {
-          font-size: 20px;
-          position: relative;
-          z-index: 1;
-          transition: transform 0.3s;
-        }
-
-        .register-btn:hover .icon {
-          transform: rotate(15deg) scale(1.2);
-        }
-
-        /* Blinking cursor */
-        .cursor {
-          display: inline-block;
+        .kw-item::after {
+          content: '';
+          position: absolute;
+          left: 0; top: 0; bottom: 0;
           width: 2px;
-          height: 1em;
-          background: var(--cyan);
-          margin-left: 4px;
-          vertical-align: middle;
-          animation: blink 1s step-end infinite;
+          background: var(--c);
+          transform: scaleY(0);
+          transform-origin: top;
+          transition: transform 0.24s;
         }
-        @keyframes blink {
-          50% { opacity: 0; }
+        .kw-item:hover::after { transform: scaleY(1); }
+        .kw-item:hover {
+          background: rgba(0,220,255,0.07);
+          border-color: rgba(0,220,255,0.35);
+          transform: translateX(6px);
         }
+
+        .kw-item-shimmer {
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(90deg, transparent 0%, rgba(0,220,255,0.05) 50%, transparent 100%);
+          transform: translateX(-100%);
+          transition: none;
+          pointer-events: none;
+        }
+        .kw-item:hover .kw-item-shimmer { transform: translateX(100%); transition: transform 0.55s; }
+
+        .kw-item-num {
+          font-size: 9px;
+          color: rgba(0,220,255,0.28);
+          letter-spacing: 2px;
+          width: 26px;
+          flex-shrink: 0;
+          transition: color 0.24s;
+        }
+        .kw-item:hover .kw-item-num { color: rgba(0,220,255,0.65); }
+
+        .kw-item-name {
+          flex: 1;
+          font-family: 'Orbitron', monospace;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 4px;
+          color: rgba(255,255,255,0.5);
+          text-transform: uppercase;
+          transition: color 0.24s;
+          text-align: left;
+          margin-left: 18px;
+        }
+        .kw-item:hover .kw-item-name { color: rgba(255,255,255,0.9); }
+
+        .kw-item-tag {
+          font-size: 8px;
+          letter-spacing: 2px;
+          color: rgba(0,220,255,0.22);
+          text-transform: uppercase;
+          transition: color 0.24s;
+        }
+        .kw-item:hover .kw-item-tag { color: rgba(0,220,255,0.5); }
+
+        .kw-item-arr {
+          width: 18px; height: 14px;
+          margin-left: 16px;
+          flex-shrink: 0;
+          opacity: 0;
+          transform: translateX(-10px);
+          transition: all 0.24s;
+          position: relative;
+        }
+        .kw-item-arr::before {
+          content: '';
+          position: absolute;
+          top: 50%; left: 0;
+          width: 13px; height: 1.5px;
+          background: var(--c);
+          transform: translateY(-50%);
+        }
+        .kw-item-arr::after {
+          content: '';
+          position: absolute;
+          top: 50%; right: 0;
+          width: 6px; height: 6px;
+          border-top: 1.5px solid var(--c);
+          border-right: 1.5px solid var(--c);
+          transform: translateY(-50%) rotate(45deg);
+        }
+        .kw-item:hover .kw-item-arr { opacity: 1; transform: translateX(0); }
+
+        /* Highlighted item */
+        .kw-item-hi { border-color: rgba(255,45,120,0.18); background: rgba(255,45,120,0.025); }
+        .kw-item-hi::after { background: var(--m); }
+        .kw-item-hi:hover { background: rgba(255,45,120,0.09); border-color: rgba(255,45,120,0.42); }
+        .kw-item-hi .kw-item-num { color: rgba(255,45,120,0.3); }
+        .kw-item-hi:hover .kw-item-num { color: rgba(255,45,120,0.7); }
+        .kw-item-hi .kw-item-name { color: rgba(255,45,120,0.55); }
+        .kw-item-hi:hover .kw-item-name { color: rgba(255,255,255,0.9); }
+        .kw-item-hi .kw-item-tag { color: rgba(255,45,120,0.28); }
+        .kw-item-hi:hover .kw-item-tag { color: rgba(255,45,120,0.6); }
+        .kw-item-hi .kw-item-arr::before { background: var(--m); }
+        .kw-item-hi .kw-item-arr::after { border-color: var(--m); }
+
+        /* Register button */
+        .kw-reg-btn {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          gap: 14px;
+          padding: 18px 64px;
+          font-family: 'Orbitron', monospace;
+          font-size: 13px;
+          font-weight: 900;
+          letter-spacing: 5px;
+          text-transform: uppercase;
+          color: var(--m);
+          background: transparent;
+          border: 1px solid rgba(255,45,120,0.38);
+          cursor: pointer;
+          transition: color 0.32s, border-color 0.32s;
+          overflow: hidden;
+          outline: none;
+          animation: kw-slide-in 0.44s 0.32s both;
+        }
+        .kw-reg-fill {
+          position: absolute;
+          inset: 0;
+          background: var(--m);
+          transform: translateY(101%);
+          transition: transform 0.36s cubic-bezier(0.16,1,0.3,1);
+        }
+        .kw-reg-btn:hover .kw-reg-fill { transform: translateY(0); }
+        .kw-reg-btn:hover { color: #fff; border-color: var(--m); }
+        .kw-reg-btn:active { transform: scale(0.97); }
+        .kw-reg-btn > * { position: relative; z-index: 1; }
+
+        .kw-hint {
+          margin-top: 28px;
+          color: rgba(255,255,255,0.14);
+          font-size: 9px;
+          letter-spacing: 3px;
+          text-transform: uppercase;
+          animation: kw-slide-in 0.44s 0.4s both;
+        }
+        .kw-hint-dot { color: rgba(255,45,120,0.38); }
       `}</style>
 
-      {/* Ambient particles */}
-      {particles.map(p => (
-        <div
-          key={p.id}
-          className="particle"
-          style={{
-            left: `${p.x}%`,
-            width: p.size,
-            height: p.size,
-            opacity: p.opacity,
-            animationDuration: `${p.speed}s`,
-            animationDelay: `${p.delay}s`,
-            background: p.id % 3 === 0 ? "#ff006e" : "#00f5ff",
-          }}
-        />
+      {/* Background layers */}
+      <div className="kw-grid" />
+      <div className="kw-vignette" />
+      <canvas ref={canvasRef} className="kw-canvas-particles" />
+      <div className="kw-scan" />
+
+      {/* Corner brackets */}
+      {[["kw-c-tl", "rgba(0,220,255,0.5)"], ["kw-c-tr", "rgba(0,220,255,0.5)"], ["kw-c-bl", "rgba(255,45,120,0.5)"], ["kw-c-br", "rgba(255,45,120,0.5)"]].map(([cls, stroke]) => (
+        <div key={cls} className={`kw-corner ${cls}`}>
+          <svg viewBox="0 0 28 28">
+            <path d="M0 28 L0 0 L28 0" fill="none" stroke={stroke} strokeWidth="1.5" />
+          </svg>
+        </div>
       ))}
 
-      {/* Decorations */}
-      <div className="scanline" />
-      <div className="corner corner-tl" />
-      <div className="corner corner-tr" />
-      <div className="corner corner-bl" />
-      <div className="corner corner-br" />
-      <div className="status-bar">SYS_OK // K-WEB v2.0 // {new Date().getFullYear()}</div>
+      <div className="kw-status">SYS_OK · K-WEB v2.0 · {new Date().getFullYear()}</div>
 
-      <div className={`universe ${glitch ? "glitch" : ""}`} style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "transparent" }}>
+      {/* Main glitch wrapper */}
+      <div className={glitch ? "kw-glitch" : ""} style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", width: "100%" }}>
 
-        {/* WELCOME PHASE */}
+        {/* WELCOME */}
         {phase === "welcome" && (
-          <div className="welcome-screen">
-            <div className="badge">◈ Khanh's System Online ◈</div>
+          <div className="kw-content">
+            <div className="kw-badge">
+              <span className="kw-badge-dot" />
+              Khanh&apos;s System Online
+              <span className="kw-badge-dot" />
+            </div>
 
-            <h1 className="main-title">
-              <span className="line1">Welcome</span>
-              <span className="line2">To</span>
-              <span className="line3">Khanh's Web</span>
+            <h1 className="kw-main-title">
+              <span className="kw-t1">Welcome</span>
+              <span className="kw-t2">To</span>
+              <span className="kw-t3">Khanh&apos;s Web</span>
             </h1>
 
-            <p className="subtitle">
-              Initializing portal<span className="cursor" />
+            <div className="kw-divider">
+              <div className="kw-div-line" />
+              <span className="kw-div-dot">◆</span>
+              <div className="kw-div-line" />
+            </div>
+
+            <p className="kw-subtitle">
+              Initializing portal<span className="kw-cursor" />
             </p>
 
-            <button className="start-btn" onClick={handleStart}>
-              Start
+            <button className="kw-start-btn" onClick={handleStart}>
+              <div className="kw-start-icon" />
+              <span>Start</span>
             </button>
           </div>
         )}
 
-        {/* NAV PHASE */}
+        {/* NAV */}
         {phase === "nav" && (
-          <div className={`nav-screen ${showNav ? "visible" : ""}`}>
-            <div className="nav-label">Navigation Menu</div>
+          <div className={`kw-content kw-nav ${showNav ? "visible" : ""}`}>
+            <div className="kw-nav-label">
+              <div className="kw-nav-line" />
+              Navigation Menu
+              <div className="kw-nav-line" />
+            </div>
 
-            <div className="menu-container">
-              <div className="menu-item">
-                <span className="menu-item-num">01</span>
-                <span>Dashboard</span>
-                <span className="menu-item-arrow">→</span>
+            <div className="kw-menu">
+              <div className="kw-item">
+                <span className="kw-item-num">01</span>
+                <div className="kw-item-shimmer" />
+                <span className="kw-item-name">Dashboard</span>
+                <span className="kw-item-tag">VIEW</span>
+                <div className="kw-item-arr" />
               </div>
-              <div className="menu-item">
-                <span className="menu-item-num">02</span>
-                <span>Explorer</span>
-                <span className="menu-item-arrow">→</span>
+              <div className="kw-item">
+                <span className="kw-item-num">02</span>
+                <div className="kw-item-shimmer" />
+                <span className="kw-item-name">Explorer</span>
+                <span className="kw-item-tag">BROWSE</span>
+                <div className="kw-item-arr" />
               </div>
-              <div
-                className="menu-item highlight"
-                onClick={handleRegister}
-                style={{ cursor: "pointer" }}
-              >
-                <span className="menu-item-num">03</span>
-                <span>Register</span>
-                <span className="menu-item-arrow">→</span>
+              <div className="kw-item kw-item-hi" onClick={handleRegister} role="button" tabIndex={0}>
+                <span className="kw-item-num">03</span>
+                <div className="kw-item-shimmer" />
+                <span className="kw-item-name">Register</span>
+                <span className="kw-item-tag">→ ACTION</span>
+                <div className="kw-item-arr" />
               </div>
             </div>
 
-            <div className="register-cta">
-              <button className="register-btn" onClick={handleRegister}>
-                <span className="icon">⬡</span>
-                <span>Register Now</span>
-              </button>
-            </div>
+            <button className="kw-reg-btn" onClick={handleRegister}>
+              <div className="kw-reg-fill" />
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <polygon points="9,1 16,4.5 16,13.5 9,17 2,13.5 2,4.5" stroke="currentColor" strokeWidth="1.5" />
+                <polygon points="9,5 13,7 13,11 9,13 5,11 5,7" stroke="currentColor" strokeWidth="1" fill="currentColor" opacity="0.25" />
+              </svg>
+              <span>Register Now</span>
+            </button>
 
-            <div className="bottom-info" style={{ marginTop: 40 }}>
-              ◈ Bấm Register để tiếp tục ◈
-            </div>
+            <p className="kw-hint">
+              <span className="kw-hint-dot">◈</span> Bấm Register để tiếp tục <span className="kw-hint-dot">◈</span>
+            </p>
           </div>
         )}
       </div>
