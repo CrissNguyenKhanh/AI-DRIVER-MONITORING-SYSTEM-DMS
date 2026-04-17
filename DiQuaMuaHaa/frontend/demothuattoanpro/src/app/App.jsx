@@ -3,35 +3,19 @@ import "../styles/App.css";
 
 import PatientStatistics from "../features/admin/components/PatientStatistics";
 import Login from "../features/auth/components/Login";
-import MedicalDiagnosisAI from "../features/user/components/khanhku";
-import MedicalRecordConfirmation from "../features/user/components/vippoint";
-import EnhancedPatientStatistics from "../features/user/components/endhaintstatics";
-import Thumuctest from "../testdata/thucmuctest";
-import DectionHand from "../features/gestures/components/dectionhand";
+import DriverMonitorDMS from "../features/dms/components/DriverMonitorDMS.page";
 import VerifyPro from "../features/auth/components/verifypro";
-
-import FaceDetect from "../features/dms/components/face_detect";
 function App() {
   return (
     <Router>
       <Routes>
         <Route path="/" element={<Login />} />
-        {/* Trang thống kê */}
+        {/* Hệ thống giám sát lái xe DMS */}
+        <Route path="/dms" element={<DriverMonitorDMS />} />
+        {/* Trang thống kê Admin */}
         <Route path="/admin" element={<PatientStatistics />} />
-        {/* Trang Spam Detector */}
-        <Route path="/spam" element={<MedicalDiagnosisAI />} />
-
-        <Route path="/test1" element={<MedicalRecordConfirmation />} />
-        {/* Trang Spam Detector */}
-        <Route path="/test2" element={<EnhancedPatientStatistics />} />
-        {/* Trang Test 3 */}
-        <Route path="/test3" element={<Thumuctest />} />
-        {/* Trang Test 4 */}
-        <Route path="/test4" element={<DectionHand />} />
-       {/* trang tesst cua verify pro */}
-        <Route path="/verifypro" element={<VerifyPro />} />
-
-        <Route path="/test5" element={<FaceDetect />} />
+        {/* Trang xác thực */}
+        <Route path="/verify" element={<VerifyPro />} />
       </Routes>
     </Router>
   );

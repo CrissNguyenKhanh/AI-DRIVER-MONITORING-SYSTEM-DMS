@@ -4,6 +4,10 @@ export const API_BASE = getDmsApiBase();
 export const API_INTERVAL_MS = 1000; // landmark + smoking vẫn 1s
 export const HAND_API_INTERVAL_MS = 1000;
 export const HAND_QUICK_CONFIDENCE = 0.75;
+/** Nhan backend / model train_hands (collect_hands KEY_MAP) */
+export const HAND_LABEL_OPENS_MENU = "open";
+/** Dong menu khi khong con ky hieu (hoac nut Dong) */
+export const HAND_LABEL_CLOSES_MENU = "no_sign";
 export const IDENTITY_BURST_FRAMES = 2;
 export const IDENTITY_BURST_GAP_MS = 110;
 export const DRIVER_ID_KEY = "driver_owner_id_v1";

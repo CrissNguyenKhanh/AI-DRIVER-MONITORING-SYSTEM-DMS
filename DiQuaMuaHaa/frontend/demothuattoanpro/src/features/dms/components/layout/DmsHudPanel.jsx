@@ -6,7 +6,6 @@ function DmsHudPanel({
   identityOwner,
   identityHasRegistered,
   identitySimilarity,
-  identityThreshold,
   identityError,
   identitySamples,
   phoneDetectionRef,

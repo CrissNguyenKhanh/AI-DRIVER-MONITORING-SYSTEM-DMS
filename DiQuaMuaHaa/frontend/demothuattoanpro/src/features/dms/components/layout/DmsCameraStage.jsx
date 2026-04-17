@@ -29,7 +29,6 @@ function DmsCameraStage({
   
   // Core state
   status,
-  setStatus,
   errorMsg,
   apiResult,
   apiError,
@@ -38,9 +37,7 @@ function DmsCameraStage({
   appMenuOpen,
   setAppMenuOpen,
   time,
-  frameCount,
   wsConnected,
-  displayEye,
   drowsyAlert,
   setDrowsyAlert,
   phoneActive,
@@ -49,11 +46,11 @@ function DmsCameraStage({
   smokingActive,
   smokingAlert,
   setSmokingAlert,
+  smokingError,
   driverId,
   identityOwner,
   identityHasRegistered,
   identitySimilarity,
-  identityThreshold,
   identityError,
   identitySamples,
   identityLockCause,
@@ -63,7 +60,6 @@ function DmsCameraStage({
   setCabinLightsOn,
   cabinAcOn,
   setCabinAcOn,
-  youtubeMockOpen,
   setYoutubeMockOpen,
   drivingSessionId,
   drivingSessionStartedAt,
@@ -79,7 +75,7 @@ function DmsCameraStage({
   
   // Handlers
   startWebcam,
-  stopWebcam,
+  stopAlarm,
   dismissAuthWelcome,
   handleIdentityUnlock,
   handleIdentityLock,
@@ -90,11 +86,7 @@ function DmsCameraStage({
   ID_AUTH_LOCK_INTRUDER_FRAMES,
   ID_AUTH_UNLOCK_FRAMES,
   ID_AUTH_RETRY_INTERVAL_MS,
-  DRIVER_ID_KEY,
   API_BASE,
-  EYES_CLOSED_WARN_MS,
-  PHONE_WARN_MS,
-  SMOKING_WARN_MS,
 }) {
   const iconCircleBase = {
     width: 56,

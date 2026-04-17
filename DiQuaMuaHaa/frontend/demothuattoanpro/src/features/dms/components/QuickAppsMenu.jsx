@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import React from "react";
 import { DMS_OTO_MAP_OPEN_EVENT } from "./OtoLiveMapPanel";
 

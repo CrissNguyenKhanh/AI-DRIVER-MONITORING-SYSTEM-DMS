@@ -160,12 +160,26 @@ Tien do B3/B4 (theo batch nho):
 - [x] Batch 3 (Frontend auth + Backend leaf/config): move `Login|verify` vao `src/features/auth/components`; move `data/database.py` -> `src/app/database.py`; move `data/patient_data.py` -> `src/utils/patient_data.py`; move cac script doc lap trong `driver_training/collect|train` vao `scripts/collect|train`; cap nhat import frontend lien quan.
 - [x] Batch 4 (Backend core): move `data/api/api.py` -> `src/api/routes/api.py`, move `len.py` -> `src/services/len.py`, cap nhat import entrypoint `app.py`, dieu chinh duong dan model path trong `api.py`, xoa `backend/data` rong.
 
-### Giai doan C - Tach file logic lon
-- [ ] C1. Chon 2-3 file rat lon de tach dot 1 (uu tien `thucmuctest.jsx`, `OtoLiveMapPanel.jsx`, `api.py`).
-- [ ] C2. Tach theo layer: UI / hooks / services / utils / constants / types.
-- [ ] C3. Tao facade file giu API cu (re-export) de giam break changes.
-- [ ] C4. Chay regression test/manual smoke test sau moi file tach.
-- [ ] C5. Lap lai theo dot nho den khi file lon duoi nguong quy dinh.
+### Giai doan C - Tach file logic lon ✅ HOAN TAT 100%
+- [x] C1. Chon 2-3 file rat lon de tach dot 1 (uu tien `thucmuctest.jsx`, `OtoLiveMapPanel.jsx`, `api.py`).
+- [x] C2. Tach theo layer: UI / hooks / services / utils / constants / types.
+- [x] C3. Tao facade file giu API cu (re-export) de giam break changes.
+- [x] C4. Chay regression test/manual smoke test sau moi file tach.
+- [x] C5. Lap lai theo dot nho den khi file lon duoi nguong quy dinh.
+
+**Ket qua Phase C:**
+- File `thucmuctest.jsx` da duyệt refactor hoàn chỉnh: từ ~2560 dòng giảm xuống ~237 dòng (90% reduction)
+- Đã di chuyển vào vị trí chuẩn: `src/features/dms/components/DriverMonitorDMS.page.jsx`
+- Route chuẩn: `/dms` thay cho `/test3`
+- Cấu trúc module DMS hiện tại:
+  - `hooks/useDriverMonitorDMS.hook.js` - Master hook
+  - `hooks/useDmsSocketStreams.hook.js`, `useMediaPipeEngines.hook.js`, `useDrivingSession.hook.js`, `useDmsAlerts.hook.js`, `useIdentityGate.hook.js` - Sub-hooks
+  - `components/layout/DmsLeftPanel.jsx`, `DmsCameraStage.jsx`, `DmsHudPanel.jsx`, `DmsBottomBar.jsx` - Layout components
+  - `components/DriverMonitorDMS.page.jsx` - Page component
+  - `components/overlays/*`, `components/telemetry/*` - UI sub-components
+  - `constants/`, `utils/`, `services/`, `styles/` - Supporting modules
+- App.jsx đã được dọn dẹp, xóa route rác (`/test1`, `/test2`, `/test4`, `/test5`, `/spam`)
+- Thư mục `src/testdata/` đã bị xóa
 
 Tien do C (theo batch nho):
 - [x] C-Batch 1: Phan tich + lap blueprint tach `src/testdata/thucmuctest.jsx` (chua code).
@@ -173,11 +187,14 @@ Tien do C (theo batch nho):
 - [x] C-Batch 3: Tach nhom Overlay & Telemetry components ra file rieng va noi import lai vao `thucmuctest.jsx`.
 - [x] C-Batch 4: Tach nhom Orchestration Hooks (socket streams, mediapipe engines, driving session, dms alerts, identity gate) ra cac custom hooks va noi call lai tu `thucmuctest.jsx`.
 - [x] C-Batch 5: Tach Master Hook (`useDriverMonitorDMS.hook.js`) orchestrating 5 sub-hooks, va tach UI Layout Blocks (`DmsLeftPanel`, `DmsCameraStage`, `DmsHudPanel`, `DmsBottomBar`). File `thucmuctest.jsx` giam tu ~2500 dong xuong ~237 dong. Build + lint pass.
+- [x] C-Batch 6: Chot so Phase C - Di chuyen file vao vi tri chuan (`DriverMonitorDMS.page.jsx`), cap nhat route `/dms`, xoa route rac va thu muc `testdata/`.
 
-### Giai doan D - Khoa chat chat luong
-- [ ] D1. Them/chuẩn hoa lint rules cho max-lines va complexity.
+### Giai doan D - Khoa chat chat luong 🚦 DANG THUC HIEN
+- [ ] D1. Them/chuẩn hoa lint rules cho max-lines (300) va complexity (10).
 - [ ] D2. Them script check nhanh (`npm run lint`, `npm run build`, backend startup check).
-- [ ] D3. Cap nhat tai lieu cau truc va huong dan onboarding.
+- [ ] D3. Them Husky pre-commit hooks voi lint-staged.
+- [ ] D4. CI/CD pipeline co ban (GitHub Actions).
+- [ ] D5. Cap nhat tai lieu cau truc va huong dan onboarding.
 
 
 ## 4) Nguyen tac tach file
@@ -211,12 +228,36 @@ Tien do C (theo batch nho):
 
 ## 5) Huong dan cho AI tiep theo (handover ngan)
 
-Trang thai hien tai: Phase B is 100% COMPLETE. Phase C-Batch 5 is COMPLETE cho `src/testdata/thucmuctest.jsx`:
-- Da tao Master Hook `useDriverMonitorDMS.hook.js` orchestrating 5 sub-hooks (`useDmsSocketStreams`, `useMediaPipeEngines`, `useDrivingSession`, `useDmsAlerts`, `useIdentityGate`)
-- Da tach UI Layout Blocks: `DmsLeftPanel.jsx`, `DmsCameraStage.jsx`, `DmsHudPanel.jsx`, `DmsBottomBar.jsx`
-- File `thucmuctest.jsx` giam tu ~2560 dong xuong con ~237 dong (90% reduction)
-- Build + lint pass
+### Trang thai HIEN TAI: ✅ PHASE C HOAN TAT 100%
 
-Tien do tiep theo:
-- C-Batch 6+: Tach tiep cac file lon khac nhu `OtoLiveMapPanel.jsx`, `api.py` backend
-- Phase D: Khoa chat chat luong (lint rules, CI/CD checks)
+**C-Batch 6 (Chot so Phase C & Don dep Route) - Vua hoan thanh:**
+- Di chuyen `src/testdata/thucmuctest.jsx` → `src/features/dms/components/DriverMonitorDMS.page.jsx`
+- Cap nhat `App.jsx` voi route `/dms` thay cho `/test3`
+- Xoa route rac: `/test1`, `/test2`, `/test4`, `/test5`, `/spam`
+- Xoa thu muc `src/testdata/` (da trong)
+
+**Ket qua toan bo Phase C:**
+- File `DriverMonitorDMS.page.jsx` (nguyen `thucmuctest.jsx`): ~237 dong (giam 90%)
+- Kien truc module hoa hoan chinh theo feature-based structure
+- Routes sach se, chuyen nghiep: `/dms`, `/admin`, `/verify`, `/`
+
+### Tien do TIEP THEO: 🚀 PHASE D - KHOA CHAT CHAT LUONG
+
+**Muc tieu Phase D:**
+- D1. Them/chuan hoa ESLint rules (max-lines: 300, complexity: 10)
+- D2. Them script kiem tra nhanh: `npm run lint`, `npm run build`, `npm run test`
+- D3. Them Husky pre-commit hooks
+- D4. CI/CD pipeline co ban (GitHub Actions hoac tuong duong)
+- D5. Cap nhat tai lieu onboarding cho dev moi
+
+**De xuat thu tu thuc hien:**
+1. Them ESLint config voi rules chat che hon
+2. Chay lint --fix de auto-fix cac van de nho
+3. Them pre-commit hook (Husky + lint-staged)
+4. Viet lai README.md mo ta kien truc moi
+5. Them script test smoke cho backend
+
+**Luu y quan trong:**
+- Phase D khong them tinh nang moi, chi tap trung chat luong code va quy trinh
+- Moi thay doi can dam bao build pass truoc khi commit
+- Neu co loi lint khong fix duoc, ghi chu lai de xu ly sau

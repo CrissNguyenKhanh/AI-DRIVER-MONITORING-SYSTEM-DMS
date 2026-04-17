@@ -1,7 +1,9 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { useEffect, useState } from "react";
 import QuickAppsMenu from "./QuickAppsMenu";
 import OtoLiveMapPanel, { DMS_OTO_MAP_OPEN_EVENT } from "./OtoLiveMapPanel";
 
+// Re-exports from QuickAppsMenu for backward compatibility
 export {
   HAND_LABEL_CLOSES_MENU,
   HAND_LABEL_OPENS_MENU,

@@ -24,6 +24,16 @@ export default defineConfig([
     },
     rules: {
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      // ── Quality Gates (Phase D) ─────────────────────────────
+      'max-lines': ['warn', { max: 300, skipBlankLines: true, skipComments: true }],
+      'complexity': ['warn', 10],
+      'max-lines-per-function': ['warn', { max: 80, skipBlankLines: true, skipComments: true }],
+      'max-params': ['warn', 5],
+      // ── Best Practices ─────────────────────────────────────
+      'no-console': ['warn', { allow: ['warn', 'error'] }],
+      'no-debugger': 'error',
+      'prefer-const': 'error',
+      'no-var': 'error',
     },
   },
 ])

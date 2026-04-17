@@ -1,10 +1,10 @@
 import React from "react";
-import FakeYouTubeLayout from "../voice/FakeYouTubeLayout";
-import useDriverMonitorDMS from "../features/dms/hooks/useDriverMonitorDMS.hook";
-import DmsLeftPanel from "../features/dms/components/layout/DmsLeftPanel";
-import DmsCameraStage from "../features/dms/components/layout/DmsCameraStage";
-import DmsBottomBar from "../features/dms/components/layout/DmsBottomBar";
-import "../features/dms/styles/driver-monitor.animations.css";
+import FakeYouTubeLayout from "../../../voice/FakeYouTubeLayout";
+import useDriverMonitorDMS from "../hooks/useDriverMonitorDMS.hook";
+import DmsLeftPanel from "./layout/DmsLeftPanel";
+import DmsCameraStage from "./layout/DmsCameraStage";
+import DmsBottomBar from "./layout/DmsBottomBar";
+import "../styles/driver-monitor.animations.css";
 
 // ═════════════════════════════════════════════════════════
 // Driver Monitor DMS - Main Component
@@ -74,7 +74,7 @@ export default function DriverMonitorDMS() {
     sessionLogLoading,
     sessionLogItems,
     phoneError,
-    displayPose,
+    smokingError,
     displayEye,
     yDeg,
     pDeg,
@@ -84,6 +84,7 @@ export default function DriverMonitorDMS() {
     info,
     startWebcam,
     stopWebcam,
+    stopAlarm,
     dismissAuthWelcome,
     handleIdentityUnlock,
     handleIdentityLock,
@@ -170,7 +171,6 @@ export default function DriverMonitorDMS() {
           identityOwner={identityOwner}
           identityHasRegistered={identityHasRegistered}
           identitySimilarity={identitySimilarity}
-          identityThreshold={identityThreshold}
           identityError={identityError}
           identitySamples={identitySamples}
           identityLockCause={identityLockCause}
@@ -190,12 +190,13 @@ export default function DriverMonitorDMS() {
           sessionLogLoading={sessionLogLoading}
           sessionLogItems={sessionLogItems}
           phoneError={phoneError}
+          smokingError={smokingError}
           // Derived values
           isAlert={isAlert}
           info={info}
           // Handlers
           startWebcam={startWebcam}
-          stopWebcam={stopWebcam}
+          stopAlarm={stopAlarm}
           dismissAuthWelcome={dismissAuthWelcome}
           handleIdentityUnlock={handleIdentityUnlock}
           handleIdentityLock={handleIdentityLock}
