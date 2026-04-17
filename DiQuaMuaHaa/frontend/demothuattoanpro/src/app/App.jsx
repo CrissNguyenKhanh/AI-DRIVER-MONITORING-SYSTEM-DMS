@@ -2,13 +2,13 @@ import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import "../styles/App.css";
 
 import PatientStatistics from "../features/admin/components/PatientStatistics";
-import Login from "../Login/Login";
+import Login from "../features/auth/components/Login";
 import MedicalDiagnosisAI from "../features/user/components/khanhku";
 import MedicalRecordConfirmation from "../features/user/components/vippoint";
 import EnhancedPatientStatistics from "../features/user/components/endhaintstatics";
 import Thumuctest from "../testdata/thucmuctest";
 import DectionHand from "../features/gestures/components/dectionhand";
-import VerifyPro from "../verify/verifypro";
+import VerifyPro from "../features/auth/components/verifypro";
 
 import FaceDetect from "../features/dms/components/face_detect";
 function App() {
