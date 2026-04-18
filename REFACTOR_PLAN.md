@@ -239,7 +239,11 @@ Tien do C (theo batch nho):
 **Ket qua toan bo Phase C:**
 - File `DriverMonitorDMS.page.jsx` (nguyen `thucmuctest.jsx`): ~237 dong (giam 90%)
 - Kien truc module hoa hoan chinh theo feature-based structure
-- Routes sach se, chuyen nghiep: `/dms`, `/admin`, `/verify`, `/`
+- Routes sach se, chuyen nghiep: `/dms`, `/admin`, `/verify`, `/driver-registration`, `/`
+
+**BUG FIX (18/04/2026):**
+- Khôi phục route đăng ký khuôn mặt `/driver-registration` (component `FaceDetect`)
+- Route cũ `/test5` đã bị xóa nhầm trong C-Batch 6, nay đã khôi phục với tên chuyên nghiệp hơn
 
 ### Tien do TIEP THEO: 🚀 PHASE D - KHOA CHAT CHAT LUONG
 
