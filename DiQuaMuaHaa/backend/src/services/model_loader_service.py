@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 # Import from core to avoid circular imports
-from core.config import (
+from src.core.config import (
     BASE_DIR,
     MODEL_PATH,
     HAND_MODEL_PATH,

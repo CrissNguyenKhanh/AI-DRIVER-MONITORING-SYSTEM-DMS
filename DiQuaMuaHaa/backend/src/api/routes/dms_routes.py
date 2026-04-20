@@ -5,14 +5,14 @@ Landmark and hand prediction endpoints.
 
 from flask import Blueprint, jsonify, request
 
-from services.prediction_service import (
+from src.services.prediction_service import (
     predict_landmark,
     predict_from_frame,
     predict_hand,
     predict_hand_from_frame,
 )
-from utils.image_processing import ensure_models_loaded
-from core.exceptions import ModelNotLoadedException, ValidationException
+from src.utils.image_processing import ensure_models_loaded
+from src.core.exceptions import ModelNotLoadedException, ValidationException
 
 dms_bp = Blueprint("dms", __name__)
 
@@ -58,6 +58,7 @@ def landmark_predict_from_frame():
     Predict from base64 image.
     Body: { "image": "data:image/jpeg;base64,..." }
     """
+    import traceback
     try:
         payload = request.get_json(force=True, silent=False)
         if payload is None:
@@ -81,7 +82,9 @@ def landmark_predict_from_frame():
     except ModelNotLoadedException as exc:
         return jsonify({"error": str(exc)}), 500
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        print(f"[ERROR] landmark_predict_from_frame: {exc}")
+        print(traceback.format_exc())
+        return jsonify({"error": str(exc), "traceback": traceback.format_exc()}), 500
 
 
 @dms_bp.post("/api/hand/predict")
@@ -125,6 +128,7 @@ def hand_predict_from_frame():
     Predict hand gesture from base64 image.
     Body: { "image": "data:image/jpeg;base64,..." }
     """
+    import traceback
     try:
         payload = request.get_json(force=True, silent=False)
         if payload is None:
@@ -148,4 +152,6 @@ def hand_predict_from_frame():
     except ModelNotLoadedException as exc:
         return jsonify({"error": str(exc)}), 500
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        print(f"[ERROR] hand_predict_from_frame: {exc}")
+        print(traceback.format_exc())
+        return jsonify({"error": str(exc), "traceback": traceback.format_exc()}), 500

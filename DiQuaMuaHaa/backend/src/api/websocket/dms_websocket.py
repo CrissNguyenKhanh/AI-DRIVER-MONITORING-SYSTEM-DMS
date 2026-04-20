@@ -11,11 +11,12 @@ from typing import Any, Dict, List
 import numpy as np
 from flask_socketio import SocketIO, emit
 
-from core.config import app, get_model_globals
-from utils.image_processing import ensure_face_mesh_loaded, image_base64_to_landmarks
+from src.core.config import app, get_model_globals
+from src.utils.image_processing import ensure_face_mesh_loaded, image_base64_to_landmarks
 
 # Initialize SocketIO with the Flask app
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+# Use threading mode for Windows compatibility (eventlet can have issues on Windows)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 
 @socketio.on("phone_frame")

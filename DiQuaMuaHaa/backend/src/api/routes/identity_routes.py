@@ -5,7 +5,7 @@ Face registration, verification, and owner decision endpoints.
 
 from flask import Blueprint, jsonify, request
 
-from services.identity_service import (
+from src.services.identity_service import (
     register_driver_identity,
     verify_driver_identity,
     get_driver_profile,
@@ -14,9 +14,9 @@ from services.identity_service import (
     get_identity_decision_status,
     process_identity_decision,
 )
-from utils.image_processing import extract_images_from_payload
-from core.exceptions import IdentityVerificationException, ValidationException
-from core.config import IDENTITY_MIN_REGISTER_SAMPLES, IDENTITY_DECISION_TIMEOUT_SEC
+from src.utils.image_processing import extract_images_from_payload
+from src.core.exceptions import IdentityVerificationException, ValidationException
+from src.core.config import IDENTITY_MIN_REGISTER_SAMPLES, IDENTITY_DECISION_TIMEOUT_SEC
 
 identity_bp = Blueprint("identity", __name__)
 

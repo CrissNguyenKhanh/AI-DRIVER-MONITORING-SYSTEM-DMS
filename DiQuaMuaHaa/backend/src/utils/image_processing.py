@@ -17,7 +17,7 @@ _hands: Any = None
 _joblib: Any = None
 
 # Import model globals from core
-from core.config import get_model_globals, set_model_globals
+from src.core.config import get_model_globals, set_model_globals
 
 
 def ensure_face_mesh_loaded() -> None:
@@ -57,7 +57,7 @@ def ensure_models_loaded() -> None:
     _joblib = joblib
 
     # Load models via service (import here to avoid circular)
-    from services.model_loader_service import load_model, load_hand_model
+    from src.services.model_loader_service import load_model, load_hand_model
     load_hand_model()
     load_model()
 
@@ -246,7 +246,7 @@ def get_face_embedding_from_image(image_b64: str) -> Optional[List[float]]:
     Get face embedding directly from landmark vector (1434-dim).
     Replace this function to use a different embedding model.
     """
-    from utils.embeddings import normalize_face_embedding
+    from src.utils.embeddings import normalize_face_embedding
     vec = image_base64_to_landmarks(image_b64)
     if vec is None:
         return None

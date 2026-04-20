@@ -5,8 +5,8 @@ Health check and ping endpoints.
 
 from flask import Blueprint, jsonify
 
-from core.config import MYSQL_CONFIG, DATABASE_URL
-from repositories.database import get_mysql_conn
+from src.core.config import MYSQL_CONFIG, DATABASE_URL
+from src.repositories.database import get_mysql_conn
 
 system_bp = Blueprint("system", __name__)
 

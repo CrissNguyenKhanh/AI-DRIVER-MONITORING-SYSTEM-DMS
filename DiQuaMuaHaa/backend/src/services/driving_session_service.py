@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from repositories.driving_session_repository import (
+from src.repositories.driving_session_repository import (
     create_session as repo_create_session,
     end_session as repo_end_session,
     increment_alert_count as repo_increment_alert_count,
@@ -15,8 +15,8 @@ from repositories.driving_session_repository import (
     get_session as repo_get_session,
     get_active_session as repo_get_active_session,
 )
-from repositories.database import DRIVING_ALERT_TYPES
-from core.exceptions import ValidationException
+from src.repositories.database import DRIVING_ALERT_TYPES
+from src.core.exceptions import ValidationException
 
 
 def start_session(driver_id: Optional[str], label: Optional[str] = None) -> Dict[str, Any]:

@@ -9,8 +9,8 @@ import json
 from typing import Any, Dict, Optional
 from urllib import parse, request as urlrequest
 
-from core.config import TELEGRAM_BOT_TOKEN
-from core.exceptions import TelegramAPIException
+from src.core.config import TELEGRAM_BOT_TOKEN
+from src.core.exceptions import TelegramAPIException
 
 
 def _telegram_call(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:

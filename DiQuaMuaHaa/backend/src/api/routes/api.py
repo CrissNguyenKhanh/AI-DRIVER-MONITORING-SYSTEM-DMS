@@ -18,18 +18,19 @@ from __future__ import annotations
 # ═══════════════════════════════════════════════════════════════
 # Core imports
 # ═══════════════════════════════════════════════════════════════
-from core.config import app  # Flask app with CORS configured
-from core.exceptions import DMSException  # Base exception
+from src.core.config import app  # Flask app with CORS configured
+from src.core.exceptions import DMSException  # Base exception
 
 # ═══════════════════════════════════════════════════════════════
 # Register Blueprints (Controllers)
 # ═══════════════════════════════════════════════════════════════
-from api.routes import (
-    system_bp,   # /, /api/ping-db
-    dms_bp,        # /api/landmark/*, /api/hand/*
-    identity_bp,   # /api/identity/*
-    smoking_bp,    # /api/smoking/*
-    phone_bp,      # /api/phone/*
+from src.api.routes import (
+    system_bp,         # /, /api/ping-db
+    dms_bp,            # /api/landmark/*, /api/hand/*
+    identity_bp,       # /api/identity/*
+    smoking_bp,        # /api/smoking/*
+    phone_bp,          # /api/phone/*
+    driving_session_bp, # /api/driving/session/*
 )
 
 app.register_blueprint(system_bp)
@@ -37,11 +38,12 @@ app.register_blueprint(dms_bp)
 app.register_blueprint(identity_bp)
 app.register_blueprint(smoking_bp)
 app.register_blueprint(phone_bp)
+app.register_blueprint(driving_session_bp)
 
 # ═══════════════════════════════════════════════════════════════
 # Import WebSocket handlers (registers @socketio.on events)
 # ═══════════════════════════════════════════════════════════════
-from api.websocket.dms_websocket import socketio  # noqa: F401
+from src.api.websocket.dms_websocket import socketio  # noqa: F401
 
 # Note: WebSocket handlers auto-register when module is imported
 # socketio object is initialized in dms_websocket.py with the Flask app
@@ -51,7 +53,7 @@ from api.websocket.dms_websocket import socketio  # noqa: F401
 # ═══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     # Get socketio from websocket module (already bound to app)
-    from api.websocket.dms_websocket import socketio as _socketio
+    from src.api.websocket.dms_websocket import socketio as _socketio
     
     _socketio.run(
         app,

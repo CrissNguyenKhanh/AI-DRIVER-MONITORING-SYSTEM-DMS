@@ -14,7 +14,7 @@ except ImportError:
     POSTGRES_AVAILABLE = False
 
 # Import from core to avoid circular imports
-from core.config import MYSQL_CONFIG, DATABASE_URL
+from src.core.config import MYSQL_CONFIG, DATABASE_URL
 
 
 def get_mysql_conn():

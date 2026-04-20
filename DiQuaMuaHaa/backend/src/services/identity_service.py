@@ -9,9 +9,9 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.config import IDENTITY_SIM_THRESHOLD, IDENTITY_MIN_VERIFY_SAMPLES
-from core.exceptions import IdentityVerificationException
-from repositories.identity_repository import (
+from src.core.config import IDENTITY_SIM_THRESHOLD, IDENTITY_MIN_VERIFY_SAMPLES
+from src.core.exceptions import IdentityVerificationException
+from src.repositories.identity_repository import (
     get_driver_identity,
     save_driver_identity,
     get_telegram_owner,
@@ -21,13 +21,13 @@ from repositories.identity_repository import (
     get_decision_status as repo_get_decision_status,
     update_decision_status as repo_update_decision_status,
 )
-from services.telegram_service import send_decision_message
-from utils.image_processing import (
+from src.services.telegram_service import send_decision_message
+from src.utils.image_processing import (
     extract_images_from_payload,
     collect_face_embeddings,
     mean_embedding,
 )
-from utils.embeddings import cosine_similarity
+from src.utils.embeddings import cosine_similarity
 
 
 def register_driver_identity(

@@ -9,10 +9,10 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from core.config import LANDMARK_AMBIGUOUS_MARGIN, get_model_globals
-from core.exceptions import ModelNotLoadedException
-from services.model_loader_service import load_model, load_hand_model, load_smoking_model, load_phone_model
-from utils.image_processing import (
+from src.core.config import LANDMARK_AMBIGUOUS_MARGIN, get_model_globals
+from src.core.exceptions import ModelNotLoadedException
+from src.services.model_loader_service import load_model, load_hand_model, load_smoking_model, load_phone_model
+from src.utils.image_processing import (
     ensure_models_loaded,
     image_base64_to_landmarks,
     image_base64_to_hand_landmarks,

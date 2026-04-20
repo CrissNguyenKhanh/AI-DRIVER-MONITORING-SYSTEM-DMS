@@ -4,9 +4,9 @@ Smoking detection routes blueprint.
 
 from flask import Blueprint, jsonify, request
 
-from services.prediction_service import predict_smoking
-from utils.image_processing import ensure_models_loaded
-from core.exceptions import ModelNotLoadedException, ValidationException
+from src.services.prediction_service import predict_smoking
+from src.utils.image_processing import ensure_models_loaded
+from src.core.exceptions import ModelNotLoadedException, ValidationException
 
 smoking_bp = Blueprint("smoking", __name__)
 
