@@ -369,8 +369,57 @@ backend/src/
 - ✅ Đã thêm imports mới vào `api.py`
 - ✅ **Test cú pháp PASS**: `python -m py_compile src/api/routes/api.py`
 
-**⏳ E-BATCH 3: Tách Services & Routes (tiếp theo)**
-- Tạo `services/prediction_service.py`, `identity_service.py`, `telegram_service.py`
-- Tạo `api/routes/*.py` (dms_routes, identity_routes, smoking_routes, phone_routes, system_routes)
-- Chuyển endpoints từ `api.py` sang các route mới
-- Code cũ trong `api.py` sẽ được thay thế hoàn toàn ở batch này
+**🚦 TRẠNG THÁI E-BATCH 3: ✅ HOÀN TẤT (Services & Routes)**
+
+### Services đã tạo:
+- ✅ `services/telegram_service.py` - Gửi tin nhắn Telegram, inline keyboard
+- ✅ `services/identity_service.py` - Đăng ký/verify khuôn mặt, request_decision
+- ✅ `services/prediction_service.py` - Dự đoán landmark, hand, smoking, phone
+- ✅ `services/driving_session_service.py` - Bắt đầu/kết thúc session, ghi log cảnh báo
+
+### Routes (Blueprints) đã tạo:
+- ✅ `api/routes/system_routes.py` - `/`, `/api/ping-db`
+- ✅ `api/routes/dms_routes.py` - `/api/landmark/*`, `/api/hand/*`
+- ✅ `api/routes/identity_routes.py` - `/api/identity/*`
+- ✅ `api/routes/smoking_routes.py` - `/api/smoking/*`
+- ✅ `api/routes/phone_routes.py` - `/api/phone/*`
+
+### Kết nối trong api.py:
+- ✅ Đã import và đăng ký 5 Blueprints: `app.register_blueprint(...)`
+- ✅ Giữ nguyên WebSocket handlers (theo yêu cầu, sẽ tách ở E-Batch 4)
+- ✅ **Test cú pháp PASS**: `python -m py_compile src/api/routes/api.py`
+
+### Kiến trúc Backend hiện tại:
+```
+backend/src/
+├── api/
+│   ├── routes/           # 5 Blueprints (Controllers)
+│   │   ├── __init__.py
+│   │   ├── system_routes.py
+│   │   ├── dms_routes.py
+│   │   ├── identity_routes.py
+│   │   ├── smoking_routes.py
+│   │   └── phone_routes.py
+│   └── routes/api.py     # WebSocket + Blueprint registration
+├── services/             # 5 Services (Business Logic)
+│   ├── model_loader_service.py
+│   ├── telegram_service.py
+│   ├── identity_service.py
+│   ├── prediction_service.py
+│   └── driving_session_service.py
+├── repositories/         # 3 Repositories (Data Access)
+│   ├── database.py
+│   ├── identity_repository.py
+│   └── driving_session_repository.py
+├── utils/                # 2 Utils (Pure Functions)
+│   ├── image_processing.py
+│   └── embeddings.py
+└── core/                 # 2 Core modules
+    ├── config.py
+    └── exceptions.py
+```
+
+**⏳ E-BATCH 4: Tách WebSocket & Dọn dẹp (cuối cùng)**
+- Tách WebSocket handlers sang `api/websocket/dms_websocket.py`
+- Xóa code cũ trong `api.py` (đã được refactor sang các file mới)
+- Kiểm tra lại toàn bộ import và đảm bảo không có circular import

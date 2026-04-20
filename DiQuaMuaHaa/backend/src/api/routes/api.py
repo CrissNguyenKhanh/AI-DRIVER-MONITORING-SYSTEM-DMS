@@ -88,6 +88,26 @@ from services.model_loader_service import (
     load_phone_model,
     load_phone_yolo_model,
 )
+from services.driving_session_service import (
+    start_session,
+    end_session,
+    record_alert,
+    get_session_summary,
+    get_driver_active_session,
+)
+
+# ═══════════════════════════════════════════════════════════════
+# Register Blueprints (E-Batch 3)
+# ═══════════════════════════════════════════════════════════════
+from api.routes import system_bp, dms_bp, identity_bp, smoking_bp, phone_bp
+
+app.register_blueprint(system_bp)
+app.register_blueprint(dms_bp)
+app.register_blueprint(identity_bp)
+app.register_blueprint(smoking_bp)
+app.register_blueprint(phone_bp)
+
+# Note: WebSocket handlers remain in this file (will be moved in E-Batch 4)
 
 # cv2 và joblib được import lazy trong _ensure_models_loaded() để giảm RAM startup
 cv2 = None  # type: ignore[assignment]
