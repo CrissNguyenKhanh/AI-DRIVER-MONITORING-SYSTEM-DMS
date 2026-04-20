@@ -8,6 +8,87 @@ from typing import Any, Dict, List
 
 import numpy as np
 
+# ═══════════════════════════════════════════════════════════════
+# Refactored imports (E-Batch 2)
+# ═══════════════════════════════════════════════════════════════
+from core.config import (
+    app,
+    BASE_DIR,
+    DATABASE_URL,
+    MODEL_PATH,
+    HAND_MODEL_PATH,
+    SMOKING_MODEL_PATH,
+    PHONE_MODEL_PATH,
+    PHONE_YOLO_MODEL_PATH,
+    MYSQL_CONFIG,
+    POSTGRES_AVAILABLE,
+    IDENTITY_SIM_THRESHOLD,
+    IDENTITY_MIN_REGISTER_SAMPLES,
+    IDENTITY_MIN_VERIFY_SAMPLES,
+    IDENTITY_DECISION_TIMEOUT_SEC,
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_WEBHOOK_SECRET,
+    LANDMARK_AMBIGUOUS_MARGIN,
+    get_model_globals,
+    set_model_globals,
+    get_mysql_conn,  # Deprecated: use repositories.database.get_mysql_conn
+)
+from core.exceptions import (
+    DMSException,
+    ModelNotLoadedException,
+    DatabaseException,
+    TelegramAPIException,
+    IdentityVerificationException,
+    ImageProcessingException,
+    ValidationException,
+)
+from repositories.database import get_mysql_conn as _get_mysql_conn
+from repositories.identity_repository import (
+    ensure_identity_tables,
+    get_driver_identity,
+    save_driver_identity,
+    get_telegram_owner,
+    save_telegram_owner,
+    create_decision_request,
+    get_pending_decision,
+    update_decision_status,
+    get_decision_status,
+)
+from repositories.driving_session_repository import (
+    ensure_driving_session_tables,
+    create_session,
+    end_session,
+    increment_alert_count,
+    get_session_alerts,
+    get_active_session,
+)
+from repositories.database import DRIVING_ALERT_TYPES
+from utils.image_processing import (
+    ensure_face_mesh_loaded,
+    ensure_models_loaded,
+    image_base64_to_landmarks,
+    image_base64_to_hand_landmarks,
+    hands_to_feature_vector,
+    hands_to_vector,
+    get_dominant_hand_landmark,
+    normalize_single_hand_landmarks,
+    extract_images_from_payload,
+    collect_face_embeddings,
+    mean_embedding,
+    get_face_embedding_from_image,
+)
+from utils.embeddings import (
+    cosine_similarity,
+    normalize_face_embedding,
+)
+from services.model_loader_service import (
+    load_model,
+    load_hand_model,
+    load_smoking_model,
+    load_phone_model,
+    load_phone_yolo_model,
+)
+
 # cv2 và joblib được import lazy trong _ensure_models_loaded() để giảm RAM startup
 cv2 = None  # type: ignore[assignment]
 joblib = None  # type: ignore[assignment]
@@ -21,8 +102,7 @@ except ImportError:
 import json
 from datetime import datetime, timedelta
 from urllib import parse, request as urlrequest
-from flask import Flask, jsonify, request
-from flask_cors import CORS
+from flask import jsonify, request  # app imported from core.config
 
 try:
     from ultralytics import YOLO  # type: ignore
@@ -31,31 +111,7 @@ try:
 except Exception:  # ImportError, RuntimeError, ...
     YOLO_AVAILABLE = False
 
-
-app = Flask(__name__)
-CORS(app, origins="*", supports_credentials=True)
-
-# Tránh lỗi server khi client gửi base64 ảnh quá lớn
-app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25MB
-
-# Khi worker crash / exception ngoài view, vẫn gửi CORS để browser không báo sai "CORS"
-@app.after_request
-def _cors_all_responses(response: Any):
-    response.headers.setdefault("Access-Control-Allow-Origin", "*")
-    response.headers.setdefault(
-        "Access-Control-Allow-Headers",
-        "Content-Type, Authorization, X-Requested-With",
-    )
-    response.headers.setdefault(
-        "Access-Control-Allow-Methods",
-        "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    )
-    return response
-
-
-@app.errorhandler(413)
-def too_large(_err):
-    return jsonify({"error": "Request payload too large"}), 413
+# Note: Flask app, CORS, and error handlers now imported from core.config
 
 
 BASE_DIR = Path(__file__).resolve().parents[3]  # .../backend

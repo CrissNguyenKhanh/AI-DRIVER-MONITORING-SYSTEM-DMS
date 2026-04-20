@@ -189,10 +189,10 @@ Tien do C (theo batch nho):
 - [x] C-Batch 5: Tach Master Hook (`useDriverMonitorDMS.hook.js`) orchestrating 5 sub-hooks, va tach UI Layout Blocks (`DmsLeftPanel`, `DmsCameraStage`, `DmsHudPanel`, `DmsBottomBar`). File `thucmuctest.jsx` giam tu ~2500 dong xuong ~237 dong. Build + lint pass.
 - [x] C-Batch 6: Chot so Phase C - Di chuyen file vao vi tri chuan (`DriverMonitorDMS.page.jsx`), cap nhat route `/dms`, xoa route rac va thu muc `testdata/`.
 
-### Giai doan D - Khoa chat chat luong 🚦 DANG THUC HIEN
-- [ ] D1. Them/chuẩn hoa lint rules cho max-lines (300) va complexity (10).
-- [ ] D2. Them script check nhanh (`npm run lint`, `npm run build`, backend startup check).
-- [ ] D3. Them Husky pre-commit hooks voi lint-staged.
+### Giai doan D - Khoa chat chat luong ✅ HOAN TAT (D2, D3 skipped)
+- [x] D1. Them/chuẩn hoa lint rules cho max-lines (300) va complexity (10).
+- [~] D2. Them script check nhanh (`npm run lint`, `npm run build`, backend startup check). **[Skipped]**
+- [~] D3. Them Husky pre-commit hooks voi lint-staged. **[Skipped]**
 - [ ] D4. CI/CD pipeline co ban (GitHub Actions).
 - [ ] D5. Cap nhat tai lieu cau truc va huong dan onboarding.
 
@@ -265,3 +265,112 @@ Tien do C (theo batch nho):
 - Phase D khong them tinh nang moi, chi tap trung chat luong code va quy trinh
 - Moi thay doi can dam bao build pass truoc khi commit
 - Neu co loi lint khong fix duoc, ghi chu lai de xu ly sau
+
+**📝 HANDOVER CONTEXT:**
+- Phase D kết thúc với D1 hoàn thành (ESLint rules)
+- D2 (script check nhanh) và D3 (Husky hooks) đã **BỊ BỎ QUA** theo yêu cầu để tiết kiệm thời gian
+- D4, D5 vẫn còn pending (CI/CD, tài liệu) - có thể thực hiện sau nếu cần
+- **CHUYỂN SANG PHASE E: TÁI CẤU TRÚC BACKEND**
+
+---
+
+## 6) Phase E: Tái cấu trúc Backend (Đang lập Blueprint)
+
+**Mục tiêu:** Tách file `backend/src/api/routes/api.py` (2474 dòng) thành kiến trúc module chuẩn.
+
+**File cần refactor:** `backend/src/api/routes/api.py` (~2474 dòng)
+
+**Kiến trúc đích:** Layered Architecture (Routes → Services → Repositories → Models)
+
+**Cấu trúc thư mục mục tiêu:**
+```text
+backend/src/
+├── api/
+│   ├── __init__.py
+│   ├── routes/                    # Controllers (chỉ xử lý HTTP)
+│   │   ├── __init__.py
+│   │   ├── dms_routes.py         # Routes chính /api/landmark/*, /api/hand/*
+│   │   ├── identity_routes.py    # Routes /api/identity/*
+│   │   ├── smoking_routes.py     # Routes /api/smoking/*
+│   │   ├── phone_routes.py       # Routes /api/phone/* + WebSocket phone
+│   │   └── system_routes.py      # Routes /, /api/ping-db
+│   └── websocket/                 # WebSocket handlers riêng biệt
+│       ├── __init__.py
+│       └── dms_websocket.py      # Socket.IO event handlers
+├── services/                      # Business Logic Layer
+│   ├── __init__.py
+│   ├── model_loader_service.py   # Load model (.pkl, .pt)
+│   ├── prediction_service.py     # Landmark, hand, smoking prediction
+│   ├── identity_service.py       # Face embedding, verification, registration
+│   ├── telegram_service.py       # Telegram bot integration
+│   └── driving_session_service.py # Quản lý phiên lái xe
+├── repositories/                # Data Access Layer
+│   ├── __init__.py
+│   ├── database.py               # Kết nối MySQL/Postgres
+│   ├── identity_repository.py    # CRUD driver_identity, driver_telegram_owner
+│   └── driving_session_repository.py # CRUD driving_sessions
+├── models/                      # Schemas/Entities
+│   ├── __init__.py
+│   └── schemas.py                # Pydantic/Type hints schemas
+├── core/                        # Core config & utils
+│   ├── __init__.py
+│   ├── config.py                 # Environment variables, constants
+│   └── exceptions.py             # Custom exceptions
+└── utils/                       # Pure utilities
+    ├── __init__.py
+    ├── image_processing.py       # Face mesh, hand landmarks
+    ├── embeddings.py             # Cosine similarity, normalize
+    └── validators.py             # Input validation
+```
+
+### E-Batch 1: Phân tích & Blueprint ✅ ĐANG THỰC HIỆN
+
+**Phân tích api.py hiện tại:**
+
+| Phân vùng | Dòng | Chức năng | Tách vào |
+|-----------|------|-----------|----------|
+| **Config & Constants** | 1-90 | Flask app, CORS, DB config, model paths, Telegram config | `core/config.py` |
+| **Database Connection** | 115-121 | get_mysql_conn(), PostgreSQL fallback | `repositories/database.py` |
+| **Database Schema** | 123-195 | CREATE TABLE driver_identity, driver_telegram_owner, driving_sessions | `repositories/identity_repository.py`, `repositories/driving_session_repository.py` |
+| **Model Loading** | 290-450 | load_model(), load_hand_model(), load_smoking_model(), load_phone_model(), load_phone_yolo_model() | `services/model_loader_service.py` |
+| **Telegram Integration** | 201-265 | _telegram_call(), _telegram_send_decision_message(), _telegram_answer_callback() | `services/telegram_service.py` |
+| **Image Processing** | 457-625 | _ensure_face_mesh_loaded(), _ensure_models_loaded(), _image_base64_to_landmarks(), _image_base64_to_hand_landmarks() | `utils/image_processing.py` |
+| **Embeddings & Math** | 627-715 | _cosine_similarity(), _normalize_face_embedding(), _get_face_embedding_from_image() | `utils/embeddings.py` |
+| **Identity Logic** | 1234-1450 | /api/identity/register, verify, driver_profile, request_decision, decision_status | `api/routes/identity_routes.py` + `services/identity_service.py` |
+| **Prediction Routes** | 775-948 | /api/landmark/predict, predict_from_frame | `api/routes/dms_routes.py` |
+| **Smoking Routes** | 956-1050 | /api/smoking/predict_from_frame | `api/routes/smoking_routes.py` |
+| **Hand Routes** | 1058-1150 | /api/hand/predict_from_frame | `api/routes/dms_routes.py` |
+| **Phone Routes** | 2300-2400 | WebSocket phone_frame, smoking_frame | `api/websocket/dms_websocket.py` + `api/routes/phone_routes.py` |
+| **System Routes** | 719-757 | /, /api/ping-db | `api/routes/system_routes.py` |
+
+**Nguyên tắc tách:**
+1. **Routes** chỉ xử lý HTTP (request/response), parse JSON, trả kết quả
+2. **Services** chứa business logic (predict, verify, gửi Telegram)
+3. **Repositories** chỉ làm việc với database (SQL)
+4. **Utils** là pure functions (image processing, math)
+5. **Core** chứa config, constants, exceptions
+
+**🚦 TRẠNG THÁI E-BATCH 1: ✅ HOÀN TẤT (Blueprint đã duyệt)**
+- ✅ Đã phân tích api.py (2474 dòng)
+- ✅ Đã lập cấu trúc thư mục đích
+- ✅ Đã phân chia chức năng vào từng layer
+- ✅ Blueprint đã được duyệt
+
+**🚦 TRẠNG THÁI E-BATCH 2: ✅ HOÀN TẤT (Tách lớp đáy)**
+- ✅ Đã tạo thư mục: `backend/src/core`, `repositories`, `utils`, `services`
+- ✅ Đã tạo `core/config.py`: Chứa Flask app, CORS, env vars, constants
+- ✅ Đã tạo `core/exceptions.py`: Custom exceptions
+- ✅ Đã tạo `repositories/database.py`: Database connection, DRIVING_ALERT_TYPES
+- ✅ Đã tạo `repositories/identity_repository.py`: CRUD driver_identity, telegram_owner, decision_requests
+- ✅ Đã tạo `repositories/driving_session_repository.py`: CRUD driving_sessions, alerts
+- ✅ Đã tạo `utils/image_processing.py`: Face mesh, hand landmarks, image preprocessing
+- ✅ Đã tạo `utils/embeddings.py`: Cosine similarity, normalize embedding
+- ✅ Đã tạo `services/model_loader_service.py` (placeholder): Load .pkl models
+- ✅ Đã thêm imports mới vào `api.py`
+- ✅ **Test cú pháp PASS**: `python -m py_compile src/api/routes/api.py`
+
+**⏳ E-BATCH 3: Tách Services & Routes (tiếp theo)**
+- Tạo `services/prediction_service.py`, `identity_service.py`, `telegram_service.py`
+- Tạo `api/routes/*.py` (dms_routes, identity_routes, smoking_routes, phone_routes, system_routes)
+- Chuyển endpoints từ `api.py` sang các route mới
+- Code cũ trong `api.py` sẽ được thay thế hoàn toàn ở batch này
