@@ -131,7 +131,7 @@ function useDmsSocketStreams({
         const candCy = (yoloBox.y1 + yoloBox.y2) / 2;
         const dx = Math.abs(candCx - lastCx);
         const dy = Math.abs(candCy - lastCy);
-        if (dx > 0.35 || dy > 0.25) motionOk = false;
+        if (dx > 0.30 || dy > 0.22) motionOk = false;
       }
 
       const strongDetected =

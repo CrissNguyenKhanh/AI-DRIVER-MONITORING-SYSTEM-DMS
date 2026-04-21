@@ -9,7 +9,11 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from src.core.config import LANDMARK_AMBIGUOUS_MARGIN, get_model_globals
+from src.core.config import (
+    LANDMARK_AMBIGUOUS_MARGIN,
+    LANDMARK_ALERT_THRESHOLD,
+    get_model_globals,
+)
 from src.core.exceptions import ModelNotLoadedException
 from src.services.model_loader_service import load_model, load_hand_model, load_smoking_model, load_phone_model
 from src.utils.image_processing import (
@@ -18,6 +22,15 @@ from src.utils.image_processing import (
     image_base64_to_hand_landmarks,
     hands_to_feature_vector,
 )
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _is_safe_label(label: str) -> bool:
+    normalized = str(label).strip().lower()
+    return normalized in {"safe", "normal", "awake", "alert"}
 
 
 def predict_landmark(landmarks: List[float]) -> Dict[str, Any]:
@@ -46,26 +59,78 @@ def predict_landmark(landmarks: List[float]) -> Dict[str, Any]:
     else:
         proba = None
     
-    label = idx_to_label.get(pred_idx, str(pred_idx))
+    raw_label = idx_to_label.get(pred_idx, str(pred_idx))
+    label = "safe" if _is_safe_label(raw_label) else "drowsy"
+    has_safe_class = any(_is_safe_label(v) for v in idx_to_label.values())
     
     scores: Dict[str, float] = {}
     if proba is not None:
         for i, p in enumerate(proba):
             scores[idx_to_label.get(i, str(i))] = float(p)
     
-    top_prob = float(max(scores.values())) if scores else None
-    
+    best_prob = float(max(scores.values())) if scores else None
+
     # Handle ambiguous predictions (2-class dataset)
+    ambiguous = False
+    margin = None
     if proba is not None and len(proba) >= 2:
         sorted_p = sorted(float(p) for p in proba)
-        margin = sorted_p[-1] - sorted_p[-2]
+        margin = float(sorted_p[-1] - sorted_p[-2])
         if margin < LANDMARK_AMBIGUOUS_MARGIN:
-            label = "safe"
-            top_prob = float(margin)
-    
+            ambiguous = True
+
+    raw_prob = float(scores.get(raw_label, best_prob or 0.0))
+
+    # Bucket probabilities
+    safe_bucket = 0.0
+    drowsy_bucket = 0.0
+    for score_label, score_value in scores.items():
+        if _is_safe_label(score_label):
+            safe_bucket = max(safe_bucket, float(score_value))
+        else:
+            drowsy_bucket = max(drowsy_bucket, float(score_value))
+
+    # local/dev-like decision: keep top class, only clamp weak/ambiguous cases to safe
+    if not has_safe_class:
+        label = "safe"
+        safe_prob = _clamp01(1.0 - raw_prob)
+        drowsy_prob = _clamp01(raw_prob)
+    elif ambiguous or raw_prob < LANDMARK_ALERT_THRESHOLD:
+        label = "safe"
+        # keep safe confidence meaningful, avoid NORMAL 0% case
+        safe_prob = _clamp01(max(safe_bucket, 1.0 - raw_prob))
+        drowsy_prob = _clamp01(max(drowsy_bucket, raw_prob))
+    else:
+        label = "safe" if _is_safe_label(raw_label) else "drowsy"
+        safe_prob = _clamp01(max(safe_bucket, 1.0 - drowsy_bucket))
+        drowsy_prob = _clamp01(max(drowsy_bucket, raw_prob if label == "drowsy" else 0.0))
+
+    # Normalize display probabilities to avoid contradictory UI states
+    total = safe_prob + drowsy_prob
+    if total > 1e-6:
+        safe_prob = _clamp01(safe_prob / total)
+        drowsy_prob = _clamp01(drowsy_prob / total)
+
+    scores = {"safe": float(safe_prob), "drowsy": float(drowsy_prob)}
+
+    top_prob = float(safe_prob if label == "safe" else drowsy_prob)
+
+    decision_reason = "alert"
+    if not has_safe_class:
+        decision_reason = "no_safe_class"
+    elif ambiguous:
+        decision_reason = "ambiguous"
+    elif label == "safe":
+        decision_reason = "below_threshold"
+
     return {
         "label": label,
-        "prob": top_prob,
+        "prob": float(top_prob),
+        "raw_label": raw_label,
+        "raw_prob": raw_prob,
+        "margin": margin,
+        "safe_prob": safe_prob,
+        "decision_reason": decision_reason,
         "scores": scores,
     }
 
@@ -79,7 +144,10 @@ def predict_from_frame(image_b64: str) -> Dict[str, Any]:
     """
     ensure_models_loaded()
     
-    vec = image_base64_to_landmarks(image_b64)
+    vec = image_base64_to_landmarks(image_b64, flip=False)
+    if vec is None:
+        # Fallback for mirrored webcam/front-camera mismatch
+        vec = image_base64_to_landmarks(image_b64, flip=True)
     if vec is None:
         return {
             "label": "no_face",

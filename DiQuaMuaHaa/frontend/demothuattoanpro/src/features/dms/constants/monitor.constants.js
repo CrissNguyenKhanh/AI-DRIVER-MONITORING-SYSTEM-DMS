@@ -21,11 +21,11 @@ export const EYES_CLOSED_WARN_MS = 3000;
 
 // ── PHONE — WebSocket YOLO, ~15fps ──────────────────────────
 export const PHONE_WS_FPS = 15;
-export const PHONE_YOLO_MIN_PROB = 0.55;
+export const PHONE_YOLO_MIN_PROB = 0.62;
 export const PHONE_HISTORY_LEN = 20;
 export const PHONE_WARN_MS = 3000;
-export const PHONE_STABLE_FRAMES = 4; // cần 4 lần liên tiếp mới bật cảnh báo
-export const PHONE_OFF_FRAMES = 6; // cần 6 lần liên tiếp mất cảnh báo mới tắt
+export const PHONE_STABLE_FRAMES = 4; // cân bằng: không quá nhạy, cũng không bị ì
+export const PHONE_OFF_FRAMES = 5;
 // ── SMOKING — WebSocket landmark, ~4fps (không cần nhanh hơn) ──
 export const SMOKING_WS_FPS = 4;
 export const SMOKING_MIN_PROB = 0.82;
