@@ -183,8 +183,9 @@ export function useMediaPipe({ videoRef, status, enabled = true }) {
         console.warn("MediaPipe FaceMesh init error", e);
       }
 
+      /*
+      // Tạm tắt Hands do lỗi CDN
       try {
-        // Load Hands
         await loadScript(
           "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js",
         );
@@ -212,13 +213,22 @@ export function useMediaPipe({ videoRef, status, enabled = true }) {
         });
         await hands.initialize();
         handsRef.current = hands;
-        setIsLoaded(true);
       } catch (e) {
         console.warn("MediaPipe Hands init error", e);
       }
+      */
+      setIsLoaded(true);
     }
 
     init();
+    return () => {
+      const fm = faceMeshRef.current;
+      const hs = handsRef.current;
+      faceMeshRef.current = null;
+      handsRef.current = null;
+      if (fm?.close) Promise.resolve(fm.close()).catch(() => {});
+      if (hs?.close) Promise.resolve(hs.close()).catch(() => {});
+    };
   }, [enabled, loadScript]);
 
   // Effect 2: Processing Loop (RAF-based)

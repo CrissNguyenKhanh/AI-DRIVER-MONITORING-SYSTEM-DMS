@@ -528,3 +528,17 @@ Chuẩn bị tách phần logic còn lại trong `frontend/demothuattoanpro/src/
 ### Trạng thái
 - **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.9 - Đã tinh chỉnh audio policy và WebSocket debug)
 - **Chờ xác nhận từ user**: Test lại Console: không còn vibrate red error, có log `Sending phone frame...`
+
+---
+
+## Buoc 2.10 - HOTFIX CUOI SAU AUDIT GIAI DOAN 2
+
+### Da thuc hien
+- [x] `Head3D.jsx`: dispose geometry/material trong Three.js scene cleanup de giam GPU memory leak
+- [x] `useMediaPipe.js`: cleanup FaceMesh/Hands bang `close()` va reset refs khi effect unmount/disable
+- [x] `useDrivingSession.js`: end driving session trong cleanup neu session ref con ton tai
+- [x] `thucmuctest.jsx`: xoa dead destructuring/state: `streamRef`, `handsRef`, `mediaPipeLoaded`, `blinkStateRef`, `blinkTimesRef`, `identityThreshold`
+
+### Trang thai
+- **Giai doan**: 2 - Hoan Tat
+- **Ghi chu**: Giai doan 2 da duoc audit va hotfix cac rui ro cleanup nghiem trong truoc khi dong bang.

@@ -63,6 +63,13 @@ export function useDrivingSession({
     })();
 
     return () => {
+      const sid = drivingSessionIdRef.current;
+      if (sid) {
+        drivingSessionIdRef.current = null;
+        endDrivingSession(apiBase, sid).catch((err) => {
+          console.warn("Failed to end driving session on cleanup", err);
+        });
+      }
       cancelled = true;
     };
   }, [apiBase, status, driverId]);

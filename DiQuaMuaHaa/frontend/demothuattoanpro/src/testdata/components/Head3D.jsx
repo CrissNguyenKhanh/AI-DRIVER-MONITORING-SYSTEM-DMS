@@ -133,6 +133,15 @@ function Head3D({ poseRef }) {
     return () => {
       cancelAnimationFrame(rafId2);
       ro.disconnect();
+      scene.traverse((obj) => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          const materials = Array.isArray(obj.material)
+            ? obj.material
+            : [obj.material];
+          materials.forEach((mat) => mat.dispose());
+        }
+      });
       renderer.dispose();
       if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
     };

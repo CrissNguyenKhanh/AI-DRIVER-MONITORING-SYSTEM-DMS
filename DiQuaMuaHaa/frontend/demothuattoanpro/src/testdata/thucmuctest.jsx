@@ -66,7 +66,6 @@ export default function DriverMonitorDMS() {
   // ── Hooks: Camera & MediaPipe ─────────────────────────────
   const {
     videoRef,
-    streamRef,
     startCamera,
     stopCamera,
     isReady: cameraReady,
@@ -77,15 +76,11 @@ export default function DriverMonitorDMS() {
 
   const {
     faceMeshRef,
-    handsRef,
-    isLoaded: mediaPipeLoaded,
     landmarksRef,
     handLandmarksRef,
     poseRef,
     eyeDataRef,
     earHistoryRef,
-    blinkStateRef,
-    blinkTimesRef,
     blinkDurRef,
     eyesClosedSinceRef,
     eyesClosedSecRef,
@@ -143,7 +138,6 @@ export default function DriverMonitorDMS() {
   const [identityOwner, setIdentityOwner] = useState(null);
   const [identityHasRegistered, setIdentityHasRegistered] = useState(false);
   const [identitySimilarity, setIdentitySimilarity] = useState(null);
-  const [identityThreshold, setIdentityThreshold] = useState(0.975);
   const [identityError, setIdentityError] = useState("");
   const [identitySamples, setIdentitySamples] = useState(0);
   /** Khi locked: phân biệt màn hình Telegram Reject vs các lý do khác */
@@ -268,9 +262,6 @@ export default function DriverMonitorDMS() {
     setIdentitySimilarity(
       typeof payload?.similarity === "number" ? payload.similarity : null,
     );
-    if (typeof payload?.threshold === "number") {
-      setIdentityThreshold(payload.threshold);
-    }
     setIdentitySamples(typeof payload?.samplesUsed === "number" ? payload.samplesUsed : 0);
     setIdentityError(payload?.error || "");
   }, []);
