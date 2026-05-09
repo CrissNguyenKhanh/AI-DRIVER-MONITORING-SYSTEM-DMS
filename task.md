@@ -428,6 +428,7 @@ const {
 - [2025-05-09] Session 3: Hoàn tất Giai đoạn 2.4 - Bóc tách Nhóm B (5 overlay components + constants), cập nhật thucmuctest.jsx, dọn dẹp imports và dead code
 - [2025-05-09] Session 4: Hoàn tất Giai đoạn 2.5 - Bóc tách Nhóm C1 (useDmsCamera.js, useMediaPipe.js, dmsMath.js), thucmuctest.jsx giảm ~850 dòng, chờ test
 - [2026-05-09] Session 5: Hoàn tất Giai đoạn 2.7 - Bóc tách Nhóm C2 (useWebSocket.js, useDmsAudio.js, useDrivingSession.js), build pass, chờ user test toàn diện
+- [2026-05-09] Session 6: Vá lỗi tích hợp C2 - tăng identity burst frames, khôi phục alert/alarm effect, warm-up AudioContext, bật smoking detection
 
 ---
 
@@ -487,3 +488,24 @@ Chuẩn bị tách phần logic còn lại trong `frontend/demothuattoanpro/src/
 - **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.7 - Đã hoàn tất Nhóm C2)
 - **Chờ xác nhận từ user**: Test toàn diện hệ thống sau refactor C2
 - **Lưu ý**: Không tách REST landmark loop, Hand API loop, hoặc logic alert duration trong bước này; giữ đúng phạm vi C2 đã phê duyệt.
+
+---
+
+## Bước 2.8 - FIX BUG TÍCH HỢP SAU NHÓM C2
+
+### Đã thực hiện
+- [x] `OwnerVerifyGate.jsx`: tăng `BURST_FRAMES` từ 2 lên 5 để `/api/identity/verify` có nhiều frame hơn, giảm lỗi 400 do thiếu frame face hợp lệ
+- [x] `thucmuctest.jsx`: tăng `IDENTITY_BURST_FRAMES` từ 2 lên 5 cho REST landmark loop dùng chung helper capture burst
+- [x] `useDmsAudio.js`: thêm `warmUpAudio()` để resume AudioContext trong user gesture
+- [x] `thucmuctest.jsx`: destructure `startAlarm`, `stopAlarm`, `warmUpAudio` từ `useDmsAudio`
+- [x] `thucmuctest.jsx`: thêm `handleStartCamera()` để warm-up audio khi user bấm Start/Retry/Activate Camera
+- [x] `thucmuctest.jsx`: khôi phục effect cảnh báo polling 250ms, theo dõi `eyesClosedSecRef`, `phoneDetectionRef/phoneActive`, `smokingDetectionRef/smokingActive`, set `drowsyAlert/phoneAlert/smokingAlert`, và bật/tắt alarm
+- [x] `thucmuctest.jsx`: bật `SMOKING_ENABLED = true`
+
+### Kiểm tra sau sửa
+- [x] `npm.cmd run build` trong `frontend/demothuattoanpro` - PASS
+- [x] `npx.cmd eslint src/testdata/hooks/useDmsAudio.js src/testdata/hooks/useWebSocket.js src/systeamdetectface/OwnerVerifyGate.jsx` - PASS
+
+### Trạng thái
+- **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.8 - Đã vá lỗi tích hợp C2)
+- **Chờ xác nhận từ user**: Test lại identity verify, audio alarm, phone/smoking WebSocket

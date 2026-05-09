@@ -29,14 +29,17 @@ import { useDmsAudio } from "./hooks/useDmsAudio";
 import { useDrivingSession } from "./hooks/useDrivingSession";
 import {
   API_INTERVAL_MS,
+  EYES_CLOSED_WARN_MS,
   HAND_API_INTERVAL_MS,
   LABEL_MAP,
+  PHONE_WARN_MS,
+  SMOKING_WARN_MS,
   STATUS_ICONS,
 } from "./constants/dmsConstants";
 
 const API_BASE = getDmsApiBase();
 const HAND_QUICK_CONFIDENCE = 0.75;
-const IDENTITY_BURST_FRAMES = 2;
+const IDENTITY_BURST_FRAMES = 5;
 const IDENTITY_BURST_GAP_MS = 110;
 const DRIVER_ID_KEY = "driver_owner_id_v1";
 const DEFAULT_DRIVER_ID = "driver_001";
@@ -45,7 +48,7 @@ const CONSISTENT_FRAMES = 2;
 const MIN_PROB_FOR_LABEL = 0.5;
 
 // Tạm tắt smoking trong test để tập trung fix phone detection
-const SMOKING_ENABLED = false;
+const SMOKING_ENABLED = true;
 
 // ── IDENTITY AUTH (vehicle UUID) ──────────────────────────────
 const ID_AUTH_LOCK_INTRUDER_FRAMES = 3; // liên tiếp không chính chủ thì khóa về auth
@@ -95,7 +98,7 @@ export default function DriverMonitorDMS() {
     enabled: cameraReady,
   });
 
-  const { stopAlarm } = useDmsAudio();
+  const { startAlarm, stopAlarm, warmUpAudio } = useDmsAudio();
 
   const {
     wsConnected,
@@ -115,6 +118,7 @@ export default function DriverMonitorDMS() {
   // ── Các refs khác ─────────────────────────────────────────
   const smokingSinceRef = useRef(null);
   const smokingSecRef = useRef(0);
+  const alertAlarmActiveRef = useRef(false);
 
   // Phone continuous alert
   const phoneSinceRef = useRef(null);
@@ -172,6 +176,11 @@ export default function DriverMonitorDMS() {
   });
 
   const dismissAuthWelcome = useCallback(() => setAuthWelcomeProfile(null), []);
+
+  const handleStartCamera = useCallback(() => {
+    warmUpAudio();
+    startCamera();
+  }, [startCamera, warmUpAudio]);
 
   // ── Owner identity gate callbacks (tách riêng khỏi thucmuctest) ──
   const handleIdentityUnlock = useCallback(
@@ -275,6 +284,81 @@ export default function DriverMonitorDMS() {
   useEffect(() => {
     warmSpeechVoices();
   }, []);
+
+  useEffect(() => {
+    if (status !== "active") {
+      alertAlarmActiveRef.current = false;
+      stopAlarm();
+      setDrowsyAlert(null);
+      setPhoneAlert(null);
+      setSmokingAlert(null);
+      phoneSinceRef.current = null;
+      phoneSecRef.current = 0;
+      smokingSinceRef.current = null;
+      smokingSecRef.current = 0;
+      return;
+    }
+
+    const tid = setInterval(() => {
+      const now = Date.now();
+      const drowsySec = Number(eyesClosedSecRef.current || 0);
+      const nextDrowsy =
+        drowsySec * 1000 >= EYES_CLOSED_WARN_MS ? drowsySec : null;
+
+      const phoneDetected = Boolean(phoneDetectionRef.current?.active || phoneActive);
+      let nextPhone = null;
+      if (phoneDetected) {
+        if (phoneSinceRef.current === null) phoneSinceRef.current = now;
+        phoneSecRef.current = (now - phoneSinceRef.current) / 1000;
+        if (phoneSecRef.current * 1000 >= PHONE_WARN_MS) {
+          nextPhone = phoneSecRef.current;
+        }
+      } else {
+        phoneSinceRef.current = null;
+        phoneSecRef.current = 0;
+      }
+
+      const smokingDetected = Boolean(
+        smokingDetectionRef.current?.active || smokingActive,
+      );
+      let nextSmoking = null;
+      if (SMOKING_ENABLED && smokingDetected) {
+        if (smokingSinceRef.current === null) smokingSinceRef.current = now;
+        smokingSecRef.current = (now - smokingSinceRef.current) / 1000;
+        if (smokingSecRef.current * 1000 >= SMOKING_WARN_MS) {
+          nextSmoking = smokingSecRef.current;
+        }
+      } else {
+        smokingSinceRef.current = null;
+        smokingSecRef.current = 0;
+      }
+
+      setDrowsyAlert(nextDrowsy);
+      setPhoneAlert(nextPhone);
+      setSmokingAlert(nextSmoking);
+
+      const shouldAlarm =
+        nextDrowsy !== null || nextPhone !== null || nextSmoking !== null;
+      if (shouldAlarm && !alertAlarmActiveRef.current) {
+        startAlarm();
+        alertAlarmActiveRef.current = true;
+      } else if (!shouldAlarm && alertAlarmActiveRef.current) {
+        stopAlarm();
+        alertAlarmActiveRef.current = false;
+      }
+    }, 250);
+
+    return () => clearInterval(tid);
+  }, [
+    status,
+    phoneActive,
+    smokingActive,
+    phoneDetectionRef,
+    smokingDetectionRef,
+    eyesClosedSecRef,
+    startAlarm,
+    stopAlarm,
+  ]);
 
   useEffect(() => {
     try {
@@ -2165,7 +2249,7 @@ export default function DriverMonitorDMS() {
                 {errorMsg}
               </div>
               <button
-                onClick={startCamera}
+                onClick={handleStartCamera}
                 style={{
                   padding: "6px 20px",
                   background: "rgba(60,150,255,0.1)",
@@ -2338,7 +2422,7 @@ export default function DriverMonitorDMS() {
                 CAMERA STANDBY
               </div>
               <button
-                onClick={startCamera}
+                onClick={handleStartCamera}
                 style={{
                   padding: "7px 24px",
                   background: "rgba(60,150,255,0.08)",
@@ -2447,7 +2531,7 @@ export default function DriverMonitorDMS() {
               </button>
             ) : (
               <button
-                onClick={startCamera}
+                onClick={handleStartCamera}
                 disabled={status === "loading"}
                 style={{
                   padding: "2px 14px",

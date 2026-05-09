@@ -4,7 +4,7 @@ import { getDmsApiBase } from "../config/apiEndpoints";
 const DEFAULT_API_BASE = getDmsApiBase();
 const DEFAULT_VERIFY_INTERVAL_MS = 1200;
 const DEFAULT_DECISION_TIMEOUT_SEC = 30;
-const BURST_FRAMES = 2;
+const BURST_FRAMES = 5;
 const BURST_GAP_MS = 110;
 
 // Downscale to reduce base64 payload size.

@@ -35,6 +35,17 @@ export function useDmsAudio() {
     [getAudioCtx],
   );
 
+  const warmUpAudio = useCallback(() => {
+    try {
+      const ctx = getAudioCtx();
+      if (ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
+    } catch {
+      // Browser audio permission is best-effort until a user gesture occurs.
+    }
+  }, [getAudioCtx]);
+
   const stopAlarm = useCallback(() => {
     if (alarmIntervalRef.current) {
       clearInterval(alarmIntervalRef.current);
@@ -66,7 +77,7 @@ export function useDmsAudio() {
 
   useEffect(() => stopAlarm, [stopAlarm]);
 
-  return { audioCtxRef, playBeep, startAlarm, stopAlarm };
+  return { audioCtxRef, playBeep, startAlarm, stopAlarm, warmUpAudio };
 }
 
 export default useDmsAudio;
