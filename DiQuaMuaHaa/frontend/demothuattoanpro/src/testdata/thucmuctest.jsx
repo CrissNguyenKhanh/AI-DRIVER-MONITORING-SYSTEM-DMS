@@ -5,7 +5,6 @@ import OwnerVerifyGate from "../systeamdetectface/OwnerVerifyGate";
 import TelegramOwnerRejectOverlay from "../systeamdetectface/TelegramOwnerRejectOverlay";
 import DriverAuthenticatedWelcome from "../systeamdetectface/DriverAuthenticatedWelcome";
 import { getDmsApiBase } from "../config/apiEndpoints";
-import { getWebcamSupportErrorMessage } from "../utils/cameraContext";
 import {
   speakOwnerGreeting,
   warmSpeechVoices,
@@ -26,6 +25,13 @@ import HandQuickAppsMenu, {
 } from "../systeamdetectface/HandQuickAppsMenu";
 import EyeCanvas from "./components/EyeCanvas";
 import WaveformCanvas from "./components/WaveformCanvas";
+import PhoneFOMOOverlay from "./components/PhoneFOMOOverlay";
+import SmokingFOMOOverlay from "./components/SmokingFOMOOverlay";
+import FaceMeshOverlay from "./components/FaceMeshOverlay";
+import HandLandmarkOverlay from "./components/HandLandmarkOverlay";
+import Head3D from "./components/Head3D";
+import { useDmsCamera } from "./hooks/useDmsCamera";
+import { useMediaPipe } from "./hooks/useMediaPipe";
 import { LABEL_MAP, STATUS_ICONS } from "./constants/dmsConstants";
 
 const API_BASE = getDmsApiBase();
@@ -67,970 +73,50 @@ const ID_AUTH_LOCK_INTRUDER_FRAMES = 3; // liên tiếp không chính chủ thì
 const ID_AUTH_UNLOCK_FRAMES = 2; // liên tiếp chính chủ thì mở về active
 const ID_AUTH_RETRY_INTERVAL_MS = 1200;
 
-const L_EYE = {
-  p1: 33,
-  p2: 160,
-  p3: 158,
-  p4: 133,
-  p5: 153,
-  p6: 144,
-  outer: 33,
-  inner: 133,
-  iris: [468, 469, 470, 471, 472],
-};
-const R_EYE = {
-  p1: 362,
-  p2: 385,
-  p3: 387,
-  p4: 263,
-  p5: 373,
-  p6: 380,
-  outer: 263,
-  inner: 362,
-  iris: [473, 474, 475, 476, 477],
-};
-const LEFT_EYE_IDX = [
-  33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246,
-];
-const RIGHT_EYE_IDX = [
-  362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384,
-  398,
-];
-const FACE_OVAL_IDX = [
-  10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378,
-  400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21,
-  54, 103, 67, 109,
-];
-const LIPS_IDX = [
-  61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84,
-  181, 91, 146,
-];
-
-/** Nối 21 điểm — topology MediaPipe Hands */
-const HAND_CONNECTIONS = [
-  [0, 1],
-  [1, 2],
-  [2, 3],
-  [3, 4],
-  [0, 5],
-  [5, 6],
-  [6, 7],
-  [7, 8],
-  [5, 9],
-  [9, 10],
-  [10, 11],
-  [11, 12],
-  [9, 13],
-  [13, 14],
-  [14, 15],
-  [15, 16],
-  [13, 17],
-  [17, 18],
-  [18, 19],
-  [19, 20],
-  [0, 17],
-];
-
-function distPts(a, b) {
-  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
-}
-function computeEAR(lm, eye) {
-  const p1 = lm[eye.p1],
-    p2 = lm[eye.p2],
-    p3 = lm[eye.p3],
-    p4 = lm[eye.p4],
-    p5 = lm[eye.p5],
-    p6 = lm[eye.p6];
-  if (!p1 || !p4) return 0.3;
-  return (distPts(p2, p6) + distPts(p3, p5)) / (2.0 * distPts(p1, p4) + 0.001);
-}
-function computePupilRadius(lm, irisIdx) {
-  if (!lm[irisIdx[0]]) return 0;
-  const c = lm[irisIdx[0]];
-  return (
-    irisIdx
-      .slice(1)
-      .map((i) => distPts(c, lm[i]))
-      .reduce((a, b) => a + b, 0) / 4
-  );
-}
-function estimateHeadPose(lm) {
-  if (!lm || lm.length < 468) return { yaw: 0, pitch: 0, roll: 0 };
-  const nose = lm[1],
-    chin = lm[152],
-    lEye = lm[33],
-    rEye = lm[263];
-  const eyeMidX = (lEye.x + rEye.x) / 2;
-  const eyeWidth = Math.abs(rEye.x - lEye.x);
-  const yaw = ((nose.x - eyeMidX) / (eyeWidth + 0.001)) * 2.2;
-  const eyeMidY = (lEye.y + rEye.y) / 2;
-  const faceH = Math.abs(chin.y - eyeMidY) + 0.001;
-  const pitch = ((nose.y - eyeMidY) / faceH - 0.42) * 2.5;
-  const roll = Math.atan2(rEye.y - lEye.y, rEye.x - lEye.x);
-  return { yaw: -yaw, pitch: -pitch, roll: -roll };
-}
-
-// ─────────────────────────────────────────────────────────
-// PhoneFOMOOverlay — đọc từ phoneDetectionRef, vẽ RAF 60fps
-// ─────────────────────────────────────────────────────────
-function PhoneFOMOOverlay({ phoneDetectionRef, landmarksRef, videoRef }) {
-  const canvasRef = useRef(null);
-  const smoothBoxRef = useRef(null);
-  const pulseRef = useRef(0);
-
-  // resize canvas theo video
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const vid = videoRef.current;
-    if (!canvas || !vid) return;
-    const ro = new ResizeObserver(() => {
-      canvas.width = vid.offsetWidth || 640;
-      canvas.height = vid.offsetHeight || 480;
-    });
-    ro.observe(vid);
-    canvas.width = vid.offsetWidth || 640;
-    canvas.height = vid.offsetHeight || 480;
-    return () => ro.disconnect();
-  }, []);
-
-  // RAF draw loop — luôn chạy 60fps, chỉ đọc ref
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    let rafId;
-
-    function lerp(a, b, t) {
-      return a + (b - a) * t;
-    }
-
-    function getFallbackBox(lm, W, H) {
-      if (!lm || !lm.length) return null;
-      const mx = (x) => W - x * W,
-        my = (y) => y * H;
-      const chin = lm[152],
-        lEar = lm[234],
-        rEar = lm[454];
-      if (!chin) return null;
-      const faceW = lEar && rEar ? Math.abs(mx(lEar.x) - mx(rEar.x)) : W * 0.25;
-      const bw = faceW * 0.65,
-        bh = bw * 0.55;
-      return {
-        x: mx(chin.x) - bw / 2,
-        y: my(chin.y) + 8,
-        w: bw,
-        h: bh,
-        fallback: true,
-      };
-    }
-
-    function drawBrackets(ctx, x, y, w, h, color, size, lw) {
-      const cs = Math.min(size, w * 0.25, h * 0.15);
-      ctx.strokeStyle = color;
-      ctx.lineWidth = lw;
-      ctx.lineCap = "round";
-      [
-        [x, y, 1, 1],
-        [x + w, y, -1, 1],
-        [x, y + h, 1, -1],
-        [x + w, y + h, -1, -1],
-      ].forEach(([cx, cy, dx, dy]) => {
-        ctx.beginPath();
-        ctx.moveTo(cx, cy + dy * cs);
-        ctx.lineTo(cx, cy);
-        ctx.lineTo(cx + dx * cs, cy);
-        ctx.stroke();
-      });
-    }
-
-    function draw() {
-      rafId = requestAnimationFrame(draw);
-      const vid = videoRef.current;
-      if (!vid || !canvas) return;
-      const W = canvas.width,
-        H = canvas.height;
-      const ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, W, H);
-
-      const det = phoneDetectionRef.current;
-      if (!det || !det.active) {
-        smoothBoxRef.current = null;
-        return;
-      }
-
-      pulseRef.current = (pulseRef.current + 0.04) % (Math.PI * 2);
-      const pulse = Math.sin(pulseRef.current);
-      const now = Date.now();
-
-      // target box từ YOLO bbox (đã flip x vì video mirror)
-      let targetBox = null;
-      if (det.bbox) {
-        const { x1, y1, x2, y2 } = det.bbox;
-        targetBox = {
-          x: W - x2 * W,
-          y: y1 * H,
-          w: (x2 - x1) * W,
-          h: (y2 - y1) * H,
-          fallback: false,
-        };
-      }
-      // Nếu YOLO chưa có bbox thì không vẽ fallback từ landmarks nữa
-      // để tránh "lung tung" khi phone_detection bị mất tạm thời.
-      if (!targetBox) return;
-
-      // smooth LERP — tăng lên 0.4 để box bám theo phone nhanh hơn
-      const LERP = 0.4;
-      if (!smoothBoxRef.current) {
-        smoothBoxRef.current = { ...targetBox };
-      } else {
-        smoothBoxRef.current.x = lerp(
-          smoothBoxRef.current.x,
-          targetBox.x,
-          LERP,
-        );
-        smoothBoxRef.current.y = lerp(
-          smoothBoxRef.current.y,
-          targetBox.y,
-          LERP,
-        );
-        smoothBoxRef.current.w = lerp(
-          smoothBoxRef.current.w,
-          targetBox.w,
-          LERP,
-        );
-        smoothBoxRef.current.h = lerp(
-          smoothBoxRef.current.h,
-          targetBox.h,
-          LERP,
-        );
-      }
-
-      const { x, y, w, h } = smoothBoxRef.current;
-      const prob = det.prob || 0.5;
-
-      // outer glow pulse
-      ctx.strokeStyle = `rgba(255,160,0,${0.07 + 0.05 * pulse})`;
-      ctx.lineWidth = 6 + pulse * 2;
-      ctx.strokeRect(x - 5, y - 5, w + 10, h + 10);
-
-      // dashed box
-      ctx.setLineDash([6, 4]);
-      ctx.strokeStyle = `rgba(255,160,0,0.55)`;
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(x, y, w, h);
-      ctx.setLineDash([]);
-
-      // fill
-      ctx.fillStyle = `rgba(255,140,0,${0.04 + 0.02 * pulse})`;
-      ctx.fillRect(x, y, w, h);
-
-      // corner brackets
-      const colorAlpha = `rgba(255,${Math.round(80 + (1 - prob) * 100)},30,0.9)`;
-      drawBrackets(
-        ctx,
-        x,
-        y,
-        w,
-        h,
-        colorAlpha,
-        Math.min(22, w * 0.25, h * 0.15),
-        2.5,
-      );
-      const off = 5;
-      if (w > off * 4 && h > off * 4)
-        drawBrackets(
-          ctx,
-          x + off,
-          y + off,
-          w - off * 2,
-          h - off * 2,
-          `rgba(255,200,50,0.35)`,
-          Math.min(12, w * 0.15),
-          1,
-        );
-
-      // scan line
-      const scanY = y + h * ((now % 1600) / 1600);
-      const grad = ctx.createLinearGradient(x, scanY - 8, x, scanY + 8);
-      grad.addColorStop(0, "transparent");
-      grad.addColorStop(0.5, "rgba(255,160,30,0.55)");
-      grad.addColorStop(1, "transparent");
-      ctx.fillStyle = grad;
-      ctx.fillRect(x, scanY - 8, w, 16);
-
-      // prob bar
-      const bW = w * 0.7,
-        bH = 4,
-        bX = x + (w - bW) / 2,
-        bY = y + h + 6;
-      ctx.fillStyle = "rgba(255,255,255,0.07)";
-      ctx.fillRect(bX, bY, bW, bH);
-      ctx.fillStyle = "rgba(255,180,0,0.8)";
-      ctx.fillRect(bX, bY, bW * prob, bH);
-
-      // label tag
-      const labelText = `PHONE ${(prob * 100).toFixed(0)}%`;
-      ctx.font = "bold 11px monospace";
-      const tw = ctx.measureText(labelText).width;
-      const tagX = x,
-        tagY = Math.max(4, y - 22);
-      ctx.fillStyle = "rgba(255,140,0,0.92)";
-      ctx.beginPath();
-      if (ctx.roundRect) ctx.roundRect(tagX, tagY, tw + 12, 18, 3);
-      else ctx.rect(tagX, tagY, tw + 12, 18);
-      ctx.fill();
-      ctx.fillStyle = "rgba(0,0,0,1)";
-      ctx.fillText(labelText, tagX + 6, tagY + 13);
-
-      // confidence ring
-      const rR = 15,
-        rCX = x + w - rR - 4,
-        rCY = y + rR + 4;
-      ctx.beginPath();
-      ctx.arc(rCX, rCY, rR, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(255,255,255,0.07)";
-      ctx.lineWidth = 3;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(
-        rCX,
-        rCY,
-        rR - 4,
-        -Math.PI / 2,
-        -Math.PI / 2 + Math.PI * 2 * prob,
-      );
-      ctx.strokeStyle = "rgba(255,180,30,0.9)";
-      ctx.lineWidth = 2.5;
-      ctx.stroke();
-      ctx.font = "bold 9px monospace";
-      ctx.fillStyle = "rgba(255,180,30,0.9)";
-      ctx.textAlign = "center";
-      ctx.fillText((prob * 100).toFixed(0) + "%", rCX, rCY + 3);
-      ctx.textAlign = "left";
-
-      // crosshair
-      const cx2 = x + w / 2,
-        cy2 = y + h / 2;
-      ctx.strokeStyle = `rgba(255,160,0,${0.4 + 0.2 * pulse})`;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(cx2 - 8, cy2);
-      ctx.lineTo(cx2 + 8, cy2);
-      ctx.moveTo(cx2, cy2 - 8);
-      ctx.lineTo(cx2, cy2 + 8);
-      ctx.stroke();
-    }
-
-    draw();
-    return () => cancelAnimationFrame(rafId);
-  }, []);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{
-        position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
-        pointerEvents: "none",
-        zIndex: 7,
-      }}
-    />
-  );
-}
-
-// ─────────────────────────────────────────────────────────
-// SmokingFOMOOverlay
-// ─────────────────────────────────────────────────────────
-function SmokingFOMOOverlay({ smokingDetectionRef, landmarksRef, videoRef }) {
-  const canvasRef = useRef(null);
-  const smoothBoxRef = useRef(null);
-  const pulseRef = useRef(0);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const vid = videoRef.current;
-    if (!canvas || !vid) return;
-    const ro = new ResizeObserver(() => {
-      canvas.width = vid.offsetWidth || 640;
-      canvas.height = vid.offsetHeight || 480;
-    });
-    ro.observe(vid);
-    canvas.width = vid.offsetWidth || 640;
-    canvas.height = vid.offsetHeight || 480;
-    return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    let rafId;
-    function lerp(a, b, t) {
-      return a + (b - a) * t;
-    }
-
-    function mouthBox(lm, W, H) {
-      if (!lm || !lm.length) return null;
-      const mx = (x) => W - x * W,
-        my = (y) => y * H;
-      const pts = [0, 11, 12, 13, 14, 15, 16, 17, 18]
-        .map((i) => lm[i])
-        .filter(Boolean);
-      if (!pts.length) return null;
-      const mX = pts.reduce((s, p) => s + mx(p.x), 0) / pts.length;
-      const mY = pts.reduce((s, p) => s + my(p.y), 0) / pts.length;
-      const faceXs = lm.slice(0, 100).map((p) => mx(p.x));
-      const faceW = Math.max(...faceXs) - Math.min(...faceXs);
-      const bw = faceW * 0.7,
-        bh = bw * 0.22;
-      return {
-        x: mX - bw * 0.2,
-        y: mY - bh / 2,
-        w: bw,
-        h: bh,
-        estimated: true,
-      };
-    }
-
-    function draw() {
-      rafId = requestAnimationFrame(draw);
-      const vid = videoRef.current;
-      if (!vid || !canvas) return;
-      const W = canvas.width,
-        H = canvas.height;
-      const ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, W, H);
-      const det = smokingDetectionRef.current;
-      if (!det || !det.active) {
-        smoothBoxRef.current = null;
-        return;
-      }
-      pulseRef.current = (pulseRef.current + 0.05) % (Math.PI * 2);
-      const pulse = Math.sin(pulseRef.current);
-      let tb = null;
-      if (det.bbox && det.bbox.x1 != null) {
-        const { x1, y1, x2, y2 } = det.bbox;
-        tb = {
-          x: W - x2 * W,
-          y: y1 * H,
-          w: (x2 - x1) * W,
-          h: (y2 - y1) * H,
-          estimated: false,
-        };
-      }
-      if (!tb) tb = mouthBox(landmarksRef.current, W, H);
-      if (!tb) return;
-      const LR = tb.estimated ? 0.05 : 0.2;
-      if (!smoothBoxRef.current) {
-        smoothBoxRef.current = { ...tb };
-      } else {
-        smoothBoxRef.current.x = lerp(smoothBoxRef.current.x, tb.x, LR);
-        smoothBoxRef.current.y = lerp(smoothBoxRef.current.y, tb.y, LR);
-        smoothBoxRef.current.w = lerp(smoothBoxRef.current.w, tb.w, LR);
-        smoothBoxRef.current.h = lerp(smoothBoxRef.current.h, tb.h, LR);
-      }
-      const { x, y, w, h } = smoothBoxRef.current;
-      const prob = det.prob || 0.5;
-      ctx.strokeStyle = `rgba(255,80,40,${0.1 + 0.05 * pulse})`;
-      ctx.lineWidth = 5 + pulse;
-      ctx.strokeRect(x - 3, y - 3, w + 6, h + 6);
-      ctx.setLineDash([5, 4]);
-      ctx.strokeStyle = "rgba(255,80,40,0.55)";
-      ctx.lineWidth = 1.2;
-      ctx.strokeRect(x, y, w, h);
-      ctx.setLineDash([]);
-      ctx.fillStyle = `rgba(255,60,20,${0.04 + 0.02 * pulse})`;
-      ctx.fillRect(x, y, w, h);
-      const cs = Math.min(14, w * 0.2, h * 0.3);
-      ctx.strokeStyle = "rgba(255,80,40,0.9)";
-      ctx.lineWidth = 2;
-      ctx.lineCap = "round";
-      [
-        [x, y, 1, 1],
-        [x + w, y, -1, 1],
-        [x, y + h, 1, -1],
-        [x + w, y + h, -1, -1],
-      ].forEach(([cx, cy, dx, dy]) => {
-        ctx.beginPath();
-        ctx.moveTo(cx, cy + dy * cs);
-        ctx.lineTo(cx, cy);
-        ctx.lineTo(cx + dx * cs, cy);
-        ctx.stroke();
-      });
-      const st = (Date.now() % 2000) / 2000;
-      for (let i = 0; i < 4; i++) {
-        const t = (st + i * 0.25) % 1;
-        ctx.beginPath();
-        ctx.arc(
-          x + w * 0.6 + Math.sin(t * Math.PI * 4) * 6,
-          y - t * 30,
-          2 + t * 3,
-          0,
-          Math.PI * 2,
-        );
-        ctx.fillStyle = `rgba(200,200,200,${0.5 * (1 - t)})`;
-        ctx.fill();
-      }
-      const lt = `SMOKING ${(prob * 100).toFixed(0)}%`;
-      ctx.font = "bold 11px monospace";
-      const tw = ctx.measureText(lt).width;
-      ctx.fillStyle = "rgba(255,60,20,0.9)";
-      if (ctx.roundRect) ctx.roundRect(x, y - 22, tw + 12, 18, 3);
-      else ctx.rect(x, y - 22, tw + 12, 18);
-      ctx.fill();
-      ctx.fillStyle = "#fff";
-      ctx.fillText(lt, x + 6, y - 9);
-    }
-    draw();
-    return () => cancelAnimationFrame(rafId);
-  }, []);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{
-        position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
-        pointerEvents: "none",
-        zIndex: 8,
-      }}
-    />
-  );
-}
-
-// ─────────────────────────────────────────────────────────
-// FaceMeshOverlay
-// ─────────────────────────────────────────────────────────
-function FaceMeshOverlay({ landmarksRef, eyeDataRef, videoRef }) {
-  const canvasRef = useRef(null);
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const vid = videoRef.current;
-    if (!canvas || !vid) return;
-    const ro = new ResizeObserver(() => {
-      canvas.width = vid.offsetWidth || 640;
-      canvas.height = vid.offsetHeight || 480;
-    });
-    ro.observe(vid);
-    canvas.width = vid.offsetWidth || 640;
-    canvas.height = vid.offsetHeight || 480;
-    return () => ro.disconnect();
-  }, []);
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    let rafId;
-    function drawEye(ctx, lm, irisIdx, eyeIdxList, ear, W, H) {
-      const mx = (x) => W - x * W,
-        my = (y) => y * H;
-      ctx.beginPath();
-      eyeIdxList.forEach((idx, i) => {
-        const p = lm[idx];
-        if (!p) return;
-        i === 0 ? ctx.moveTo(mx(p.x), my(p.y)) : ctx.lineTo(mx(p.x), my(p.y));
-      });
-      ctx.closePath();
-      const blink = ear < EAR_BLINK_THRESH;
-      ctx.strokeStyle = blink ? "rgba(255,200,60,0.9)" : "rgba(0,200,255,0.75)";
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
-      ctx.fillStyle = blink ? "rgba(255,200,60,0.06)" : "rgba(0,200,255,0.04)";
-      ctx.fill();
-      const iris = lm[irisIdx[0]];
-      if (!iris) return;
-      const ix = mx(iris.x),
-        iy = my(iris.y);
-      const ie = lm[irisIdx[1]];
-      const iR = ie
-        ? Math.sqrt((mx(ie.x) - ix) ** 2 + (my(ie.y) - iy) ** 2) * 1.1
-        : W * 0.018;
-      ctx.beginPath();
-      ctx.arc(ix, iy, iR * 1.6, 0, Math.PI * 2);
-      ctx.strokeStyle = blink ? "rgba(255,200,60,0.3)" : "rgba(0,180,255,0.25)";
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(ix, iy, iR, 0, Math.PI * 2);
-      ctx.strokeStyle = blink ? "rgba(255,200,60,0.9)" : "rgba(0,200,255,0.8)";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.fillStyle = blink ? "rgba(255,200,60,0.12)" : "rgba(0,150,255,0.1)";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(ix, iy, iR * 0.38, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(0,0,0,0.7)";
-      ctx.fill();
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2;
-        ctx.beginPath();
-        ctx.moveTo(ix + Math.cos(a) * iR * 0.42, iy + Math.sin(a) * iR * 0.42);
-        ctx.lineTo(ix + Math.cos(a) * iR * 0.92, iy + Math.sin(a) * iR * 0.92);
-        ctx.strokeStyle = blink
-          ? "rgba(255,200,60,0.25)"
-          : "rgba(0,180,255,0.22)";
-        ctx.lineWidth = 0.5;
-        ctx.stroke();
-      }
-      ctx.beginPath();
-      ctx.arc(ix - iR * 0.22, iy - iR * 0.28, iR * 0.12, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255,255,255,0.35)";
-      ctx.fill();
-      ctx.font = "9px monospace";
-      ctx.fillStyle = blink ? "#ffc940" : "rgba(0,200,255,0.7)";
-      ctx.fillText(`EAR ${ear.toFixed(2)}`, ix - 14, iy - iR * 1.9);
-    }
-    function draw() {
-      rafId = requestAnimationFrame(draw);
-      const vid = videoRef.current;
-      if (!vid || !canvas) return;
-      const W = canvas.width,
-        H = canvas.height;
-      const ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, W, H);
-      const lm = landmarksRef.current;
-      if (!lm || !lm.length) return;
-      const mx = (x) => W - x * W,
-        my = (y) => y * H;
-      ctx.beginPath();
-      FACE_OVAL_IDX.forEach((idx, i) => {
-        const p = lm[idx];
-        if (!p) return;
-        i === 0 ? ctx.moveTo(mx(p.x), my(p.y)) : ctx.lineTo(mx(p.x), my(p.y));
-      });
-      ctx.closePath();
-      ctx.setLineDash([4, 3]);
-      ctx.strokeStyle = "rgba(0,200,255,0.25)";
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.beginPath();
-      LIPS_IDX.forEach((idx, i) => {
-        const p = lm[idx];
-        if (!p) return;
-        i === 0 ? ctx.moveTo(mx(p.x), my(p.y)) : ctx.lineTo(mx(p.x), my(p.y));
-      });
-      ctx.closePath();
-      ctx.strokeStyle = "rgba(100,180,255,0.35)";
-      ctx.lineWidth = 0.8;
-      ctx.stroke();
-      for (let i = 0; i < lm.length; i += 4) {
-        const p = lm[i];
-        if (!p) continue;
-        ctx.beginPath();
-        ctx.arc(mx(p.x), my(p.y), 1, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(0,200,255,0.45)";
-        ctx.fill();
-      }
-      const ed = eyeDataRef.current;
-      drawEye(ctx, lm, L_EYE.iris, LEFT_EYE_IDX, ed.left.ear || 0.3, W, H);
-      drawEye(ctx, lm, R_EYE.iris, RIGHT_EYE_IDX, ed.right.ear || 0.3, W, H);
-      const nT = lm[6],
-        nB = lm[4];
-      if (nT && nB) {
-        ctx.beginPath();
-        ctx.moveTo(mx(nT.x), my(nT.y));
-        ctx.lineTo(mx(nB.x), my(nB.y));
-        ctx.strokeStyle = "rgba(0,200,255,0.3)";
-        ctx.lineWidth = 0.8;
-        ctx.stroke();
-      }
-      const xs = lm.map((p) => mx(p.x)).filter(Boolean),
-        ys = lm.map((p) => my(p.y)).filter(Boolean);
-      if (xs.length && ys.length) {
-        const bx1 = Math.min(...xs),
-          bx2 = Math.max(...xs),
-          by1 = Math.min(...ys),
-          by2 = Math.max(...ys);
-        const pad = 10,
-          bx = bx1 - pad,
-          by = by1 - pad,
-          bw = bx2 - bx1 + pad * 2,
-          bh = by2 - by1 + pad * 2,
-          cs = 18;
-        [
-          [bx, by, 1, 1],
-          [bx + bw, by, -1, 1],
-          [bx, by + bh, 1, -1],
-          [bx + bw, by + bh, -1, -1],
-        ].forEach(([cx2, cy2, dx, dy]) => {
-          ctx.beginPath();
-          ctx.moveTo(cx2, cy2 + dy * cs);
-          ctx.lineTo(cx2, cy2);
-          ctx.lineTo(cx2 + dx * cs, cy2);
-          ctx.strokeStyle = "rgba(204,204,0,0.9)";
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        });
-        ctx.font = "bold 13px monospace";
-        ctx.fillStyle = "rgba(204,204,0,0.9)";
-        ctx.fillText(((bx1 / W) * 100).toFixed(1), bx - 2, by - 6);
-        ctx.fillText(((bx2 / W) * 100).toFixed(1), bx + bw - 24, by - 6);
-      }
-    }
-    draw();
-    return () => cancelAnimationFrame(rafId);
-  }, []);
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{
-        position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
-        pointerEvents: "none",
-        zIndex: 5,
-      }}
-    />
-  );
-}
-
-// ─────────────────────────────────────────────────────────
-// HandLandmarkOverlay — MediaPipe Hands (mirror theo video scaleX(-1))
-// ─────────────────────────────────────────────────────────
-function HandLandmarkOverlay({ handLandmarksRef, videoRef }) {
-  const canvasRef = useRef(null);
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const vid = videoRef.current;
-    if (!canvas || !vid) return;
-    const ro = new ResizeObserver(() => {
-      canvas.width = vid.offsetWidth || 640;
-      canvas.height = vid.offsetHeight || 480;
-    });
-    ro.observe(vid);
-    canvas.width = vid.offsetWidth || 640;
-    canvas.height = vid.offsetHeight || 480;
-    return () => ro.disconnect();
-  }, [videoRef]);
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    let rafId;
-    const lineColors = [
-      "rgba(0, 255, 180, 0.88)",
-      "rgba(255, 130, 220, 0.88)",
-    ];
-    const dotColors = [
-      "rgba(220, 255, 245, 0.95)",
-      "rgba(255, 230, 250, 0.95)",
-    ];
-    function draw() {
-      rafId = requestAnimationFrame(draw);
-      const vid = videoRef.current;
-      if (!vid || !canvas) return;
-      const W = canvas.width,
-        H = canvas.height;
-      const ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, W, H);
-      const hands = handLandmarksRef.current;
-      if (!hands || !hands.length) return;
-      const mx = (x) => W - x * W,
-        my = (y) => y * H;
-      hands.forEach((lm, hi) => {
-        if (!lm || !lm.length) return;
-        const lc = lineColors[hi % lineColors.length],
-          dc = dotColors[hi % dotColors.length];
-        ctx.strokeStyle = lc;
-        ctx.lineWidth = 2;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-        HAND_CONNECTIONS.forEach(([a, b]) => {
-          const pa = lm[a],
-            pb = lm[b];
-          if (!pa || !pb) return;
-          ctx.beginPath();
-          ctx.moveTo(mx(pa.x), my(pa.y));
-          ctx.lineTo(mx(pb.x), my(pb.y));
-          ctx.stroke();
-        });
-        lm.forEach((p) => {
-          if (!p) return;
-          ctx.beginPath();
-          ctx.arc(mx(p.x), my(p.y), 2.4, 0, Math.PI * 2);
-          ctx.fillStyle = dc;
-          ctx.fill();
-        });
-      });
-    }
-    draw();
-    return () => cancelAnimationFrame(rafId);
-  }, [handLandmarksRef, videoRef]);
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{
-        position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
-        pointerEvents: "none",
-        zIndex: 6,
-      }}
-    />
-  );
-}
-
-function Head3D({ poseRef }) {
-  const mountRef = useRef(null);
-  useEffect(() => {
-    const el = mountRef.current;
-    if (!el) return;
-    const W = el.clientWidth || 280,
-      H = el.clientHeight || 260;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(W, H);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(0x000000, 0);
-    el.appendChild(renderer.domElement);
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(38, W / H, 0.1, 100);
-    camera.position.set(0, 0.1, 3.4);
-    camera.lookAt(0, 0.1, 0);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-    const key = new THREE.DirectionalLight(0xffffff, 1.1);
-    key.position.set(2, 3, 4);
-    scene.add(key);
-    const fill = new THREE.DirectionalLight(0xaabbcc, 0.4);
-    fill.position.set(-2, 1, 2);
-    scene.add(fill);
-    const rim = new THREE.DirectionalLight(0x8899bb, 0.25);
-    rim.position.set(0, -2, -3);
-    scene.add(rim);
-    const headGroup = new THREE.Group();
-    scene.add(headGroup);
-    const hMat = new THREE.MeshPhongMaterial({
-      color: 0xb8bcc4,
-      shininess: 30,
-      specular: new THREE.Color(0x444444),
-    });
-    function addS(geo, pos, sc) {
-      const g = geo.clone();
-      if (sc)
-        g.applyMatrix4(new THREE.Matrix4().makeScale(sc[0], sc[1], sc[2]));
-      const m = new THREE.Mesh(g, hMat);
-      m.position.set(...pos);
-      headGroup.add(m);
-    }
-    addS(
-      new THREE.SphereGeometry(0.66, 48, 32),
-      [0, 0.12, 0],
-      [1.0, 1.18, 0.88],
-    );
-    addS(
-      new THREE.SphereGeometry(0.48, 32, 24),
-      [0, -0.32, 0.05],
-      [0.86, 0.74, 0.78],
-    );
-    addS(
-      new THREE.SphereGeometry(0.11, 14, 10),
-      [0, -0.02, 0.56],
-      [0.78, 0.66, 1.1],
-    );
-    addS(
-      new THREE.SphereGeometry(0.09, 12, 10),
-      [-0.68, 0.04, 0],
-      [0.5, 0.85, 0.36],
-    );
-    addS(
-      new THREE.SphereGeometry(0.09, 12, 10),
-      [0.68, 0.04, 0],
-      [0.5, 0.85, 0.36],
-    );
-    const sMat = new THREE.MeshPhongMaterial({
-      color: 0x8a8e96,
-      shininess: 20,
-    });
-    [
-      [-0.22, 0.14, 0.5],
-      [0.22, 0.14, 0.5],
-    ].forEach((p) => {
-      const s = new THREE.Mesh(new THREE.SphereGeometry(0.115, 14, 10), sMat);
-      s.position.set(...p);
-      headGroup.add(s);
-    });
-    const lMat = new THREE.MeshPhongMaterial({
-      color: 0xd0d4da,
-      shininess: 15,
-    });
-    [
-      [-0.22, 0.14, 0.52],
-      [0.22, 0.14, 0.52],
-    ].forEach((p) => {
-      const l = new THREE.Mesh(new THREE.SphereGeometry(0.095, 12, 8), lMat);
-      l.position.set(...p);
-      l.scale.set(1, 0.38, 0.7);
-      headGroup.add(l);
-    });
-    const mMat = new THREE.MeshPhongMaterial({
-      color: 0x9a9ea6,
-      shininess: 10,
-    });
-    const mouth = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), mMat);
-    mouth.position.set(0, -0.21, 0.49);
-    mouth.scale.set(2, 0.5, 0.8);
-    headGroup.add(mouth);
-    let cY = 0,
-      cP = 0,
-      cR = 0,
-      rafId2;
-    function animate() {
-      rafId2 = requestAnimationFrame(animate);
-      const p = poseRef.current;
-      cY += ((p.yaw || 0) - cY) * 0.12;
-      cP += ((p.pitch || 0) - cP) * 0.12;
-      cR += ((p.roll || 0) - cR) * 0.12;
-      headGroup.rotation.order = "YXZ";
-      headGroup.rotation.y = cY;
-      headGroup.rotation.x = cP;
-      headGroup.rotation.z = cR;
-      renderer.render(scene, camera);
-    }
-    animate();
-    const ro = new ResizeObserver(() => {
-      const nW = el.clientWidth,
-        nH = el.clientHeight;
-      renderer.setSize(nW, nH);
-      camera.aspect = nW / nH;
-      camera.updateProjectionMatrix();
-    });
-    ro.observe(el);
-    return () => {
-      cancelAnimationFrame(rafId2);
-      ro.disconnect();
-      renderer.dispose();
-      if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
-    };
-  }, []);
-  return React.createElement("div", {
-    ref: mountRef,
-    style: { width: "100%", height: "100%" },
-  });
-}
-
 // ═════════════════════════════════════════════════════════
 // MAIN
 // ═════════════════════════════════════════════════════════
 export default function DriverMonitorDMS() {
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const faceMeshRef = useRef(null);
-  const handsRef = useRef(null);
-  const handLandmarksRef = useRef([]);
-  const poseRef = useRef({ yaw: 0, pitch: 0, roll: 0 });
-  const landmarksRef = useRef([]);
-  const eyeDataRef = useRef({
-    left: { ear: 0.3, blinking: false, yaw: 0, pitch: 0, pupilR: 0 },
-    right: { ear: 0.3, blinking: false, yaw: 0, pitch: 0, pupilR: 0 },
+  // ── Core state (phải khai báo trước hooks) ─────────────────
+  const [status, setStatus] = useState("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  // ── Hooks: Camera & MediaPipe ─────────────────────────────
+  const {
+    videoRef,
+    streamRef,
+    startCamera,
+    stopCamera,
+    isReady: cameraReady,
+  } = useDmsCamera({
+    onError: (msg) => setErrorMsg(msg),
+    onStatusChange: (s) => setStatus(s),
   });
-  const earHistoryRef = useRef({ left: [], right: [] });
-  const blinkStateRef = useRef({ left: false, right: false });
-  const blinkTimesRef = useRef([]);
-  const blinkDurRef = useRef({ start: null, dur: 0 });
-  const eyesClosedSinceRef = useRef(null);
-  const eyesClosedSecRef = useRef(0);
+
+  const {
+    faceMeshRef,
+    handsRef,
+    isLoaded: mediaPipeLoaded,
+    landmarksRef,
+    handLandmarksRef,
+    poseRef,
+    eyeDataRef,
+    earHistoryRef,
+    blinkStateRef,
+    blinkTimesRef,
+    blinkDurRef,
+    eyesClosedSinceRef,
+    eyesClosedSecRef,
+    frameCount: mpFrameCount,
+    displayPose,
+    displayEye,
+  } = useMediaPipe({
+    videoRef,
+    status,
+    enabled: cameraReady,
+  });
+
+  // ── Các refs khác ─────────────────────────────────────────
   const audioCtxRef = useRef(null);
   const alarmIntervalRef = useRef(null);
   const vibrateIntervalRef = useRef(null);
@@ -1043,8 +129,8 @@ export default function DriverMonitorDMS() {
   const smokingDetectionRef = useRef({ active: false, prob: 0, bbox: null });
 
   // Smoking hysteresis — tránh nhấp nháy
-  const smokingActiveRef = useRef(false); // trạng thái hiện tại (đã qua filter)
-  const smokingSinceRef = useRef(null); // timestamp bắt đầu hút liên tục
+  const smokingActiveRef = useRef(false);
+  const smokingSinceRef = useRef(null);
   const smokingSecRef = useRef(0);
 
   // Phone continuous alert
@@ -1055,7 +141,7 @@ export default function DriverMonitorDMS() {
   const socketRef = useRef(null);
   const wsReadyRef = useRef(false);
   const wsPendingRef = useRef(false);
-  const wsPendingCountRef = useRef(0); // số request đang chờ (sliding window tối đa 2)
+  const wsPendingCountRef = useRef(0);
   const wsLastSentRef = useRef(0);
   // WebSocket refs — smoking (dùng chung socket, event riêng)
   const wsSmokePendingRef = useRef(false);
@@ -1068,9 +154,6 @@ export default function DriverMonitorDMS() {
   const prevHandOpenRef = useRef("");
   const prevHandCloseRef = useRef("");
   const prevHandQuickRef = useRef("");
-
-  const [status, setStatus] = useState("idle");
-  const [errorMsg, setErrorMsg] = useState("");
   const [apiResult, setApiResult] = useState(null);
   const [apiError, setApiError] = useState("");
   const [apiLoading, setApiLoading] = useState(false);
@@ -1083,26 +166,9 @@ export default function DriverMonitorDMS() {
   const [appMenuOpen, setAppMenuOpen] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [history, setHistory] = useState([]);
-  const stableLabelRef = useRef("safe"); // giữ nhãn ổn định, chỉ đổi khi đủ CONSISTENT_FRAMES
+  const stableLabelRef = useRef("safe");
   const [time, setTime] = useState(new Date());
-  const [frameCount, setFrameCount] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
-  const [displayPose, setDisplayPose] = useState({ yaw: 0, pitch: 0, roll: 0 });
-  const [displayEye, setDisplayEye] = useState({
-    blinkRate: 0,
-    blinkDur: 0,
-    pupilL: "33.5",
-    lYaw: "-11.8",
-    lPitch: "-21.6",
-    rYaw: "-19.9",
-    rPitch: "-25.1",
-    lX: "61.4",
-    lY: "3.9",
-    lZ: "-2.7",
-    rX: "63.2",
-    rY: "9.7",
-    rZ: "-3.3",
-  });
   const [drowsyAlert, setDrowsyAlert] = useState(null);
   const [phoneActive, setPhoneActive] = useState(false);
   const [phoneAlert, setPhoneAlert] = useState(null);
@@ -1836,108 +902,6 @@ export default function DriverMonitorDMS() {
       }
     }, 250);
     return () => clearInterval(dispId);
-  }, []);
-
-  // ── Face mesh + Hands: một RAF, gửi tuần tự (hai graph WebGL song song hay làm mất kết quả tay)
-  useEffect(() => {
-    if (status !== "active") return;
-    let running = true,
-      last = 0;
-    async function loop(now) {
-      if (!running) return;
-      if (now - last >= 33) {
-        last = now;
-        const fm = faceMeshRef.current,
-          hs = handsRef.current,
-          vid = videoRef.current;
-        if (vid && vid.readyState >= 2) {
-          if (fm) {
-            try {
-              await fm.send({ image: vid });
-            } catch (_) {}
-          }
-          if (hs) {
-            try {
-              await hs.send({ image: vid });
-            } catch (_) {}
-          }
-        }
-        setFrameCount((f) => f + 1);
-      }
-      requestAnimationFrame(loop);
-    }
-    requestAnimationFrame(loop);
-    return () => {
-      running = false;
-    };
-  }, [status]);
-
-  async function startWebcam() {
-    const supportErr = getWebcamSupportErrorMessage();
-    if (supportErr) {
-      setErrorMsg(supportErr);
-      setStatus("error");
-      return;
-    }
-    setStatus("loading");
-    setErrorMsg("");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: "user" },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
-      setStatus("auth");
-    } catch (err) {
-      setErrorMsg(err.message || "Cannot access webcam");
-      setStatus("error");
-    }
-  }
-  function stopWebcam() {
-    if (streamRef.current)
-      streamRef.current.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
-    if (videoRef.current) videoRef.current.srcObject = null;
-    landmarksRef.current = [];
-    handLandmarksRef.current = [];
-    stableLabelRef.current = "safe";
-    setStatus("idle");
-    poseRef.current = { yaw: 0, pitch: 0, roll: 0 };
-    stopAlarm();
-    setDrowsyAlert(null);
-    eyesClosedSinceRef.current = null;
-    eyesClosedSecRef.current = 0;
-    phoneDetectionRef.current = { active: false, prob: 0, bbox: null };
-    phoneActiveFilteredRef.current = false;
-    phoneOnStreakRef.current = 0;
-    phoneOffStreakRef.current = 0;
-    phoneLastBoxRef.current = null;
-    smokingDetectionRef.current = { active: false, prob: 0, bbox: null };
-    wsPendingRef.current = false;
-    wsPendingCountRef.current = 0;
-    wsSmokePendingRef.current = false;
-    phoneSinceRef.current = null;
-    phoneSecRef.current = 0;
-    smokingActiveRef.current = false;
-    smokingSinceRef.current = null;
-    smokingSecRef.current = 0;
-    setPhoneActive(false);
-    setPhoneAlert(null);
-    setSmokingActive(false);
-    setSmokingAlert(null);
-    setIdentityOwner(null);
-    setIdentitySimilarity(null);
-    setIdentityError("");
-    setIdentitySamples(0);
-    setIdentityLockCause(null);
-    setIdentityRejectLockedAt("");
-    setHandApiResult(null);
-    setAppMenuOpen(false);
-  }
-  useEffect(() => {
-    startWebcam();
-    return () => stopWebcam();
   }, []);
 
   function sleep(ms) {
@@ -3829,7 +2793,7 @@ export default function DriverMonitorDMS() {
                 {errorMsg}
               </div>
               <button
-                onClick={startWebcam}
+                onClick={startCamera}
                 style={{
                   padding: "6px 20px",
                   background: "rgba(60,150,255,0.1)",
@@ -4002,7 +2966,7 @@ export default function DriverMonitorDMS() {
                 CAMERA STANDBY
               </div>
               <button
-                onClick={startWebcam}
+                onClick={startCamera}
                 style={{
                   padding: "7px 24px",
                   background: "rgba(60,150,255,0.08)",
@@ -4111,7 +3075,7 @@ export default function DriverMonitorDMS() {
               </button>
             ) : (
               <button
-                onClick={startWebcam}
+                onClick={startCamera}
                 disabled={status === "loading"}
                 style={{
                   padding: "2px 14px",

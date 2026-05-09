@@ -134,9 +134,9 @@
 ---
 
 ## Trạng thái hiện tại
-- **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.4 - Đã hoàn tất bóc tách Nhóm B)
-- **Chờ xác nhận từ user**: Kiểm tra/test code sau khi bóc tách Nhóm B
-- **Lưu ý**: Đã tách 5 component overlay (PhoneFOMO, SmokingFOMO, FaceMesh, HandLandmark, Head3D). Đã cập nhật thucmuctest.jsx để import các component mới.
+- **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.5 - Đã hoàn tất bóc tách Nhóm C1 - Custom Hooks)
+- **Chờ xác nhận từ user**: Kiểm tra/test code sau khi refactor Nhóm C1
+- **Lưu ý**: Đã tách 2 custom hooks (useDmsCamera, useMediaPipe) và utils (dmsMath). File thucmuctest.jsx đã giảm ~850 dòng.
 
 ---
 
@@ -359,9 +359,11 @@
 - [x] Thêm `HAND_CONNECTIONS`, `LEFT_EYE_IDX`, `RIGHT_EYE_IDX`, `FACE_OVAL_IDX`, `LIPS_IDX` vào `dmsConstants.js`
 - [x] Cập nhật `thucmuctest.jsx` - xóa 5 hàm component cũ + constants, import components mới
 
-### Nhóm C1 - CHỜ PHÊ DUYỆT MAPPING (Custom Hooks):
-- [ ] `hooks/useDmsCamera.js` - Hook quản lý camera
-- [ ] `hooks/useMediaPipe.js` - Hook khởi tạo FaceMesh + Hands
+### Nhóm C1 - ĐÃ THỰC HIỆN (Custom Hooks):
+- [x] `hooks/useDmsCamera.js` - Hook quản lý camera (startCamera, stopCamera, videoRef, streamRef)
+- [x] `hooks/useMediaPipe.js` - Hook khởi tạo FaceMesh + Hands (landmarks, handLandmarks, pose, eyeData, v.v.)
+- [x] `utils/dmsMath.js` - Các hàm tính toán (computeEAR, estimateHeadPose, distPts, v.v.)
+- [x] `thucmuctest.jsx` - Import và sử dụng 2 hooks, xóa ~850 dòng code cũ (5 components + helpers + constants)
 
 ## Bảng Mapping Nhóm C1 (CHỜ PHÊ DUYỆT)
 
@@ -424,3 +426,4 @@ const {
 - [2025-05-09] Session 1 (tiếp): Hoàn tất Giai đoạn 1.3 - Đã xóa 11 file/thư mục theo phê duyệt (Nhóm A + Nhóm B + DoctorChatbot.jsx), cập nhật task.md, chờ lệnh git commit để sang Giai đoạn 2
 - [2025-05-09] Session 2: Hoàn tất Giai đoạn 2.3 - Bóc tách Nhóm A (EyeCanvas.jsx, WaveformCanvas.jsx, dmsConstants.js), cập nhật thucmuctest.jsx để import các component mới
 - [2025-05-09] Session 3: Hoàn tất Giai đoạn 2.4 - Bóc tách Nhóm B (5 overlay components + constants), cập nhật thucmuctest.jsx, dọn dẹp imports và dead code
+- [2025-05-09] Session 4: Hoàn tất Giai đoạn 2.5 - Bóc tách Nhóm C1 (useDmsCamera.js, useMediaPipe.js, dmsMath.js), thucmuctest.jsx giảm ~850 dòng, chờ test
