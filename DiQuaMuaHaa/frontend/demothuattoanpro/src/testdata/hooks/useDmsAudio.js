@@ -1,9 +1,18 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export function useDmsAudio() {
   const audioCtxRef = useRef(null);
   const alarmIntervalRef = useRef(null);
   const vibrateIntervalRef = useRef(null);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+
+  const safeVibrate = useCallback((pattern) => {
+    try {
+      if (navigator.vibrate) navigator.vibrate(pattern);
+    } catch {
+      // Vibration can be blocked until a user gesture; ignore cleanly.
+    }
+  }, []);
 
   const getAudioCtx = useCallback(() => {
     if (!audioCtxRef.current) {
@@ -41,10 +50,12 @@ export function useDmsAudio() {
       if (ctx.state === "suspended") {
         ctx.resume().catch(() => {});
       }
+      safeVibrate(1);
+      setAudioUnlocked(true);
     } catch {
       // Browser audio permission is best-effort until a user gesture occurs.
     }
-  }, [getAudioCtx]);
+  }, [getAudioCtx, safeVibrate]);
 
   const stopAlarm = useCallback(() => {
     if (alarmIntervalRef.current) {
@@ -55,8 +66,8 @@ export function useDmsAudio() {
       clearInterval(vibrateIntervalRef.current);
       vibrateIntervalRef.current = null;
     }
-    if (navigator.vibrate) navigator.vibrate(0);
-  }, []);
+    safeVibrate(0);
+  }, [safeVibrate]);
 
   const startAlarm = useCallback(() => {
     stopAlarm();
@@ -67,17 +78,24 @@ export function useDmsAudio() {
       setTimeout(() => playBeep(660, 0.18, 0.7), 200);
     }, 900);
     if (navigator.vibrate) {
-      navigator.vibrate([300, 150, 300, 150, 300]);
+      safeVibrate([300, 150, 300, 150, 300]);
       vibrateIntervalRef.current = setInterval(
-        () => navigator.vibrate([300, 150, 300, 150, 300]),
+        () => safeVibrate([300, 150, 300, 150, 300]),
         1500,
       );
     }
-  }, [playBeep, stopAlarm]);
+  }, [playBeep, safeVibrate, stopAlarm]);
 
   useEffect(() => stopAlarm, [stopAlarm]);
 
-  return { audioCtxRef, playBeep, startAlarm, stopAlarm, warmUpAudio };
+  return {
+    audioCtxRef,
+    audioUnlocked,
+    playBeep,
+    startAlarm,
+    stopAlarm,
+    warmUpAudio,
+  };
 }
 
 export default useDmsAudio;

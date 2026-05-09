@@ -429,6 +429,7 @@ const {
 - [2025-05-09] Session 4: Hoàn tất Giai đoạn 2.5 - Bóc tách Nhóm C1 (useDmsCamera.js, useMediaPipe.js, dmsMath.js), thucmuctest.jsx giảm ~850 dòng, chờ test
 - [2026-05-09] Session 5: Hoàn tất Giai đoạn 2.7 - Bóc tách Nhóm C2 (useWebSocket.js, useDmsAudio.js, useDrivingSession.js), build pass, chờ user test toàn diện
 - [2026-05-09] Session 6: Vá lỗi tích hợp C2 - tăng identity burst frames, khôi phục alert/alarm effect, warm-up AudioContext, bật smoking detection
+- [2026-05-09] Session 7: Tinh chỉnh C2 - safe vibrate, chỉ chạy alert loop sau user gesture, thêm log debug gửi phone frame WebSocket
 
 ---
 
@@ -509,3 +510,21 @@ Chuẩn bị tách phần logic còn lại trong `frontend/demothuattoanpro/src/
 ### Trạng thái
 - **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.8 - Đã vá lỗi tích hợp C2)
 - **Chờ xác nhận từ user**: Test lại identity verify, audio alarm, phone/smoking WebSocket
+
+---
+
+## Bước 2.9 - TINH CHỈNH UX/DEBUG SAU TEST C2
+
+### Đã thực hiện
+- [x] `useDmsAudio.js`: bọc mọi lệnh `navigator.vibrate()` qua `safeVibrate()` để tránh lỗi đỏ khi Chrome chặn vibrate
+- [x] `useDmsAudio.js`: `warmUpAudio()` gọi `ctx.resume()` và `safeVibrate(1)` trong user gesture, rồi set `audioUnlocked = true`
+- [x] `thucmuctest.jsx`: alert polling loop chỉ chạy khi `status === "active"` và `audioUnlocked === true`
+- [x] `useWebSocket.js`: thêm log debug có throttle 3 giây trước `sock.emit("phone_frame", { image })`
+
+### Kiểm tra
+- [x] `npm.cmd run build` - PASS
+- [ ] `npx.cmd eslint src/testdata/hooks/useDmsAudio.js src/testdata/hooks/useWebSocket.js src/testdata/thucmuctest.jsx` - FAIL do lỗi cũ trong `thucmuctest.jsx` (unused vars/no-empty/exhaustive-deps), không phát sinh từ hai hook vừa chỉnh
+
+### Trạng thái
+- **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.9 - Đã tinh chỉnh audio policy và WebSocket debug)
+- **Chờ xác nhận từ user**: Test lại Console: không còn vibrate red error, có log `Sending phone frame...`

@@ -98,7 +98,7 @@ export default function DriverMonitorDMS() {
     enabled: cameraReady,
   });
 
-  const { startAlarm, stopAlarm, warmUpAudio } = useDmsAudio();
+  const { audioUnlocked, startAlarm, stopAlarm, warmUpAudio } = useDmsAudio();
 
   const {
     wsConnected,
@@ -286,7 +286,7 @@ export default function DriverMonitorDMS() {
   }, []);
 
   useEffect(() => {
-    if (status !== "active") {
+    if (status !== "active" || !audioUnlocked) {
       alertAlarmActiveRef.current = false;
       stopAlarm();
       setDrowsyAlert(null);
@@ -351,6 +351,7 @@ export default function DriverMonitorDMS() {
     return () => clearInterval(tid);
   }, [
     status,
+    audioUnlocked,
     phoneActive,
     smokingActive,
     phoneDetectionRef,

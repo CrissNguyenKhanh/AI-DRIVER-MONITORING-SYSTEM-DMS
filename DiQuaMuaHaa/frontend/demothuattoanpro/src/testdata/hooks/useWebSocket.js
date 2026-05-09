@@ -32,6 +32,7 @@ export function useWebSocket({
   const wsPendingRef = useRef(false);
   const wsPendingCountRef = useRef(0);
   const wsLastSentRef = useRef(0);
+  const wsLastPhoneDebugLogRef = useRef(0);
   const wsSmokePendingRef = useRef(false);
   const wsSmokLastSentRef = useRef(0);
 
@@ -235,6 +236,10 @@ export function useWebSocket({
       wsPendingCountRef.current += 1;
       wsPendingRef.current = true;
       wsLastSentRef.current = now;
+      if (now - wsLastPhoneDebugLogRef.current >= 3000) {
+        console.log("Sending phone frame...", now);
+        wsLastPhoneDebugLogRef.current = now;
+      }
       sock.emit("phone_frame", { image });
     }
 
