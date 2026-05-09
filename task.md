@@ -427,3 +427,63 @@ const {
 - [2025-05-09] Session 2: Hoàn tất Giai đoạn 2.3 - Bóc tách Nhóm A (EyeCanvas.jsx, WaveformCanvas.jsx, dmsConstants.js), cập nhật thucmuctest.jsx để import các component mới
 - [2025-05-09] Session 3: Hoàn tất Giai đoạn 2.4 - Bóc tách Nhóm B (5 overlay components + constants), cập nhật thucmuctest.jsx, dọn dẹp imports và dead code
 - [2025-05-09] Session 4: Hoàn tất Giai đoạn 2.5 - Bóc tách Nhóm C1 (useDmsCamera.js, useMediaPipe.js, dmsMath.js), thucmuctest.jsx giảm ~850 dòng, chờ test
+- [2026-05-09] Session 5: Hoàn tất Giai đoạn 2.7 - Bóc tách Nhóm C2 (useWebSocket.js, useDmsAudio.js, useDrivingSession.js), build pass, chờ user test toàn diện
+
+---
+
+## Bước 2.6 - CHUẨN BỊ BÓC TÁCH NHÓM C2 (Mạng & Cảnh báo)
+
+### Mục tiêu
+Chuẩn bị tách phần logic còn lại trong `frontend/demothuattoanpro/src/testdata/thucmuctest.jsx` thành 3 hooks:
+
+1. `hooks/useWebSocket.js` - Socket.IO cho phone/smoking detection
+2. `hooks/useDmsAudio.js` - AudioContext, beep alarm, vibration
+3. `hooks/useDrivingSession.js` - API start/end driving session, record alert, session log
+
+### Bảng Mapping Input / Output - Nhóm C2
+
+| Hook | Inputs | Outputs | Logic / useEffect sẽ di chuyển | Phụ thuộc chéo |
+|---|---|---|---|---|
+| `useWebSocket` | `{ apiBase, videoRef, status, smokingEnabled, constants? }` gồm các ngưỡng `PHONE_WS_FPS`, `PHONE_YOLO_MIN_PROB`, `PHONE_HISTORY_LEN`, `PHONE_STABLE_FRAMES`, `PHONE_OFF_FRAMES`, `SMOKING_WS_FPS`, `SMOKING_MIN_PROB`, `SMOKING_HISTORY_LEN`, `SMOKING_STABLE_FRAMES`, `SMOKING_OFF_FRAMES` | `{ socketRef, wsConnected, phoneDetectionRef, smokingDetectionRef, phoneActive, smokingActive, phoneError, smokingHistory, phoneHistory }` | 1. WebSocket setup `io(apiBase)` và handlers `connect`, `disconnect`, `connect_error`, `phone_result`, `smoking_result`. 2. Phone send loop RAF ~20fps, emit `phone_frame`. 3. Smoking send loop RAF ~4fps, emit `smoking_frame`. 4. Hysteresis refs: `phoneActiveFilteredRef`, `phoneOnStreakRef`, `phoneOffStreakRef`, `phoneLastBoxRef`, `smokingActiveRef`, pending refs. | Phụ thuộc `useDmsCamera` qua `videoRef`. Không phụ thuộc `useDmsAudio`; chỉ trả detection state/ref để parent hoặc hook cảnh báo khác dùng. |
+| `useDmsAudio` | Không bắt buộc. Có thể nhận `{ enabled?: boolean }` nếu cần khóa audio khi status không active. | `{ audioCtxRef, startAlarm, stopAlarm, playBeep }` | 1. Helper `getAudioCtx()`. 2. Helper `playBeep(freq, dur, vol)`. 3. `startAlarm()` phát beep 880/660Hz, tạo `alarmIntervalRef`, kích hoạt `navigator.vibrate`. 4. `stopAlarm()` clear interval và tắt rung. 5. Cleanup unmount nên gọi `stopAlarm()`. | Không nên đọc trực tiếp `phoneDetectionRef` từ `useWebSocket`. Hook này chỉ là tầng phát âm/rung. Parent vẫn quyết định khi nào gọi `startAlarm/stopAlarm` dựa trên `phoneAlert`, `smokingAlert`, `drowsyAlert` để tránh coupling vòng. |
+| `useDrivingSession` | `{ apiBase, status, driverId, phoneAlert, smokingAlert, drowsyAlert }` | `{ drivingSessionIdRef, drivingSessionId, drivingSessionStartedAt, sessionAlertCounts, sessionLogOpen, setSessionLogOpen, sessionLogLoading, sessionLogItems, refreshSessionLog }` | 1. Effect start/end session khi `status` chuyển vào/ra `"active"`. 2. Effect baseline alert khi vừa có `drivingSessionId`. 3. Effect record alert khi `phoneAlert/smokingAlert/drowsyAlert` chuyển từ `null` sang non-null. 4. `refreshSessionLog()` gọi `listDrivingSessions`. 5. Effect refresh log khi mở session log. | Phụ thuộc alert states do parent quản lý. Không phụ thuộc `useWebSocket` trực tiếp; chỉ nhận `phoneAlert/smokingAlert`. Không phụ thuộc audio. |
+
+### Logic giữ lại tạm thời trong `thucmuctest.jsx`
+
+- UI state và render JSX.
+- Identity callbacks `handleIdentityUnlock`, `handleIdentityLock`, `handleUpdateIdentity`. Riêng `handleIdentityLock` cần nhận `stopAlarm` từ `useDmsAudio` sau khi tách.
+- REST landmark loop và Hand API loop chưa thuộc C2; nên để nguyên cho bước sau.
+- Alert duration refs `phoneSinceRef`, `smokingSinceRef`, `eyesClosedSinceRef/eyesClosedSecRef` cần rà lại trước khi đưa vào hook riêng vì file hiện tại chưa thấy effect tự động bật `phoneAlert/smokingAlert/drowsyAlert` từ các ngưỡng `PHONE_WARN_MS`, `SMOKING_WARN_MS`, `EYES_CLOSED_WARN_MS`.
+
+### Checklist phê duyệt Nhóm C2
+
+- [ ] Phê duyệt `useWebSocket` nhận `videoRef/status/apiBase` và trả về `phoneDetectionRef/smokingDetectionRef` cùng state UI liên quan
+- [ ] Phê duyệt `useDmsAudio` chỉ quản lý beep/rung, không đọc trực tiếp detection refs
+- [ ] Phê duyệt `useDrivingSession` nhận alert states và tự quản lý start/end/record/log
+- [ ] Xác nhận phần REST landmark + Hand API chưa tách trong Nhóm C2
+- [ ] Sau phê duyệt: tạo 3 hooks và cập nhật `thucmuctest.jsx` theo từng bước nhỏ
+
+### Trạng thái
+- **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.6 - Đã chuẩn bị mapping Nhóm C2, CHỜ PHÊ DUYỆT)
+- **Chưa viết/sửa code ứng dụng**: Chỉ cập nhật tài liệu `task.md`
+
+---
+
+## Bước 2.7 - HOÀN TẤT BÓC TÁCH NHÓM C2 (Mạng & Cảnh báo)
+
+### Nhóm C2 - Đã thực hiện
+- [x] Di chuyển hằng số C2 sang `constants/dmsConstants.js`: REST interval, WebSocket FPS, phone/smoking thresholds, `PHONE_WARN_MS`, `SMOKING_WARN_MS`, `EYES_CLOSED_WARN_MS`
+- [x] Tạo `hooks/useWebSocket.js` - Socket.IO setup, phone/smoking result handlers, RAF send loops, hysteresis/pending refs
+- [x] Tạo `hooks/useDmsAudio.js` - AudioContext, `playBeep`, `startAlarm`, `stopAlarm`, vibration cleanup
+- [x] Tạo `hooks/useDrivingSession.js` - start/end session, baseline alert, record alert, session log refresh
+- [x] Cập nhật `thucmuctest.jsx` để import/lắp 3 hook mới và xóa logic Socket/Audio/Driving Session cũ
+
+### Kiểm tra sau refactor
+- [x] `npm.cmd run build` trong `frontend/demothuattoanpro` - PASS
+- [x] `npx.cmd eslint src/testdata/hooks/useDmsAudio.js src/testdata/hooks/useDrivingSession.js src/testdata/hooks/useWebSocket.js` - PASS
+- [ ] `npm.cmd run lint` toàn repo - FAIL do lỗi cũ ngoài phạm vi C2 (Fast Refresh export, no-empty ở file khác, unused vars cũ, vite config `process`)
+
+### Trạng thái hiện tại
+- **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.7 - Đã hoàn tất Nhóm C2)
+- **Chờ xác nhận từ user**: Test toàn diện hệ thống sau refactor C2
+- **Lưu ý**: Không tách REST landmark loop, Hand API loop, hoặc logic alert duration trong bước này; giữ đúng phạm vi C2 đã phê duyệt.

@@ -8,6 +8,26 @@ export const EAR_BLINK_THRESH = 0.21;
 export const EAR_HISTORY = 90;
 export const EYES_CLOSED_WARN_MS = 3000;
 
+// REST / WebSocket timing
+export const API_INTERVAL_MS = 1000;
+export const HAND_API_INTERVAL_MS = 1000;
+export const PHONE_WS_FPS = 20;
+export const SMOKING_WS_FPS = 4;
+
+// Phone detection thresholds
+export const PHONE_YOLO_MIN_PROB = 0.5;
+export const PHONE_HISTORY_LEN = 20;
+export const PHONE_WARN_MS = 3000;
+export const PHONE_STABLE_FRAMES = 2;
+export const PHONE_OFF_FRAMES = 4;
+
+// Smoking detection thresholds
+export const SMOKING_MIN_PROB = 0.82;
+export const SMOKING_HISTORY_LEN = 24;
+export const SMOKING_STABLE_FRAMES = 10;
+export const SMOKING_OFF_FRAMES = 14;
+export const SMOKING_WARN_MS = 4000;
+
 // Label mapping for driver states
 export const LABEL_MAP = {
   safe: { vi: "NORMAL", level: "good", color: "#00f5a0" },
