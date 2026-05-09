@@ -134,9 +134,9 @@
 ---
 
 ## Trạng thái hiện tại
-- **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.3 - Đã hoàn tất bóc tách Nhóm A)
-- **Chờ xác nhận từ user**: Kiểm tra/test code sau khi bóc tách Nhóm A
-- **Lưu ý**: Đã tách EyeCanvas.jsx, WaveformCanvas.jsx và constants/dmsConstants.js. Đã cập nhật thucmuctest.jsx để import các component mới.
+- **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.4 - Đã hoàn tất bóc tách Nhóm B)
+- **Chờ xác nhận từ user**: Kiểm tra/test code sau khi bóc tách Nhóm B
+- **Lưu ý**: Đã tách 5 component overlay (PhoneFOMO, SmokingFOMO, FaceMesh, HandLandmark, Head3D). Đã cập nhật thucmuctest.jsx để import các component mới.
 
 ---
 
@@ -200,6 +200,141 @@
 
 ---
 
+## Bước 2.4 - CHUẨN BỊ BÓC TÁCH NHÓM B (UI Overlay Components)
+
+### DANH SÁCH COMPONENT NHÓM B
+
+| STT | Component | Mô tả | Độ phức tạp |
+|---|---|---|---|
+| 1 | **PhoneFOMOOverlay** | Overlay cảnh báo sử dụng điện thoại, vẽ khung bracket xung quanh vùng phát hiện | Cao |
+| 2 | **SmokingFOMOOverlay** | Overlay cảnh báo hút thuốc, vẽ khung xung quanh vùng miệng/phát hiện | Cao |
+| 3 | **FaceMeshOverlay** | Vẽ mesh khuôn mặt, contour mắt, iris detection | Trung bình |
+| 4 | **HandLandmarkOverlay** | Vẽ khung xương tay (hand skeleton) bằng MediaPipe Hands | Trung bình |
+| 5 | **Head3D** | Render đầu người 3D bằng Three.js, xoay theo head pose | Cao |
+
+### PHÂN TÍCH SỬ DỤNG TRONG thucmuctest.jsx
+
+**Vị trí gọi các component:**
+```jsx
+// Head3D - Line 2202
+<Head3D poseRef={poseRef} />
+
+// FaceMeshOverlay - Line 2671-2675
+<FaceMeshOverlay
+  landmarksRef={landmarksRef}
+  eyeDataRef={eyeDataRef}
+  videoRef={videoRef}
+/>
+
+// HandLandmarkOverlay - Line 2678-2681
+<HandLandmarkOverlay
+  handLandmarksRef={handLandmarksRef}
+  videoRef={videoRef}
+/>
+
+// PhoneFOMOOverlay - Line 2690-2694
+<PhoneFOMOOverlay
+  phoneDetectionRef={phoneDetectionRef}
+  landmarksRef={landmarksRef}
+  videoRef={videoRef}
+/>
+
+// SmokingFOMOOverlay - Line 2697-2700 (có điều kiện SMOKING_ENABLED)
+<SmokingFOMOOverlay
+  smokingDetectionRef={smokingDetectionRef}
+  landmarksRef={landmarksRef}
+  videoRef={videoRef}
+/>
+```
+
+---
+
+### BẢNG MAPPING PROPS & REFS - NHÓM B
+
+| Component | Props nhận vào | Kiểu dữ liệu | Mô tả | Refs xử lý | Cần forwardRef? |
+|---|---|---|---|---|---|
+| **PhoneFOMOOverlay** | `phoneDetectionRef` | `React.RefObject<{active: boolean, bbox: {x1,y1,x2,y2}}>` | Ref chứa trạng thái phát hiện điện thoại | `canvasRef` (internal), `smoothBoxRef` (internal lerp box), `pulseRef` (animation) | **Không** |
+| **PhoneFOMOOverlay** | `landmarksRef` | `React.RefObject<FaceLandmarks>` | Ref landmarks để tính fallback box khi không có bbox | - | - |
+| **PhoneFOMOOverlay** | `videoRef` | `React.RefObject<HTMLVideoElement>` | Ref video để lấy kích thước và coordinate mapping | - | - |
+| **SmokingFOMOOverlay** | `smokingDetectionRef` | `React.RefObject<{active: boolean, bbox: {x1,y1,x2,y2}}>` | Ref chứa trạng thái phát hiện hút thuốc | `canvasRef`, `smoothBoxRef`, `pulseRef` | **Không** |
+| **SmokingFOMOOverlay** | `landmarksRef` | `React.RefObject<FaceLandmarks>` | Ref landmarks để tính mouth box | - | - |
+| **SmokingFOMOOverlay** | `videoRef` | `React.RefObject<HTMLVideoElement>` | Ref video để lấy kích thước | - | - |
+| **FaceMeshOverlay** | `landmarksRef` | `React.RefObject<FaceLandmarks>` | Ref chứa 468 facial landmarks | `canvasRef` | **Không** |
+| **FaceMeshOverlay** | `eyeDataRef` | `React.RefObject<{left: EyeData, right: EyeData}>` | Ref dữ liệu mắt để tô màu blink | - | - |
+| **FaceMeshOverlay** | `videoRef` | `React.RefObject<HTMLVideoElement>` | Ref video để lấy kích thước | - | - |
+| **HandLandmarkOverlay** | `handLandmarksRef` | `React.RefObject<HandLandmarks[]>` | Ref chứa mảng landmarks của các bàn tay (tối đa 2) | `canvasRef` | **Không** |
+| **HandLandmarkOverlay** | `videoRef` | `React.RefObject<HTMLVideoElement>` | Ref video để lấy kích thước | - | - |
+| **Head3D** | `poseRef` | `React.RefObject<{yaw, pitch, roll}>` | Ref chứa head pose angles (radians) | `mountRef` (container div), Three.js objects internal | **Không** |
+
+### CHI TIẾT LOGIC BÊN TRONG (giữ nguyên khi tách)
+
+**PhoneFOMOOverlay:**
+- **ResizeObserver**: Theo dõi video resize để cập nhật canvas.width/height
+- **RAF Loop**: Vẽ liên tục 60fps
+- **Logic vẽ**: 
+  - Đọc `phoneDetectionRef.current` để kiểm tra `active`
+  - Vẽ bracket corners xung quanh bbox (hoặc fallback box từ landmarks)
+  - Hiệu ứng pulse khi phát hiện
+  - Màu sắc: vàng (warning) → đỏ (critical) theo thời gian
+- **Dependencies**: `videoRef`, `phoneDetectionRef`, `landmarksRef`
+
+**SmokingFOMOOverlay:**
+- **ResizeObserver**: Tương tự PhoneFOMO
+- **RAF Loop**: Vẽ liên tục
+- **Logic vẽ**:
+  - Đọc `smokingDetectionRef.current.active`
+  - Vẽ box xung quanh vùng miệng (từ landmarks) hoặc bbox
+  - Hiệu ứng glow/pulse
+- **Dependencies**: `videoRef`, `smokingDetectionRef`, `landmarksRef`
+
+**FaceMeshOverlay:**
+- **ResizeObserver**: Theo dõi video
+- **RAF Loop**: Vẽ mesh
+- **Logic vẽ**:
+  - Vẽ toàn bộ 468 landmarks dưới dạng points
+  - Vẽ contour mắt (left/right eye indices)
+  - Vẽ iris với hiệu ứng blink (dựa trên `eyeDataRef` EAR threshold)
+  - Màu thay đổi khi blink (xanh → vàng)
+- **Dependencies**: `videoRef`, `landmarksRef`, `eyeDataRef`
+- **Constants dùng chung**: `EAR_BLINK_THRESH`, `L_EYE`, `R_EYE` (import từ dmsConstants)
+
+**HandLandmarkOverlay:**
+- **ResizeObserver**: Theo dõi video
+- **RAF Loop**: Vẽ skeleton
+- **Logic vẽ**:
+  - Đọc `handLandmarksRef.current` (mảng hands, max 2)
+  - Vẽ connections giữa các joints (HAND_CONNECTIONS)
+  - Màu khác nhau cho từng hand (xanh lá, hồng)
+  - Mirror x-coordinate: `W - x * W`
+- **Dependencies**: `videoRef`, `handLandmarksRef`
+- **Constants dùng chung**: `HAND_CONNECTIONS` (cần export từ constants)
+
+**Head3D:**
+- **Three.js Setup**: Scene, Camera, Renderer, Lights
+- **RAF Loop**: `animate()` cập nhật rotation
+- **Logic vẽ**:
+  - Tạo head mesh từ các SphereGeometry (đầu, mặt, mũi, tai, mắt, miệng)
+  - Đọc `poseRef.current` (yaw, pitch, roll)
+  - Lerp rotation để mượt
+  - Render WebGL
+- **Cleanup**: `renderer.dispose()`, `ro.disconnect()`, `cancelAnimationFrame`
+- **Dependencies**: `poseRef`
+- **External Lib**: `THREE` (three.js)
+
+### RỦI RO & LƯU Ý ĐẶC BIỆT NHÓM B
+
+| Rủi ro | Mức độ | Giải pháp |
+|---|---|---|
+| **HAND_CONNECTIONS constant** | Trung bình | Cần thêm vào `dmsConstants.js` - hiện đang nằm trong scope thucmuctest.jsx |
+| **Three.js dependency** (Head3D) | Thấp | Giữ nguyên import THREE, đảm bảo Three.js đã có trong package.json |
+| **Canvas resize theo video** | Trung bình | Tất cả overlay đều dùng ResizeObserver → giữ nguyên logic, không cần truyền width/height |
+| **Mirror X coordinate** | Thấp | Logic `W - x * W` cần giữ nguyên trong tất cả overlay |
+| **Color constants** (FOMO pulse) | Thấp | Có thể định nghĩa trong component hoặc truyền qua props |
+| **Nhiều RAF loops chạy song song** | Thấp | Mỗi component có RAF riêng, cleanup đúng là ổn |
+| **SMOKING_ENABLED flag** | Thấp | Giữ nguyên điều kiện render ở parent, component không cần biết |
+
+---
+
 ## Tiêu chuẩn Test Thành Công (sau khi code)
 - [ ] Giao diện load không có lỗi đỏ trong console
 - [ ] Các canvas overlay hiển thị chính xác như cũ (mắt 3D, waveform EAR)
@@ -212,6 +347,73 @@
 - [x] Tạo `components/WaveformCanvas.jsx` - component vẽ waveform với props: earHistoryRef, side, color
 - [x] Cập nhật `thucmuctest.jsx` - import components mới, xóa các hàm EyeCanvas và WaveformCanvas cũ, xóa constants cũ
 - [x] Dọn dẹp file re-export còn sót lại trong `features/` (6 file trỏ đến medical components đã xóa)
+- [x] Cập nhật `app/App.jsx` - xóa import và routes cho medical components + Login, redirect / và legacy routes về /test3
+- [x] Sửa `Login/Login.jsx` - thay `getMedicalApiBase` → `getDmsApiBase` (import + usage)
+
+### Nhóm B - Đã thực hiện:
+- [x] `PhoneFOMOOverlay.jsx` - props: phoneDetectionRef, landmarksRef, videoRef
+- [x] `SmokingFOMOOverlay.jsx` - props: smokingDetectionRef, landmarksRef, videoRef
+- [x] `FaceMeshOverlay.jsx` - props: landmarksRef, eyeDataRef, videoRef
+- [x] `HandLandmarkOverlay.jsx` - props: handLandmarksRef, videoRef
+- [x] `Head3D.jsx` - props: poseRef
+- [x] Thêm `HAND_CONNECTIONS`, `LEFT_EYE_IDX`, `RIGHT_EYE_IDX`, `FACE_OVAL_IDX`, `LIPS_IDX` vào `dmsConstants.js`
+- [x] Cập nhật `thucmuctest.jsx` - xóa 5 hàm component cũ + constants, import components mới
+
+### Nhóm C1 - CHỜ PHÊ DUYỆT MAPPING (Custom Hooks):
+- [ ] `hooks/useDmsCamera.js` - Hook quản lý camera
+- [ ] `hooks/useMediaPipe.js` - Hook khởi tạo FaceMesh + Hands
+
+## Bảng Mapping Nhóm C1 (CHỜ PHÊ DUYỆT)
+
+### useDmsCamera Hook
+
+| Aspect | Chi tiết |
+|--------|----------|
+| **Inputs (Props)** | `{ onError?: (msg: string) => void, onStatusChange?: (status: string) => void }` |
+| **Outputs (Return)** | `{ videoRef: React.RefObject<HTMLVideoElement>, streamRef: React.RefObject<MediaStream>, startCamera: () => Promise<void>, stopCamera: () => void, isReady: boolean }` |
+| **useEffect chuyển vào** | 1. `startWebcam()` function (gọi getUserMedia)  <br>2. `stopWebcam()` cleanup (stop tracks, reset refs)  <br>3. `useEffect(() => { startWebcam(); return () => stopWebcam(); }, [])` từ line 1061-1063 |
+| **Dependencies** | Không phụ thuộc hook khác. Độc lập. |
+| **Infinite Loop Risk** | **THẤP** - Chỉ chạy 1 lần khi mount, cleanup khi unmount. Không có state dependencies vòng lặp. |
+| **Lưu ý quan trọng** | - Giữ nguyên `getWebcamSupportErrorMessage()` check  <br>- Giữ nguyên video constraints `{ width: 640, height: 480, facingMode: "user" }`  <br>- `streamRef` và `videoRef` trả về dạng refs (không phải state) để tránh re-render không cần thiết |
+
+### useMediaPipe Hook
+
+| Aspect | Chi tiết |
+|--------|----------|
+| **Inputs (Props)** | `{ videoRef: React.RefObject<HTMLVideoElement>, status: string, enabled?: boolean }` |
+| **Outputs (Return)** | `{ faceMeshRef: React.RefObject<any>, handsRef: React.RefObject<any>, isLoaded: boolean, landmarksRef: React.RefObject<any[]>, handLandmarksRef: React.RefObject<any[][]>, poseRef: React.RefObject<Pose>, eyeDataRef: React.RefObject<EyeData>, earHistoryRef: React.RefObject<EarHistory>, blinkStateRef: React.RefObject<BlinkState>, blinkTimesRef: React.RefObject<number[]>, frameCount: number }` |
+| **useEffect chuyển vào** | 1. **Init Effect** (line 757-962): Load scripts FaceMesh + Hands, khởi tạo instances, setup `onResults` callbacks  <br>2. **Processing Loop** (line 965-996): RAF loop gọi `fm.send()` và `hs.send()` với video frame  <br>3. **Display Update** (line 897-962): `setInterval` cập nhật `displayPose`, `displayEye` cho UI |
+| **Dependencies** | **PHỤ THUỘC VÀO useDmsCamera** - Cần `videoRef` từ useDmsCamera để:  <br>- Kiểm tra `vid.readyState >= 2` trong processing loop  <br>- Truyền vào `fm.send({ image: vid })`  <br>- Hook này phải nhận `videoRef` từ bên ngoài (props), không tự tạo |
+| **Infinite Loop Risk** | **TRUNG BÌNH** - Cần cẩn thận với:  <br>- `status` dependency: Processing loop chỉ chạy khi `status === "active"` (line 966)  <br>- `faceMeshRef`, `handsRef` là refs (không trigger re-render)  <br>- `frameCount` là state (dùng để trigger re-render UI) nhưng chỉ tăng mỗi 33ms  <br>- **Tránh**: Không đưa `landmarksRef.current` vào dependency array (luôn thay đổi) |
+| **Lưu ý quan trọng** | - Giữ nguyên `loadScript()` logic để tránh load script duplicate  <br>- Giữ nguyên `estimateHeadPose()`, `computeEAR()`, `computePupilRadius()` calls trong `onResults`  <br>- Giữ nguyên `EAR_BLINK_THRESH`, `EAR_HISTORY` từ `dmsConstants.js`  <br>- `onResults` callbacks vẫn cập nhật refs (không state) để tránh re-render quá nhiều  <br>- `setFrameCount` chỉ để UI biết đang processing |
+
+### Flow tích hợp 2 Hooks (Đề xuất)
+
+```jsx
+// Trong DriverMonitorDMS:
+const { videoRef, streamRef, startCamera, stopCamera, isReady } = useDmsCamera({
+  onError: setErrorMsg,
+  onStatusChange: setStatus
+});
+
+const { 
+  faceMeshRef, handsRef, isLoaded,
+  landmarksRef, handLandmarksRef, poseRef, eyeDataRef, earHistoryRef,
+  frameCount 
+} = useMediaPipe({
+  videoRef,        // ← Truyền từ useDmsCamera
+  status,          // ← Trạng thái app
+  enabled: isReady // ← Chỉ chạy khi camera ready
+});
+```
+
+### Checklist phê duyệt Nhóm C1:
+- [ ] Phê duyệt Input/Output của `useDmsCamera`
+- [ ] Phê duyệt Input/Output của `useMediaPipe`
+- [ ] Phê duyệt cách truyền `videoRef` từ useDmsCamera → useMediaPipe
+- [ ] Phê duyệt việc chuyển 3 useEffects (init, loop, display) vào useMediaPipe
+- [ ] Xác nhận không có infinite loop risk
+- [ ] **Sau phê duyệt**: Tôi sẽ tạo 2 file hooks và cập nhật thucmuctest.jsx
 
 ## Ghi chú / Rủi ro
 - Project có code liên quan medical/y tế cần tách bỏ
@@ -221,3 +423,4 @@
 - [2025-05-09] Session 1: Khởi động session, tạo task.md, bắt đầu Giai đoạn 1 - Audit toàn dự án
 - [2025-05-09] Session 1 (tiếp): Hoàn tất Giai đoạn 1.3 - Đã xóa 11 file/thư mục theo phê duyệt (Nhóm A + Nhóm B + DoctorChatbot.jsx), cập nhật task.md, chờ lệnh git commit để sang Giai đoạn 2
 - [2025-05-09] Session 2: Hoàn tất Giai đoạn 2.3 - Bóc tách Nhóm A (EyeCanvas.jsx, WaveformCanvas.jsx, dmsConstants.js), cập nhật thucmuctest.jsx để import các component mới
+- [2025-05-09] Session 3: Hoàn tất Giai đoạn 2.4 - Bóc tách Nhóm B (5 overlay components + constants), cập nhật thucmuctest.jsx, dọn dẹp imports và dead code
