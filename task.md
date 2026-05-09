@@ -211,6 +211,7 @@
 - [x] Tạo `components/EyeCanvas.jsx` - component vẽ mắt với props: eyeDataRef, side
 - [x] Tạo `components/WaveformCanvas.jsx` - component vẽ waveform với props: earHistoryRef, side, color
 - [x] Cập nhật `thucmuctest.jsx` - import components mới, xóa các hàm EyeCanvas và WaveformCanvas cũ, xóa constants cũ
+- [x] Dọn dẹp file re-export còn sót lại trong `features/` (6 file trỏ đến medical components đã xóa)
 
 ## Ghi chú / Rủi ro
 - Project có code liên quan medical/y tế cần tách bỏ
