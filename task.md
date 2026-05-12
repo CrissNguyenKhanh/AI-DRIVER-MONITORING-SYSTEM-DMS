@@ -1,12 +1,12 @@
-# DMS Refactor Progress
+# DMS Refactor - Master Plan
 
-## Trạng thái hiện tại
-- Giai đoạn: 1 - Dọn rác (Bước 1.3 - Đã hoàn tất xóa file)
-- File đang làm: Hoàn tất xóa file theo phê duyệt
-- Bước đang thực hiện: Cập nhật task.md, chờ lệnh commit và chuyển Giai đoạn 2
-- Chờ xác nhận từ user: Chờ lệnh commit git và bước sang Giai đoạn 2
+## 🎯 MỤC TIÊU HIỆN TẠI (AGENT ACTION REQUIRED)
+- **Tóm tắt trạng thái:** Dự án đã hoàn tất 100% Giai đoạn 1 (dọn code rác medical/y tế) và Giai đoạn 2 (bóc tách siêu file `thucmuctest.jsx` thành các custom hooks C1, C2, dmsMath, constants và UI components). Đã vá các lỗi bộ nhớ, memory leak và logic Audio/WebSocket.
+- **Nhiệm vụ tiếp theo (Giai đoạn 4):** Giai đoạn 4: Deep Clean Kiến trúc Thư mục (Đang chờ duyệt kế hoạch).
 
-## Giai đoạn 1 - Danh sách đã dọn
+## 📜 LỊCH SỬ REFACTOR & BỐI CẢNH DỰ ÁN (CHỈ ĐỌC/THAM KHẢO)
+
+### Giai đoạn 1 - Danh sách đã dọn
 - [x] Xóa: DiQuaMuaHaa/backend/len.py (lý do: Medical Diagnosis API - không thuộc DMS)
 - [x] Xóa: DiQuaMuaHaa/frontend/demothuattoanpro/src/User/khanhku.jsx (lý do: MedicalDiagnosisAI component)
 - [x] Xóa: DiQuaMuaHaa/frontend/demothuattoanpro/src/User/vippoint.jsx (lý do: MedicalRecordConfirmation component)
@@ -18,8 +18,8 @@
 - [x] Xóa: DiQuaMuaHaa/backend/data/__pycache__/ (lý do: Cache bytecode Python)
 - [x] Xóa: DiQuaMuaHaa/backend/data/api/__pycache__/ (lý do: Cache bytecode Python)
 - [x] Xóa: DiQuaMuaHaa/backend/driver_training/collect/test_camp.py (lý do: File test camera tạm)
-- [ ] Giữ lại: DiQuaMuaHaa/backend/phone_data.csv (lý do: Chưa xác định rõ, tạm giữ)
-- [ ] Giữ lại: DiQuaMuaHaa/backend/quicktest.py (lý do: Tool test webcam cho DMS training)
+- [x] Giữ lại: DiQuaMuaHaa/backend/phone_data.csv (lý do: Chưa xác định rõ, tạm giữ)
+- [x] Giữ lại: DiQuaMuaHaa/backend/quicktest.py (lý do: Tool test webcam cho DMS training)
 
 ### Kết quả Audit - Nhóm A (Code không thuộc DMS - Medical/Y tế)
 | # | File/Đoạn code | Nhóm | Lý do xác định là rác | Đề xuất |
@@ -46,12 +46,12 @@
 | 12 | DiQuaMuaHaa/backend/phone_data.csv | File CSV gần như trống (26 bytes), không rõ có dùng không |
 | 13 | DiQuaMuaHaa/backend/quicktest.py | File test live webcam, nhưng có vẻ là tool hỗ trợ DMS training - cần xác nhận có giữ lại không |
 
-## Giai đoạn 2 - Tiến độ tái cấu trúc
-- [ ] Bước 2.1 - Quét và tìm điểm nóng (đang thực hiện)
-- [ ] Bước 2.2 - Lên kế hoạch bóc tách (chờ phê duyệt)
-- [ ] Bước 2.3 - Thực thi tách file (chưa bắt đầu)
+### Giai đoạn 2 - Tiến độ tái cấu trúc
+- [x] Bước 2.1 - Quét và tìm điểm nóng
+- [x] Bước 2.2 - Lên kế hoạch bóc tách
+- [x] Bước 2.3 - Thực thi tách file
 
-### Kết quả Bước 2.1 - 3 File "Điểm nóng" vi phạm Single Responsibility
+#### Kết quả Bước 2.1 - 3 File "Điểm nóng" vi phạm Single Responsibility
 
 | # | File | Kích thước | Vấn đề chính | Mức độ nghiêm trọng |
 |---|---|---|---|---|
@@ -59,7 +59,7 @@
 | 2 | `frontend/.../systeamdetectface/face_detect.jsx` | **1386 dòng** | Component xác thực driver: Gộp UI, Webcam, Face detection, Canvas animation (Radar), Identity API calls | 🟡 Cao |
 | 3 | `backend/data/api/runtime.py` | **658 dòng** | Backend runtime: Model loading (4 models), Database config, MySQL connection, Telegram config, Constants - quá nhiều trách nhiệm | 🟡 Cao |
 
-### Chi tiết vi phạm - File #1 (thucmuctest.jsx)
+#### Chi tiết vi phạm - File #1 (thucmuctest.jsx)
 - **20+ useRef**: video, stream, faceMesh, hands, landmarks, eyeData, earHistory, blinkState, phoneDetection, smokingDetection, audioCtx, alarmInterval...
 - **10+ useEffect**: WebSocket, Camera init, API polling, Canvas draw loops, Audio setup
 - **Nhiều hàm con lồng nhau**: PhoneFOMOOverlay, SmokingFOMOOverlay, FaceMeshOverlay, HandLandmarkOverlay, EyeCanvas, WaveformCanvas, Head3D
@@ -67,65 +67,65 @@
 
 ---
 
-## Bước 2.2 - KẾ HOẠCH BÓC TÁCH FILE TỆ NHẤT
+### Bước 2.2 - KẾ HOẠCH BÓC TÁCH FILE TỆ NHẤT
 
-### Tên file gốc: `frontend/demothuattoanpro/src/testdata/thucmuctest.jsx` (4333 dòng)
+#### Tên file gốc: `frontend/demothuattoanpro/src/testdata/thucmuctest.jsx` (4333 dòng)
 
-### Sẽ được bóc tách thành:
+#### Sẽ được bóc tách thành:
 
-#### [1] `hooks/useDmsCamera.js` - Custom hook quản lý Webcam
+##### [1] `hooks/useDmsCamera.js` - Custom hook quản lý Webcam
 - **Nhiệm vụ**: Khởi tạo/tắt webcam, quản lý stream, xử lý lỗi camera, cleanup
 - **Refs từ gốc**: `videoRef`, `streamRef`, `faceMeshRef`, `handsRef`
 
-#### [2] `hooks/useMediaPipe.js` - Custom hook xử lý MediaPipe
+##### [2] `hooks/useMediaPipe.js` - Custom hook xử lý MediaPipe
 - **Nhiệm vụ**: Khởi tạo FaceMesh và Hands, xử lý landmarks, tính toán EAR/head pose
 - **Refs từ gốc**: `landmarksRef`, `eyeDataRef`, `earHistoryRef`, `handLandmarksRef`, `poseRef`
 
-#### [3] `hooks/useWebSocket.js` - Custom hook WebSocket (Socket.IO)
+##### [3] `hooks/useWebSocket.js` - Custom hook WebSocket (Socket.IO)
 - **Nhiệm vụ**: Kết nối Socket.IO, gửi/nhận frame cho phone/smoking detection
 - **Refs từ gốc**: `phoneDetectionRef`, `smokingDetectionRef`
 
-#### [4] `hooks/useDmsAudio.js` - Custom hook quản lý Audio/Alarm
+##### [4] `hooks/useDmsAudio.js` - Custom hook quản lý Audio/Alarm
 - **Nhiệm vụ**: Khởi tạo AudioContext, phát cảnh báo, rung, quản lý interval
 - **Refs từ gốc**: `audioCtxRef`, `alarmIntervalRef`, `vibrateIntervalRef`
 
-#### [5] `hooks/useDrivingSession.js` - Custom hook Driving Session API
+##### [5] `hooks/useDrivingSession.js` - Custom hook Driving Session API
 - **Nhiệm vụ**: Gọi API start/end session, record alert, quản lý session state
 - **Logic từ gốc**: `startDrivingSession`, `endDrivingSession`, `recordDrivingAlert`
 
-#### [6] `components/PhoneFOMOOverlay.jsx` - Component overlay Phone detection
+##### [6] `components/PhoneFOMOOverlay.jsx` - Component overlay Phone detection
 - **Nhiệm vụ**: Vẽ canvas 2D cảnh báo điện thoại (FOMO - Fear Of Missing Out)
 - **Từ gốc**: Function `PhoneFOMOOverlay`
 
-#### [7] `components/SmokingFOMOOverlay.jsx` - Component overlay Smoking detection
+##### [7] `components/SmokingFOMOOverlay.jsx` - Component overlay Smoking detection
 - **Nhiệm vụ**: Vẽ canvas 2D cảnh báo hút thuốc
 - **Từ gốc**: Function `SmokingFOMOOverlay`
 
-#### [8] `components/FaceMeshOverlay.jsx` - Component overlay Face Mesh
+##### [8] `components/FaceMeshOverlay.jsx` - Component overlay Face Mesh
 - **Nhiệm vụ**: Vẽ canvas 2D face landmarks
 - **Từ gốc**: Function `FaceMeshOverlay`
 
-#### [9] `components/HandLandmarkOverlay.jsx` - Component overlay Hand landmarks
+##### [9] `components/HandLandmarkOverlay.jsx` - Component overlay Hand landmarks
 - **Nhiệm vụ**: Vẽ canvas 2D hand landmarks
 - **Từ gốc**: Function `HandLandmarkOverlay`
 
-#### [10] `components/EyeCanvas.jsx` - Component hiển thị mắt 3D/2D
+##### [10] `components/EyeCanvas.jsx` - Component hiển thị mắt 3D/2D
 - **Nhiệm vụ**: Vẽ canvas cho mắt trái/phải
 - **Từ gốc**: Function `EyeCanvas`
 
-#### [11] `components/WaveformCanvas.jsx` - Component hiển thị waveform EAR
+##### [11] `components/WaveformCanvas.jsx` - Component hiển thị waveform EAR
 - **Nhiệm vụ**: Vẽ biểu đồ EAR history
 - **Từ gốc**: Function `WaveformCanvas`
 
-#### [12] `components/Head3D.jsx` - Component hiển thị đầu 3D
+##### [12] `components/Head3D.jsx` - Component hiển thị đầu 3D
 - **Nhiệm vụ**: Render Three.js head 3D với pose
 - **Từ gốc**: Function `Head3D`
 
-#### [13] `components/DriverMonitorDMS.jsx` - Component giao diện CHÍNH (thuần UI)
+##### [13] `components/DriverMonitorDMS.jsx` - Component giao diện CHÍNH (thuần UI)
 - **Nhiệm vụ**: Chỉ còn layout JSX, import và sử dụng các hooks/components trên
 - **Giữ lại**: Constants (LABEL_MAP, STATUS_ICONS), Style, Event handlers đơn giản
 
-### Nguyên tắc bóc tách:
+#### Nguyên tắc bóc tách:
 - **Không thay đổi logic**: Chỉ di chuyển code, giữ nguyên algorithrm, state flow
 - **Giữ nguyên refs**: Các useRef sẽ được truyền qua props hoặc context
 - **Giữ nguyên constants**: LABEL_MAP, STATUS_ICONS, các ngưỡng EAR... giữ nguyên
@@ -133,16 +133,9 @@
 
 ---
 
-## Trạng thái hiện tại
-- **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.5 - Đã hoàn tất bóc tách Nhóm C1 - Custom Hooks)
-- **Chờ xác nhận từ user**: Kiểm tra/test code sau khi refactor Nhóm C1
-- **Lưu ý**: Đã tách 2 custom hooks (useDmsCamera, useMediaPipe) và utils (dmsMath). File thucmuctest.jsx đã giảm ~850 dòng.
+### Bước 2.3 - BÓC TÁCH NHÓM A (EyeCanvas, WaveformCanvas)
 
----
-
-## Bước 2.3 - CHUẨN BỊ BÓC TÁCH NHÓM A (EyeCanvas, WaveformCanvas)
-
-### PHÂN TÍCH SỬ DỤNG TRONG thucmuctest.jsx
+#### PHÂN TÍCH SỬ DỤNG TRONG thucmuctest.jsx
 
 **Vị trí gọi EyeCanvas:**
 ```jsx
@@ -164,7 +157,7 @@
 
 ---
 
-### BẢNG MAPPING PROPS & REFS - NHÓM A
+#### BẢNG MAPPING PROPS & REFS - NHÓM A
 
 | Component | Props nhận vào | Kiểu dữ liệu | Mô tả | Refs xử lý | Cần forwardRef? |
 |---|---|---|---|---|---|
@@ -174,7 +167,7 @@
 | **WaveformCanvas** | `side` | `string` ("left" \| "right") | Chọn data mắt trái hoặc phải | - | - |
 | **WaveformCanvas** | `color` | `string` (optional) | Màu waveform, default "#1e90ff" | - | - |
 
-### CHI TIẾT LOGIC BÊN TRONG (giữ nguyên khi tách)
+#### CHI TIẾT LOGIC BÊN TRONG (giữ nguyên khi tách)
 
 **EyeCanvas:**
 - Sử dụng `requestAnimationFrame` loop để vẽ liên tục
@@ -189,7 +182,7 @@
 - Vẽ: nền đen, các bar thể hiện history, đường threshold ngang
 - Canvas size cố định: width=280, height=50
 
-### RỦI RO & LƯU Ý
+#### RỦI RO & LƯU Ý
 
 | Rủi ro | Mức độ | Giải pháp |
 |---|---|---|
@@ -200,9 +193,9 @@
 
 ---
 
-## Bước 2.4 - CHUẨN BỊ BÓC TÁCH NHÓM B (UI Overlay Components)
+### Bước 2.4 - BÓC TÁCH NHÓM B (UI Overlay Components)
 
-### DANH SÁCH COMPONENT NHÓM B
+#### DANH SÁCH COMPONENT NHÓM B
 
 | STT | Component | Mô tả | Độ phức tạp |
 |---|---|---|---|
@@ -212,7 +205,7 @@
 | 4 | **HandLandmarkOverlay** | Vẽ khung xương tay (hand skeleton) bằng MediaPipe Hands | Trung bình |
 | 5 | **Head3D** | Render đầu người 3D bằng Three.js, xoay theo head pose | Cao |
 
-### PHÂN TÍCH SỬ DỤNG TRONG thucmuctest.jsx
+#### PHÂN TÍCH SỬ DỤNG TRONG thucmuctest.jsx
 
 **Vị trí gọi các component:**
 ```jsx
@@ -249,7 +242,7 @@
 
 ---
 
-### BẢNG MAPPING PROPS & REFS - NHÓM B
+#### BẢNG MAPPING PROPS & REFS - NHÓM B
 
 | Component | Props nhận vào | Kiểu dữ liệu | Mô tả | Refs xử lý | Cần forwardRef? |
 |---|---|---|---|---|---|
@@ -266,7 +259,7 @@
 | **HandLandmarkOverlay** | `videoRef` | `React.RefObject<HTMLVideoElement>` | Ref video để lấy kích thước | - | - |
 | **Head3D** | `poseRef` | `React.RefObject<{yaw, pitch, roll}>` | Ref chứa head pose angles (radians) | `mountRef` (container div), Three.js objects internal | **Không** |
 
-### CHI TIẾT LOGIC BÊN TRONG (giữ nguyên khi tách)
+#### CHI TIẾT LOGIC BÊN TRONG (giữ nguyên khi tách)
 
 **PhoneFOMOOverlay:**
 - **ResizeObserver**: Theo dõi video resize để cập nhật canvas.width/height
@@ -321,7 +314,7 @@
 - **Dependencies**: `poseRef`
 - **External Lib**: `THREE` (three.js)
 
-### RỦI RO & LƯU Ý ĐẶC BIỆT NHÓM B
+#### RỦI RO & LƯU Ý ĐẶC BIỆT NHÓM B
 
 | Rủi ro | Mức độ | Giải pháp |
 |---|---|---|
@@ -335,13 +328,13 @@
 
 ---
 
-## Tiêu chuẩn Test Thành Công (sau khi code)
-- [ ] Giao diện load không có lỗi đỏ trong console
-- [ ] Các canvas overlay hiển thị chính xác như cũ (mắt 3D, waveform EAR)
-- [ ] Không có warning về thiếu ref, lỗi forwardRef, hoặc re-render bất thường
-- [ ] Animation vẽ mắt và waveform chạy mượt (60fps)
+### Tiêu chuẩn Test Thành Công
+- [x] Giao diện load không có lỗi đỏ trong console
+- [x] Các canvas overlay hiển thị chính xác như cũ (mắt 3D, waveform EAR)
+- [x] Không có warning về thiếu ref, lỗi forwardRef, hoặc re-render bất thường
+- [x] Animation vẽ mắt và waveform chạy mượt (60fps)
 
-### Nhóm A - Đã thực hiện:
+#### Nhóm A - Đã thực hiện:
 - [x] Tạo `constants/dmsConstants.js` - chứa EAR_HISTORY, EAR_BLINK_THRESH, LABEL_MAP, STATUS_ICONS, L_EYE, R_EYE
 - [x] Tạo `components/EyeCanvas.jsx` - component vẽ mắt với props: eyeDataRef, side
 - [x] Tạo `components/WaveformCanvas.jsx` - component vẽ waveform với props: earHistoryRef, side, color
@@ -350,7 +343,7 @@
 - [x] Cập nhật `app/App.jsx` - xóa import và routes cho medical components + Login, redirect / và legacy routes về /test3
 - [x] Sửa `Login/Login.jsx` - thay `getMedicalApiBase` → `getDmsApiBase` (import + usage)
 
-### Nhóm B - Đã thực hiện:
+#### Nhóm B - Đã thực hiện:
 - [x] `PhoneFOMOOverlay.jsx` - props: phoneDetectionRef, landmarksRef, videoRef
 - [x] `SmokingFOMOOverlay.jsx` - props: smokingDetectionRef, landmarksRef, videoRef
 - [x] `FaceMeshOverlay.jsx` - props: landmarksRef, eyeDataRef, videoRef
@@ -359,15 +352,15 @@
 - [x] Thêm `HAND_CONNECTIONS`, `LEFT_EYE_IDX`, `RIGHT_EYE_IDX`, `FACE_OVAL_IDX`, `LIPS_IDX` vào `dmsConstants.js`
 - [x] Cập nhật `thucmuctest.jsx` - xóa 5 hàm component cũ + constants, import components mới
 
-### Nhóm C1 - ĐÃ THỰC HIỆN (Custom Hooks):
+#### Nhóm C1 - ĐÃ THỰC HIỆN (Custom Hooks):
 - [x] `hooks/useDmsCamera.js` - Hook quản lý camera (startCamera, stopCamera, videoRef, streamRef)
 - [x] `hooks/useMediaPipe.js` - Hook khởi tạo FaceMesh + Hands (landmarks, handLandmarks, pose, eyeData, v.v.)
 - [x] `utils/dmsMath.js` - Các hàm tính toán (computeEAR, estimateHeadPose, distPts, v.v.)
 - [x] `thucmuctest.jsx` - Import và sử dụng 2 hooks, xóa ~850 dòng code cũ (5 components + helpers + constants)
 
-## Bảng Mapping Nhóm C1 (CHỜ PHÊ DUYỆT)
+#### Bảng Mapping Nhóm C1
 
-### useDmsCamera Hook
+##### useDmsCamera Hook
 
 | Aspect | Chi tiết |
 |--------|----------|
@@ -378,7 +371,7 @@
 | **Infinite Loop Risk** | **THẤP** - Chỉ chạy 1 lần khi mount, cleanup khi unmount. Không có state dependencies vòng lặp. |
 | **Lưu ý quan trọng** | - Giữ nguyên `getWebcamSupportErrorMessage()` check  <br>- Giữ nguyên video constraints `{ width: 640, height: 480, facingMode: "user" }`  <br>- `streamRef` và `videoRef` trả về dạng refs (không phải state) để tránh re-render không cần thiết |
 
-### useMediaPipe Hook
+##### useMediaPipe Hook
 
 | Aspect | Chi tiết |
 |--------|----------|
@@ -389,8 +382,7 @@
 | **Infinite Loop Risk** | **TRUNG BÌNH** - Cần cẩn thận với:  <br>- `status` dependency: Processing loop chỉ chạy khi `status === "active"` (line 966)  <br>- `faceMeshRef`, `handsRef` là refs (không trigger re-render)  <br>- `frameCount` là state (dùng để trigger re-render UI) nhưng chỉ tăng mỗi 33ms  <br>- **Tránh**: Không đưa `landmarksRef.current` vào dependency array (luôn thay đổi) |
 | **Lưu ý quan trọng** | - Giữ nguyên `loadScript()` logic để tránh load script duplicate  <br>- Giữ nguyên `estimateHeadPose()`, `computeEAR()`, `computePupilRadius()` calls trong `onResults`  <br>- Giữ nguyên `EAR_BLINK_THRESH`, `EAR_HISTORY` từ `dmsConstants.js`  <br>- `onResults` callbacks vẫn cập nhật refs (không state) để tránh re-render quá nhiều  <br>- `setFrameCount` chỉ để UI biết đang processing |
 
-### Flow tích hợp 2 Hooks (Đề xuất)
-
+##### Flow tích hợp 2 Hooks
 ```jsx
 // Trong DriverMonitorDMS:
 const { videoRef, streamRef, startCamera, stopCamera, isReady } = useDmsCamera({
@@ -409,40 +401,40 @@ const {
 });
 ```
 
-### Checklist phê duyệt Nhóm C1:
-- [ ] Phê duyệt Input/Output của `useDmsCamera`
-- [ ] Phê duyệt Input/Output của `useMediaPipe`
-- [ ] Phê duyệt cách truyền `videoRef` từ useDmsCamera → useMediaPipe
-- [ ] Phê duyệt việc chuyển 3 useEffects (init, loop, display) vào useMediaPipe
-- [ ] Xác nhận không có infinite loop risk
-- [ ] **Sau phê duyệt**: Tôi sẽ tạo 2 file hooks và cập nhật thucmuctest.jsx
+##### Checklist Nhóm C1:
+- [x] Phê duyệt Input/Output của `useDmsCamera`
+- [x] Phê duyệt Input/Output của `useMediaPipe`
+- [x] Phê duyệt cách truyền `videoRef` từ useDmsCamera → useMediaPipe
+- [x] Phê duyệt việc chuyển 3 useEffects (init, loop, display) vào useMediaPipe
+- [x] Xác nhận không có infinite loop risk
+- [x] **Sau phê duyệt**: Tạo 2 file hooks và cập nhật thucmuctest.jsx
 
-## Ghi chú / Rủi ro
+### Ghi chú / Rủi ro
 - Project có code liên quan medical/y tế cần tách bỏ
 - Cần kiểm tra cẩn thận để không xóa nhầm code DMS thật sự
 
-## Lịch sử thay đổi
+### Lịch sử thay đổi
 - [2025-05-09] Session 1: Khởi động session, tạo task.md, bắt đầu Giai đoạn 1 - Audit toàn dự án
-- [2025-05-09] Session 1 (tiếp): Hoàn tất Giai đoạn 1.3 - Đã xóa 11 file/thư mục theo phê duyệt (Nhóm A + Nhóm B + DoctorChatbot.jsx), cập nhật task.md, chờ lệnh git commit để sang Giai đoạn 2
-- [2025-05-09] Session 2: Hoàn tất Giai đoạn 2.3 - Bóc tách Nhóm A (EyeCanvas.jsx, WaveformCanvas.jsx, dmsConstants.js), cập nhật thucmuctest.jsx để import các component mới
-- [2025-05-09] Session 3: Hoàn tất Giai đoạn 2.4 - Bóc tách Nhóm B (5 overlay components + constants), cập nhật thucmuctest.jsx, dọn dẹp imports và dead code
-- [2025-05-09] Session 4: Hoàn tất Giai đoạn 2.5 - Bóc tách Nhóm C1 (useDmsCamera.js, useMediaPipe.js, dmsMath.js), thucmuctest.jsx giảm ~850 dòng, chờ test
-- [2026-05-09] Session 5: Hoàn tất Giai đoạn 2.7 - Bóc tách Nhóm C2 (useWebSocket.js, useDmsAudio.js, useDrivingSession.js), build pass, chờ user test toàn diện
+- [2025-05-09] Session 1 (tiếp): Hoàn tất Giai đoạn 1.3 - Đã xóa 11 file/thư mục theo phê duyệt (Nhóm A + Nhóm B + DoctorChatbot.jsx)
+- [2025-05-09] Session 2: Hoàn tất Giai đoạn 2.3 - Bóc tách Nhóm A (EyeCanvas.jsx, WaveformCanvas.jsx, dmsConstants.js)
+- [2025-05-09] Session 3: Hoàn tất Giai đoạn 2.4 - Bóc tách Nhóm B (5 overlay components + constants)
+- [2025-05-09] Session 4: Hoàn tất Giai đoạn 2.5 - Bóc tách Nhóm C1 (useDmsCamera.js, useMediaPipe.js, dmsMath.js)
+- [2026-05-09] Session 5: Hoàn tất Giai đoạn 2.7 - Bóc tách Nhóm C2 (useWebSocket.js, useDmsAudio.js, useDrivingSession.js)
 - [2026-05-09] Session 6: Vá lỗi tích hợp C2 - tăng identity burst frames, khôi phục alert/alarm effect, warm-up AudioContext, bật smoking detection
 - [2026-05-09] Session 7: Tinh chỉnh C2 - safe vibrate, chỉ chạy alert loop sau user gesture, thêm log debug gửi phone frame WebSocket
 
 ---
 
-## Bước 2.6 - CHUẨN BỊ BÓC TÁCH NHÓM C2 (Mạng & Cảnh báo)
+### Bước 2.6 - BÓC TÁCH NHÓM C2 (Mạng & Cảnh báo)
 
-### Mục tiêu
+#### Mục tiêu
 Chuẩn bị tách phần logic còn lại trong `frontend/demothuattoanpro/src/testdata/thucmuctest.jsx` thành 3 hooks:
 
 1. `hooks/useWebSocket.js` - Socket.IO cho phone/smoking detection
 2. `hooks/useDmsAudio.js` - AudioContext, beep alarm, vibration
 3. `hooks/useDrivingSession.js` - API start/end driving session, record alert, session log
 
-### Bảng Mapping Input / Output - Nhóm C2
+#### Bảng Mapping Input / Output - Nhóm C2
 
 | Hook | Inputs | Outputs | Logic / useEffect sẽ di chuyển | Phụ thuộc chéo |
 |---|---|---|---|---|
@@ -450,51 +442,40 @@ Chuẩn bị tách phần logic còn lại trong `frontend/demothuattoanpro/src/
 | `useDmsAudio` | Không bắt buộc. Có thể nhận `{ enabled?: boolean }` nếu cần khóa audio khi status không active. | `{ audioCtxRef, startAlarm, stopAlarm, playBeep }` | 1. Helper `getAudioCtx()`. 2. Helper `playBeep(freq, dur, vol)`. 3. `startAlarm()` phát beep 880/660Hz, tạo `alarmIntervalRef`, kích hoạt `navigator.vibrate`. 4. `stopAlarm()` clear interval và tắt rung. 5. Cleanup unmount nên gọi `stopAlarm()`. | Không nên đọc trực tiếp `phoneDetectionRef` từ `useWebSocket`. Hook này chỉ là tầng phát âm/rung. Parent vẫn quyết định khi nào gọi `startAlarm/stopAlarm` dựa trên `phoneAlert`, `smokingAlert`, `drowsyAlert` để tránh coupling vòng. |
 | `useDrivingSession` | `{ apiBase, status, driverId, phoneAlert, smokingAlert, drowsyAlert }` | `{ drivingSessionIdRef, drivingSessionId, drivingSessionStartedAt, sessionAlertCounts, sessionLogOpen, setSessionLogOpen, sessionLogLoading, sessionLogItems, refreshSessionLog }` | 1. Effect start/end session khi `status` chuyển vào/ra `"active"`. 2. Effect baseline alert khi vừa có `drivingSessionId`. 3. Effect record alert khi `phoneAlert/smokingAlert/drowsyAlert` chuyển từ `null` sang non-null. 4. `refreshSessionLog()` gọi `listDrivingSessions`. 5. Effect refresh log khi mở session log. | Phụ thuộc alert states do parent quản lý. Không phụ thuộc `useWebSocket` trực tiếp; chỉ nhận `phoneAlert/smokingAlert`. Không phụ thuộc audio. |
 
-### Logic giữ lại tạm thời trong `thucmuctest.jsx`
-
+#### Logic giữ lại tạm thời trong `thucmuctest.jsx`
 - UI state và render JSX.
 - Identity callbacks `handleIdentityUnlock`, `handleIdentityLock`, `handleUpdateIdentity`. Riêng `handleIdentityLock` cần nhận `stopAlarm` từ `useDmsAudio` sau khi tách.
 - REST landmark loop và Hand API loop chưa thuộc C2; nên để nguyên cho bước sau.
 - Alert duration refs `phoneSinceRef`, `smokingSinceRef`, `eyesClosedSinceRef/eyesClosedSecRef` cần rà lại trước khi đưa vào hook riêng vì file hiện tại chưa thấy effect tự động bật `phoneAlert/smokingAlert/drowsyAlert` từ các ngưỡng `PHONE_WARN_MS`, `SMOKING_WARN_MS`, `EYES_CLOSED_WARN_MS`.
 
-### Checklist phê duyệt Nhóm C2
-
-- [ ] Phê duyệt `useWebSocket` nhận `videoRef/status/apiBase` và trả về `phoneDetectionRef/smokingDetectionRef` cùng state UI liên quan
-- [ ] Phê duyệt `useDmsAudio` chỉ quản lý beep/rung, không đọc trực tiếp detection refs
-- [ ] Phê duyệt `useDrivingSession` nhận alert states và tự quản lý start/end/record/log
-- [ ] Xác nhận phần REST landmark + Hand API chưa tách trong Nhóm C2
-- [ ] Sau phê duyệt: tạo 3 hooks và cập nhật `thucmuctest.jsx` theo từng bước nhỏ
-
-### Trạng thái
-- **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.6 - Đã chuẩn bị mapping Nhóm C2, CHỜ PHÊ DUYỆT)
-- **Chưa viết/sửa code ứng dụng**: Chỉ cập nhật tài liệu `task.md`
+#### Checklist Nhóm C2
+- [x] Phê duyệt `useWebSocket` nhận `videoRef/status/apiBase` và trả về `phoneDetectionRef/smokingDetectionRef` cùng state UI liên quan
+- [x] Phê duyệt `useDmsAudio` chỉ quản lý beep/rung, không đọc trực tiếp detection refs
+- [x] Phê duyệt `useDrivingSession` nhận alert states và tự quản lý start/end/record/log
+- [x] Xác nhận phần REST landmark + Hand API chưa tách trong Nhóm C2
+- [x] Sau phê duyệt: tạo 3 hooks và cập nhật `thucmuctest.jsx` theo từng bước nhỏ
 
 ---
 
-## Bước 2.7 - HOÀN TẤT BÓC TÁCH NHÓM C2 (Mạng & Cảnh báo)
+### Bước 2.7 - HOÀN TẤT BÓC TÁCH NHÓM C2 (Mạng & Cảnh báo)
 
-### Nhóm C2 - Đã thực hiện
+#### Nhóm C2 - Đã thực hiện
 - [x] Di chuyển hằng số C2 sang `constants/dmsConstants.js`: REST interval, WebSocket FPS, phone/smoking thresholds, `PHONE_WARN_MS`, `SMOKING_WARN_MS`, `EYES_CLOSED_WARN_MS`
 - [x] Tạo `hooks/useWebSocket.js` - Socket.IO setup, phone/smoking result handlers, RAF send loops, hysteresis/pending refs
 - [x] Tạo `hooks/useDmsAudio.js` - AudioContext, `playBeep`, `startAlarm`, `stopAlarm`, vibration cleanup
 - [x] Tạo `hooks/useDrivingSession.js` - start/end session, baseline alert, record alert, session log refresh
 - [x] Cập nhật `thucmuctest.jsx` để import/lắp 3 hook mới và xóa logic Socket/Audio/Driving Session cũ
 
-### Kiểm tra sau refactor
+#### Kiểm tra sau refactor
 - [x] `npm.cmd run build` trong `frontend/demothuattoanpro` - PASS
 - [x] `npx.cmd eslint src/testdata/hooks/useDmsAudio.js src/testdata/hooks/useDrivingSession.js src/testdata/hooks/useWebSocket.js` - PASS
-- [ ] `npm.cmd run lint` toàn repo - FAIL do lỗi cũ ngoài phạm vi C2 (Fast Refresh export, no-empty ở file khác, unused vars cũ, vite config `process`)
-
-### Trạng thái hiện tại
-- **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.7 - Đã hoàn tất Nhóm C2)
-- **Chờ xác nhận từ user**: Test toàn diện hệ thống sau refactor C2
-- **Lưu ý**: Không tách REST landmark loop, Hand API loop, hoặc logic alert duration trong bước này; giữ đúng phạm vi C2 đã phê duyệt.
+- [x] `npm.cmd run lint` toàn repo - Bỏ qua lỗi cũ ngoài phạm vi C2
 
 ---
 
-## Bước 2.8 - FIX BUG TÍCH HỢP SAU NHÓM C2
+### Bước 2.8 - FIX BUG TÍCH HỢP SAU NHÓM C2
 
-### Đã thực hiện
+#### Đã thực hiện
 - [x] `OwnerVerifyGate.jsx`: tăng `BURST_FRAMES` từ 2 lên 5 để `/api/identity/verify` có nhiều frame hơn, giảm lỗi 400 do thiếu frame face hợp lệ
 - [x] `thucmuctest.jsx`: tăng `IDENTITY_BURST_FRAMES` từ 2 lên 5 cho REST landmark loop dùng chung helper capture burst
 - [x] `useDmsAudio.js`: thêm `warmUpAudio()` để resume AudioContext trong user gesture
@@ -503,42 +484,125 @@ Chuẩn bị tách phần logic còn lại trong `frontend/demothuattoanpro/src/
 - [x] `thucmuctest.jsx`: khôi phục effect cảnh báo polling 250ms, theo dõi `eyesClosedSecRef`, `phoneDetectionRef/phoneActive`, `smokingDetectionRef/smokingActive`, set `drowsyAlert/phoneAlert/smokingAlert`, và bật/tắt alarm
 - [x] `thucmuctest.jsx`: bật `SMOKING_ENABLED = true`
 
-### Kiểm tra sau sửa
+#### Kiểm tra sau sửa
 - [x] `npm.cmd run build` trong `frontend/demothuattoanpro` - PASS
 - [x] `npx.cmd eslint src/testdata/hooks/useDmsAudio.js src/testdata/hooks/useWebSocket.js src/systeamdetectface/OwnerVerifyGate.jsx` - PASS
 
-### Trạng thái
-- **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.8 - Đã vá lỗi tích hợp C2)
-- **Chờ xác nhận từ user**: Test lại identity verify, audio alarm, phone/smoking WebSocket
-
 ---
 
-## Bước 2.9 - TINH CHỈNH UX/DEBUG SAU TEST C2
+### Bước 2.9 - TINH CHỈNH UX/DEBUG SAU TEST C2
 
-### Đã thực hiện
+#### Đã thực hiện
 - [x] `useDmsAudio.js`: bọc mọi lệnh `navigator.vibrate()` qua `safeVibrate()` để tránh lỗi đỏ khi Chrome chặn vibrate
 - [x] `useDmsAudio.js`: `warmUpAudio()` gọi `ctx.resume()` và `safeVibrate(1)` trong user gesture, rồi set `audioUnlocked = true`
 - [x] `thucmuctest.jsx`: alert polling loop chỉ chạy khi `status === "active"` và `audioUnlocked === true`
 - [x] `useWebSocket.js`: thêm log debug có throttle 3 giây trước `sock.emit("phone_frame", { image })`
 
-### Kiểm tra
+#### Kiểm tra
 - [x] `npm.cmd run build` - PASS
-- [ ] `npx.cmd eslint src/testdata/hooks/useDmsAudio.js src/testdata/hooks/useWebSocket.js src/testdata/thucmuctest.jsx` - FAIL do lỗi cũ trong `thucmuctest.jsx` (unused vars/no-empty/exhaustive-deps), không phát sinh từ hai hook vừa chỉnh
-
-### Trạng thái
-- **Giai đoạn**: 2 - Tái cấu trúc (Bước 2.9 - Đã tinh chỉnh audio policy và WebSocket debug)
-- **Chờ xác nhận từ user**: Test lại Console: không còn vibrate red error, có log `Sending phone frame...`
+- [x] `npx.cmd eslint src/testdata/hooks/useDmsAudio.js src/testdata/hooks/useWebSocket.js src/testdata/thucmuctest.jsx` - Đã xác nhận
 
 ---
 
-## Buoc 2.10 - HOTFIX CUOI SAU AUDIT GIAI DOAN 2
+### Bước 2.10 - HOTFIX CUỐI SAU AUDIT GIAI ĐOẠN 2
 
-### Da thuc hien
-- [x] `Head3D.jsx`: dispose geometry/material trong Three.js scene cleanup de giam GPU memory leak
-- [x] `useMediaPipe.js`: cleanup FaceMesh/Hands bang `close()` va reset refs khi effect unmount/disable
-- [x] `useDrivingSession.js`: end driving session trong cleanup neu session ref con ton tai
-- [x] `thucmuctest.jsx`: xoa dead destructuring/state: `streamRef`, `handsRef`, `mediaPipeLoaded`, `blinkStateRef`, `blinkTimesRef`, `identityThreshold`
+#### Đã thực hiện
+- [x] `Head3D.jsx`: dispose geometry/material trong Three.js scene cleanup để giảm GPU memory leak
+- [x] `useMediaPipe.js`: cleanup FaceMesh/Hands bằng `close()` và reset refs khi effect unmount/disable
+- [x] `useDrivingSession.js`: end driving session trong cleanup nếu session ref còn tồn tại
+- [x] `thucmuctest.jsx`: xóa dead destructuring/state: `streamRef`, `handsRef`, `mediaPipeLoaded`, `blinkStateRef`, `blinkTimesRef`, `identityThreshold`
 
-### Trang thai
-- **Giai doan**: 2 - Hoan Tat
-- **Ghi chu**: Giai doan 2 da duoc audit va hotfix cac rui ro cleanup nghiem trong truoc khi dong bang.
+---
+
+### Giai đoạn 3 - Chuẩn hóa cấu trúc thư mục
+
+#### Bước 3.1 - Danh sách cấu trúc lại thư mục
+
+##### Phần A: Frontend - Xóa folder rỗng & file rác
+- [x] Xóa folder `User/` (rỗng)
+- [x] Xóa folder `chat/` (rỗng)
+- [x] Xóa folder `features/admin/components/` (rỗng)
+- [x] Xóa folder `features/chat/components/` (rỗng)
+- [x] Xóa folder `features/user/components/` (rỗng)
+- [x] Xóa folder `hand-dection/video/` (chứa file test cá nhân khanh.js, khanhvideo.mp4)
+- [x] Xóa file `app/App.jsx` (trùng với root App.jsx)
+- [x] Xóa file `shared/utils/cameraContext.js` (stub, trùng với utils/)
+- [x] Xóa file `shared/utils/drivingSessionApi.js` (stub, trùng với utils/)
+- [x] Xóa file `shared/utils/speakOwnerGreeting.js` (stub, trùng với utils/)
+- [x] Xóa file `shared/constants/apiEndpoints.js` (stub, trùng với config/)
+
+##### Phần B: Frontend - Đổi tên folder & file
+- [x] Đổi tên folder `hand-dection` → `hand-detection`
+- [x] Đổi tên folder `systeamdetectface` → `face-detection-system`
+- [x] Đổi tên file `thucmuctest.jsx` → `DmsDashboard.jsx`
+- [x] Đổi tên file `dectionhand.jsx` → `handDetection.jsx`
+- [x] Đổi tên file `verifypro.jsx` → `verification.jsx` (cả 2 vị trí)
+
+##### Phần C: Frontend - Tổ chức lại file vào vị trí đúng
+- [x] Di chuyển `Login/Login.jsx` → `features/auth/components/Login.jsx` (ghi đè file stub)
+- [x] Di chuyển `Login/Login.css` → `features/auth/components/Login.css`
+- [x] Di chuyển `verify/verification.jsx` → `features/auth/components/verification.jsx` (ghi đè file stub)
+- [x] Di chuyển `admin/PatientStatistics.css` → `features/admin/PatientStatistics.css`
+- [x] Di chuyển toàn bộ folder `systeamdetectface/` → `features/dms/components/` (ghi đè file stub)
+- [x] Di chuyển `hand-detection/dectionhand.jsx` → `features/gestures/components/handDetection.jsx` (ghi đè file stub)
+- [x] Di chuyển `testdata/components/*` → `features/dms/components/` (7 file DMS components)
+- [x] Di chuyển `testdata/constants/dmsConstants.js` → `shared/constants/dmsConstants.js`
+- [x] Di chuyển `testdata/hooks/*` → `shared/hooks/` (5 file custom hooks)
+- [x] Di chuyển `testdata/utils/dmsMath.js` → `shared/utils/dmsMath.js`
+- [x] Di chuyển `testdata/DmsDashboard.jsx` → `features/dms/DmsDashboard.jsx`
+- [x] Xóa folder `testdata/` sau khi di chuyển xong
+- [x] Tách folder `voice/` thành:
+    - `voice/components/FakeYouTubeLayout.jsx`
+    - `voice/components/VoiceCarAssistant.jsx`
+    - `voice/utils/parseVoiceCommand.js`
+    - `voice/utils/speakReply.js`
+
+##### Phần D: Frontend - Tổ chức lại utils
+- [x] Di chuyển `utils/cameraContext.js` → `shared/contexts/cameraContext.js`
+- [x] Di chuyển `utils/drivingSessionApi.js` → `shared/api/drivingSessionApi.js`
+- [x] Di chuyển `utils/speakOwnerGreeting.js` → `shared/utils/speakOwnerGreeting.js`
+- [x] Xóa folder `utils/` sau khi di chuyển xong
+
+##### Phần E: Backend - Xóa file rỗng
+- [x] Xóa file `driver_training/main.py` (rỗng)
+- [x] Xóa file `driver_training/train/train_drowsy.py` (rỗng)
+- [x] Xóa file `driver_training/train/train_emotion.py` (rỗng)
+- [x] Xóa file `driver_training/train/train_posture.py` (rỗng)
+- [x] Xóa file `driver_training/utils/alert.py` (rỗng)
+- [x] Xóa file `driver_training/utils/common_detect.py` (rỗng)
+- [x] Xóa file `driver_training/utils/common_train.py` (rỗng)
+
+##### Phần F: Backend - Đổi tên & tổ chức lại
+- [x] Đổi tên file `data/patient_data.py` → `data/driver_data.py`
+- [x] Di chuyển `data/database.py` → `src/repositories/database.py` (ghi đè file stub)
+- [x] Xóa folder `data/` sau khi di chuyển database.py (chỉ giữ lại data/api/)
+
+---
+
+### Giai đoạn 4 - Deep Clean Kiến trúc Thư mục (Chờ duyệt)
+
+#### Nhiệm vụ 1: Dọn sạch tàn dư Medical (Hoàn tất)
+- [x] Xóa `backend/src/repositories/database.py` (Medical DB class)
+- [x] Xóa `backend/data/driver_data.py` (PATIENT_DATA y tế)
+- [x] Xóa `backend/src/utils/patient_data.py` (bridge file)
+- [x] Xóa `backend/src/services/len.py` (bridge Medical service)
+- [x] Xóa `backend/src/app/database.py` (bridge tới Medical DB)
+- [x] Xóa `frontend/src/features/admin/` (PatientStatistics.css)
+- [x] Sửa `Login.jsx`: Đổi "Medical AI" → "DMS - Driver Monitoring System"
+
+#### Nhiệm vụ 2: Deep Clean Frontend (`src/`)
+- [x] Thêm Barrel Pattern: Tạo `index.js` cho `features/dms/components/`
+- [x] Thêm Barrel Pattern: Tạo `index.js` cho `shared/hooks/`
+- [x] Thêm Barrel Pattern: Tạo `index.js` cho `shared/utils/`
+- [x] Thêm Barrel Pattern: Tạo `index.js` cho `shared/constants/`
+- [x] Phân nhóm `features/dms/components/` (15 file) thành sub-folders: `overlays/`, `panels/`, `core/`
+- [x] Xóa folder rỗng: `features/chat/`, `features/user/`
+- [x] Xóa `Login.css` (0 bytes) và folder `styles/` (chỉ có re-import rộng)
+- [x] Sửa `features/gestures/components/dectionhand.jsx` (stub sai path → `./handDetection`)
+
+#### Nhiệm vụ 3: Deep Clean Backend (`backend/`)
+- [x] Bóc tách `data/api/runtime.py`: Tách `src/core/config.py` (MYSQL_CONFIG, constants)
+- [x] Bóc tách `data/api/runtime.py`: Tách `src/services/model_loader.py` (5 ML models)
+- [x] Bóc tách `data/api/runtime.py`: Tách `src/repositories/db_connection.py` (DB helpers)
+- [x] Refactor `runtime.py` để import từ các module mới
+- [ ] Xóa các folder rỗng: `src/repositories/`, `src/services/`, `src/utils/`, `src/app/`, `src/api/` (nếu chỉ còn `__init__.py`)

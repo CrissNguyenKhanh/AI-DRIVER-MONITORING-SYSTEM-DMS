@@ -1,2 +1,2 @@
-export { default } from "../../../systeamdetectface/face_detect";
+export { default } from "./face_detect";
 

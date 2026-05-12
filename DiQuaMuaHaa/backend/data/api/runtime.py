@@ -16,13 +16,34 @@ from urllib import parse, request as urlrequest
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-try:
-    from ultralytics import YOLO  # type: ignore
-
-    YOLO_AVAILABLE = True
-except Exception:  # ImportError, RuntimeError, ...
-    YOLO_AVAILABLE = False
-
+# Import from refactored modules
+from src.core.config import (
+    MYSQL_CONFIG,
+    IDENTITY_SIM_THRESHOLD,
+    IDENTITY_MIN_REGISTER_SAMPLES,
+    IDENTITY_MIN_VERIFY_SAMPLES,
+    IDENTITY_DECISION_TIMEOUT_SEC,
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_WEBHOOK_SECRET,
+    MODEL_PATH,
+    HAND_MODEL_PATH,
+    SMOKING_MODEL_PATH,
+    PHONE_MODEL_PATH,
+    PHONE_YOLO_MODEL_PATH,
+)
+from src.services.model_loader import (
+    artifact, model, idx_to_label,
+    hand_artifact, hand_model, hand_idx_to_label, hand_vec_len,
+    smoking_artifact, smoking_model, smoking_idx_to_label,
+    phone_artifact, phone_model, phone_idx_to_label, phone_image_size,
+    phone_yolo_model, phone_yolo_onnx, YOLO_AVAILABLE,
+)
+from src.repositories.db_connection import (
+    get_mysql_conn,
+    _ensure_identity_tables,
+    _ensure_driving_session_tables,
+    DRIVING_ALERT_TYPES,
+)
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -36,136 +57,7 @@ def too_large(_err):
     return jsonify({"error": "Request payload too large"}), 413
 
 
-BASE_DIR = Path(__file__).resolve().parents[2]  # .../backend
-MODEL_PATH = BASE_DIR / "driver_training" / "models" / "landmark_model.pkl"
-HAND_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "hand_model.pkl"
-SMOKING_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "smoking_model.pkl"
-PHONE_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "phone_model.pkl"
-PHONE_YOLO_MODEL_PATH = BASE_DIR / "driver_training" / "models" / "phone_yolo.pt"
-PHONE_YOLO_ONNX_PATH = BASE_DIR / "driver_training" / "models" / "phone_yolo.onnx"
-
-# MySQL config — đọc từ biến môi trường để tương thích Render / Cloud
-# Trên Render: vào Environment → thêm MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE
-MYSQL_CONFIG = {
-    "host":     os.getenv("MYSQL_HOST", "localhost"),
-    "port":     int(os.getenv("MYSQL_PORT", "3306")),
-    "user":     os.getenv("MYSQL_USER", "root"),
-    "password": os.getenv("MYSQL_PASSWORD", ""),
-    "database": os.getenv("MYSQL_DATABASE", "diquamuaha"),
-    "charset": "utf8mb4",
-    "cursorclass": pymysql.cursors.DictCursor,
-}
-
-IDENTITY_SIM_THRESHOLD = float(os.getenv("IDENTITY_SIM_THRESHOLD", "0.975"))
-IDENTITY_MIN_REGISTER_SAMPLES = int(os.getenv("IDENTITY_MIN_REGISTER_SAMPLES", "3"))
-IDENTITY_MIN_VERIFY_SAMPLES = int(os.getenv("IDENTITY_MIN_VERIFY_SAMPLES", "2"))
-IDENTITY_DECISION_TIMEOUT_SEC = int(os.getenv("IDENTITY_DECISION_TIMEOUT_SEC", "30"))
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8778925999:AAEvtjjjwulzUvGTC8ThTfvwOkJ7ALGuyoQ").strip()
-TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "Khanhdz123").strip()
-
-
-artifact: Dict[str, Any] | None = None
-model = None
-idx_to_label: Dict[int, str] = {}
-
-hand_artifact: Dict[str, Any] | None = None
-hand_model = None
-hand_idx_to_label: Dict[int, str] = {}
-hand_vec_len: int = 126  # khớp artifact vec_len (63 = collect_hands normalize + dominant hand)
-
-smoking_artifact: Dict[str, Any] | None = None
-smoking_model = None
-smoking_idx_to_label: Dict[int, str] = {}
-
-phone_artifact: Dict[str, Any] | None = None
-phone_model = None
-phone_idx_to_label: Dict[int, str] = {}
-phone_image_size: int | None = None
-
-phone_yolo_model = None
-phone_yolo_onnx = None
-
-
-def get_mysql_conn():
-    return pymysql.connect(**MYSQL_CONFIG)
-
-
-def _ensure_identity_tables(cur) -> None:
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS driver_identity (
-            driver_id      VARCHAR(64) PRIMARY KEY,
-            name           VARCHAR(255),
-            embedding_json LONGTEXT NOT NULL,
-            image_base64   LONGTEXT,
-            created_at     DATETIME NOT NULL
-        )
-        """
-    )
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS driver_telegram_owner (
-            driver_id         VARCHAR(64) PRIMARY KEY,
-            telegram_chat_id  BIGINT NOT NULL,
-            telegram_user_id  BIGINT NULL,
-            created_at        DATETIME NOT NULL,
-            updated_at        DATETIME NOT NULL
-        )
-        """
-    )
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS identity_decision_requests (
-            request_id           BIGINT AUTO_INCREMENT PRIMARY KEY,
-            driver_id            VARCHAR(64) NOT NULL,
-            status               VARCHAR(16) NOT NULL,
-            reason               VARCHAR(64) NULL,
-            similarity           DOUBLE NULL,
-            threshold            DOUBLE NULL,
-            requested_at         DATETIME NOT NULL,
-            expires_at           DATETIME NOT NULL,
-            decided_at           DATETIME NULL,
-            decided_by_chat_id   BIGINT NULL,
-            telegram_chat_id     BIGINT NULL,
-            telegram_message_id  BIGINT NULL,
-            INDEX idx_identity_driver (driver_id),
-            INDEX idx_identity_status (status),
-            INDEX idx_identity_expires (expires_at)
-        )
-        """
-    )
-
-
-def _ensure_driving_session_tables(cur) -> None:
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS driving_sessions (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
-            driver_id VARCHAR(64) NULL,
-            label VARCHAR(128) NULL,
-            started_at DATETIME NOT NULL,
-            ended_at DATETIME NULL,
-            INDEX idx_driving_driver (driver_id),
-            INDEX idx_driving_started (started_at)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """
-    )
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS driving_session_alerts (
-            session_id BIGINT NOT NULL,
-            alert_type VARCHAR(32) NOT NULL,
-            count INT NOT NULL DEFAULT 0,
-            PRIMARY KEY (session_id, alert_type),
-            INDEX idx_dsa_session (session_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """
-    )
-
-
-DRIVING_ALERT_TYPES = frozenset(
-    {"phone", "smoking", "drowsy", "identity_lock", "landmark_risk", "other"}
-)
+# Database helpers now imported from src.repositories.db_connection
 
 
 def _telegram_call(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -233,118 +125,6 @@ def _telegram_answer_callback(callback_query_id: str, text: str) -> None:
 
 def _telegram_send_text(chat_id: int, text: str) -> None:
     _telegram_call("sendMessage", {"chat_id": str(chat_id), "text": text})
-
-
-def load_model() -> None:
-    global artifact, model, idx_to_label
-    if not MODEL_PATH.exists():
-        artifact = None
-        model = None
-        idx_to_label = {}
-        return
-
-    artifact = joblib.load(MODEL_PATH)
-    model = artifact.get("model")
-    label_to_idx = artifact.get("label_to_idx", {})
-    idx_to_label = {v: k for k, v in label_to_idx.items()}
-
-
-def load_hand_model() -> None:
-    global hand_artifact, hand_model, hand_idx_to_label, hand_vec_len
-    if not HAND_MODEL_PATH.exists():
-        hand_artifact = None
-        hand_model = None
-        hand_idx_to_label = {}
-        hand_vec_len = 126
-        return
-
-    hand_artifact = joblib.load(HAND_MODEL_PATH)
-    hand_model = hand_artifact.get("model")
-    label_to_idx = hand_artifact.get("label_to_idx", {})
-    hand_idx_to_label = {v: k for k, v in label_to_idx.items()}
-    try:
-        hand_vec_len = int(hand_artifact.get("vec_len", 126))
-    except (TypeError, ValueError):
-        hand_vec_len = 126
-
-
-def load_smoking_model() -> None:
-    global smoking_artifact, smoking_model, smoking_idx_to_label
-    if not SMOKING_MODEL_PATH.exists():
-        smoking_artifact = None
-        smoking_model = None
-        smoking_idx_to_label = {}
-        return
-
-    smoking_artifact = joblib.load(SMOKING_MODEL_PATH)
-    smoking_model = smoking_artifact.get("model")
-    label_to_idx = smoking_artifact.get("label_to_idx", {})
-    smoking_idx_to_label = {v: k for k, v in label_to_idx.items()}
-
-
-def load_phone_model() -> None:
-    global phone_artifact, phone_model, phone_idx_to_label, phone_image_size
-    if not PHONE_MODEL_PATH.exists():
-        phone_artifact = None
-        phone_model = None
-        phone_idx_to_label = {}
-        phone_image_size = None
-        return
-
-    try:
-        phone_artifact = joblib.load(PHONE_MODEL_PATH)
-        phone_model = phone_artifact.get("model")
-        label_to_idx = phone_artifact.get("label_to_idx", {})
-        phone_idx_to_label = {v: k for k, v in label_to_idx.items()}
-        img_sz = phone_artifact.get("image_size")
-        try:
-            phone_image_size = int(img_sz) if img_sz is not None else None
-        except (TypeError, ValueError):
-            phone_image_size = None
-    except Exception as e:
-        print(f"[WARN] phone_model.pkl không load được (numpy/sklearn không tương thích): {e}")
-        phone_artifact = None
-        phone_model = None
-        phone_idx_to_label = {}
-        phone_image_size = None
-
-
-def load_phone_yolo_model() -> None:
-    global phone_yolo_model, phone_yolo_onnx
-    # Ưu tiên ONNX nếu có (nhẹ và ổn định), fallback sang .pt
-    if PHONE_YOLO_ONNX_PATH.exists():
-        try:
-            import onnxruntime as ort
-            sess_opts = ort.SessionOptions()
-            sess_opts.inter_op_num_threads = 1
-            sess_opts.intra_op_num_threads = 1
-            phone_yolo_onnx = ort.InferenceSession(
-                str(PHONE_YOLO_ONNX_PATH),
-                sess_options=sess_opts,
-                providers=["CPUExecutionProvider"],
-            )
-            phone_yolo_model = None
-            print("[INFO] phone_yolo.onnx loaded")
-            return
-        except Exception as e:
-            print(f"[WARN] phone_yolo.onnx không load được: {e}")
-            phone_yolo_onnx = None
-
-    if not PHONE_YOLO_MODEL_PATH.exists() or not YOLO_AVAILABLE:
-        phone_yolo_model = None
-        return
-    try:
-        import torch as _torch
-        _orig_load = _torch.load
-        def _patched_load(f, *args, **kwargs):
-            kwargs.setdefault("weights_only", False)
-            return _orig_load(f, *args, **kwargs)
-        _torch.load = _patched_load
-        phone_yolo_model = YOLO(str(PHONE_YOLO_MODEL_PATH))
-        _torch.load = _orig_load
-    except Exception as e:
-        print(f"[WARN] phone_yolo.pt không load được: {e}")
-        phone_yolo_model = None
 
 
 def _yolo_letterbox(img, new_size: int = 640):
@@ -416,13 +196,6 @@ def _yolo_onnx_detect(session, img_bgr, conf_thres: float = 0.4, iou_thres: floa
             }
         )
     return result
-
-
-load_model()
-load_hand_model()
-load_smoking_model()
-load_phone_model()
-load_phone_yolo_model()
 
 
 # MediaPipe Face Mesh - khớp với collect_landmarks/convert_kaggle_face để inference chuẩn
