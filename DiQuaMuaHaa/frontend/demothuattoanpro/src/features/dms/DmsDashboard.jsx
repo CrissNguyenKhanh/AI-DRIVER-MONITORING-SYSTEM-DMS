@@ -1100,6 +1100,7 @@ export default function DriverMonitorDMS() {
             <HandLandmarkOverlay
               handLandmarksRef={handLandmarksRef}
               videoRef={videoRef}
+              frameCount={mpFrameCount}
             />
           )}
           {status === "active" && (

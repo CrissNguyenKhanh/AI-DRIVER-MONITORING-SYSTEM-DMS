@@ -34,6 +34,11 @@ export default function VoiceCarAssistant({
   const lastFinalRef     = useRef("");
   const lastFinalTimeRef = useRef(0);
 
+  // Rate limiting protection refs
+  const errorCountRef    = useRef(0);
+  const lastErrorTimeRef = useRef(0);
+  const restartDelayRef  = useRef(500); // Start with 500ms
+
   const syncArmed = useCallback((v) => {
     armedRef.current = v;
     setArmed(v);
@@ -208,23 +213,65 @@ export default function VoiceCarAssistant({
     };
 
     rec.onerror = (ev) => {
-      if (ev.error === "no-speech" || ev.error === "aborted") return;
+      console.error("[Voice API] Lỗi chi tiết:", ev.error, ev);
+      console.error("[Voice API] Error details:", {
+        error: ev.error,
+        message: ev.message,
+        type: ev.type,
+        timeStamp: ev.timeStamp,
+        lang: rec.lang,
+        state: recRef.current ? "has instance" : "no instance",
+        errorCount: errorCountRef.current
+      });
+      
+      // Track network/audio-capture errors for rate limiting
+      if (ev.error === "network" || ev.error === "audio-capture") {
+        errorCountRef.current += 1;
+        lastErrorTimeRef.current = Date.now();
+        // Exponential backoff: 500ms → 1s → 2s → 4s → 8s (max)
+        restartDelayRef.current = Math.min(8000, restartDelayRef.current * 2);
+        console.warn(`[Voice API] Rate limiting triggered. Retry #${errorCountRef.current}, delay: ${restartDelayRef.current}ms`);
+      }
+      
+      // Reset error count on success (after 30s no error)
+      if (ev.error === "no-speech" || ev.error === "aborted") {
+        const timeSinceLastError = Date.now() - lastErrorTimeRef.current;
+        if (timeSinceLastError > 30000) {
+          errorCountRef.current = 0;
+          restartDelayRef.current = 500;
+          console.log("[Voice API] Error count reset after 30s stability");
+        }
+        return;
+      }
+      
       setHint(`Mic error: ${ev.error}`);
     };
 
     rec.onend = () => {
+      console.log("[Voice API] Recognition ended, recRef match:", recRef.current === rec, "wantListen:", wantListenRef.current);
       if (recRef.current !== rec || !wantListenRef.current) return;
-      try { rec.start(); } catch (_) {
-        wantListenRef.current = false;
-        setListening(false);
-      }
+      
+      const delay = restartDelayRef.current;
+      console.log(`[Voice API] Auto-restarting in ${delay}ms (rate limiting protection)`);
+      
+      setTimeout(() => {
+        if (recRef.current !== rec || !wantListenRef.current) return;
+        console.log("[Voice API] Executing delayed restart...");
+        try { rec.start(); } catch (e) {
+          console.error("[Voice API] Restart failed:", e);
+          wantListenRef.current = false;
+          setListening(false);
+        }
+      }, delay);
     };
 
     try {
+      console.log("[Voice API] Starting recognition with lang:", speechLang);
       rec.start();
       setListening(true);
       setHint("Say 'activate' to start");
     } catch (e) {
+      console.error("[Voice API] Start failed:", e);
       wantListenRef.current = false;
       setHint(String(e.message || "Cannot open mic"));
       setListening(false);
@@ -234,11 +281,19 @@ export default function VoiceCarAssistant({
   startRecRef.current = startRec;
 
   useEffect(() => {
+    console.log("[Voice API] useEffect triggered - enabled:", enabled, "autoStart:", autoStartWhenEnabled);
     if (!enabled) { stopRec(); return; }
     if (!autoStartWhenEnabled) return;
     syncArmed(false);
-    const id = window.setTimeout(() => startRecRef.current(), 500);
-    return () => window.clearTimeout(id);
+    console.log("[Voice API] Scheduling recognition start in 500ms...");
+    const id = window.setTimeout(() => {
+      console.log("[Voice API] Executing scheduled startRec");
+      startRecRef.current();
+    }, 500);
+    return () => {
+      console.log("[Voice API] Cleaning up useEffect");
+      window.clearTimeout(id);
+    };
   }, [enabled, autoStartWhenEnabled, stopRec, syncArmed]);
 
   useEffect(() => () => stopRec(), [stopRec]);

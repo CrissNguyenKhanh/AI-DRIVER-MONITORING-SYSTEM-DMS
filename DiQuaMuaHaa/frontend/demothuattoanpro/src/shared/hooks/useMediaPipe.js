@@ -183,14 +183,16 @@ export function useMediaPipe({ videoRef, status, enabled = true }) {
         console.warn("MediaPipe FaceMesh init error", e);
       }
 
-      /*
-      // Tạm tắt Hands do lỗi CDN
+      // MediaPipe Hands - Đã bật lại sau khi sửa lỗi CDN
       try {
         await loadScript(
           "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js",
         );
         const H = window.Hands;
-        if (!H) return;
+        if (!H) {
+          console.warn("[MediaPipe] Hands not available on window");
+          return;
+        }
         const hands = new H({
           locateFile: (f) =>
             "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + f,
@@ -205,18 +207,20 @@ export function useMediaPipe({ videoRef, status, enabled = true }) {
         hands.onResults((results) => {
           if (!results.multiHandLandmarks || !results.multiHandLandmarks.length) {
             handLandmarksRef.current = [];
+            console.log("[MediaPipe] No hands detected");
             return;
           }
           handLandmarksRef.current = results.multiHandLandmarks.map((raw) =>
             raw.map((p) => ({ x: p.x, y: p.y, z: p.z })),
           );
+          console.log("[MediaPipe] Hand Data Updated:", handLandmarksRef.current);
         });
         await hands.initialize();
         handsRef.current = hands;
+        console.log("[MediaPipe] Hands initialized successfully");
       } catch (e) {
-        console.warn("MediaPipe Hands init error", e);
+        console.warn("[MediaPipe] Hands init error:", e);
       }
-      */
       setIsLoaded(true);
     }
 
@@ -255,7 +259,10 @@ export function useMediaPipe({ videoRef, status, enabled = true }) {
           if (hs) {
             try {
               await hs.send({ image: vid });
-            } catch (_) {}
+              console.log("[MediaPipe] hands.send() executed");
+            } catch (e) {
+              console.warn("[MediaPipe] hands.send() error:", e);
+            }
           }
         }
         setFrameCount((f) => f + 1);

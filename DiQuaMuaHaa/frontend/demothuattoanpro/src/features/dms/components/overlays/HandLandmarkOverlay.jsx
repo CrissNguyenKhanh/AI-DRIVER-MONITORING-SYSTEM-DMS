@@ -6,8 +6,9 @@ import { HAND_CONNECTIONS } from "../../../../shared/constants";
  * @param {Object} props
  * @param {React.RefObject} props.handLandmarksRef - Ref chứa mảng landmarks của các bàn tay (tối đa 2)
  * @param {React.RefObject} props.videoRef - Ref video element để lấy kích thước
+ * @param {number} props.frameCount - Số frame để ép component re-render khi có khung hình mới
  */
-function HandLandmarkOverlay({ handLandmarksRef, videoRef }) {
+function HandLandmarkOverlay({ handLandmarksRef, videoRef, frameCount }) {
   const canvasRef = useRef(null);
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -23,6 +24,9 @@ function HandLandmarkOverlay({ handLandmarksRef, videoRef }) {
     return () => ro.disconnect();
   }, [videoRef]);
   useEffect(() => {
+    console.log(`[HandOverlay] Drawing Frame: ${frameCount}`);
+    console.log(`[HandOverlay] Ref current:`, handLandmarksRef.current);
+    
     const canvas = canvasRef.current;
     if (!canvas) return;
     let rafId;
@@ -43,11 +47,19 @@ function HandLandmarkOverlay({ handLandmarksRef, videoRef }) {
       const ctx = canvas.getContext("2d");
       ctx.clearRect(0, 0, W, H);
       const hands = handLandmarksRef.current;
-      if (!hands || !hands.length) return;
+      if (!hands || !hands.length) {
+        console.log('[HandOverlay] No hands data to draw');
+        return;
+      }
+      console.log(`[HandOverlay] Drawing ${hands.length} hand(s), ${hands[0]?.length || 0} landmarks`);
       const mx = (x) => W - x * W,
         my = (y) => y * H;
       hands.forEach((lm, hi) => {
-        if (!lm || !lm.length) return;
+        if (!lm || !lm.length) {
+          console.log(`[HandOverlay] Hand ${hi}: no landmarks`);
+          return;
+        }
+        console.log(`[HandOverlay] Hand ${hi}: drawing ${lm.length} landmarks`);
         const lc = lineColors[hi % lineColors.length],
           dc = dotColors[hi % dotColors.length];
         ctx.strokeStyle = lc;
@@ -74,7 +86,7 @@ function HandLandmarkOverlay({ handLandmarksRef, videoRef }) {
     }
     draw();
     return () => cancelAnimationFrame(rafId);
-  }, [handLandmarksRef, videoRef]);
+  }, [handLandmarksRef, videoRef, frameCount]);
   return (
     <canvas
       ref={canvasRef}

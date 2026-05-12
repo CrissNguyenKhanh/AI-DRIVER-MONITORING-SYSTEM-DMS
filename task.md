@@ -636,3 +636,63 @@ Chuẩn bị tách phần logic còn lại trong `frontend/demothuattoanpro/src/
 - [x] Cập nhật `features/gestures/components/handDetection.jsx` (1 endpoint)
 - [x] Cập nhật `features/dms/components/core/OwnerVerifyGate.jsx` (3 endpoints + comment)
 - [x] Cập nhật `features/dms/components/core/face_detect.jsx` (3 endpoints + comment)
+
+#### Nhiệm vụ 5: Tối ưu Hiệu năng UI (React.memo) ✅
+**Tối ưu:** Thêm `React.memo` cho các component overlay để giảm re-render không cần thiết.
+
+**Lỗi phát sinh:** Sau khi thêm `React.memo`, component `HandLandmarkOverlay` không vẽ lại khi có dữ liệu xương tay mới (dữ liệu trong Ref thay đổi nhưng component không re-render).
+
+**Cách sửa:**
+- [x] Sửa `features/dms/components/overlays/HandLandmarkOverlay.jsx`:
+  - Thêm prop `frameCount` vào JSDoc và function signature
+  - Thêm `frameCount` vào dependency array của `useEffect` vẽ canvas (line 78)
+- [x] Sửa `features/dms/DmsDashboard.jsx`:
+  - Truyền thêm prop `frameCount={mpFrameCount}` vào `<HandLandmarkOverlay />` (line 1103)
+
+**Nguyên lý:** Khi `frameCount` thay đổi mỗi frame mới từ MediaPipe, component sẽ re-render và vẽ lại canvas mà không cần bỏ `React.memo`.
+
+**Lỗi tiếp theo phát hiện qua Debug:** Component vẽ hoạt động tốt (frame nhảy liên tục) nhưng `handLandmarksRef.current` luôn là mảng rỗng `[]`.
+- **Nguyên nhân gốc:** Code khởi tạo MediaPipe Hands trong `useMediaPipe.js` bị comment out (lines 186-219) với lý do "Tạm tắt Hands do lỗi CDN"
+- **Hậu quả:** `handsRef.current` luôn là `null` → `hands.send()` không bao giờ được gọi → `handLandmarksRef.current` không được cập nhật
+
+**Cách sửa lỗi Hands:**
+- [x] Bật lại MediaPipe Hands trong `shared/hooks/useMediaPipe.js`:
+  - Uncomment toàn bộ block khởi tạo Hands (lines 186-223)
+  - Thêm logs: `[MediaPipe] Hands initialized successfully`, `[MediaPipe] Hand Data Updated`, `[MediaPipe] hands.send() executed`
+  - Sửa catch block để log rõ ràng lỗi hơn
+- [x] Thêm debug logs vào `HandLandmarkOverlay.jsx`:
+  - `[HandOverlay] Drawing Frame: X`
+  - `[HandOverlay] Ref current: [...]`
+  - `[HandOverlay] Drawing N hand(s), M landmarks`
+  - `[HandOverlay] No hands data to draw`
+
+**Kết quả:** Sau khi bật lại, xương tay hiển thị bình thường khi đưa tay vào camera.
+
+#### Nhiệm vụ 6: Fix Voice API "network" Error ✅
+**Lỗi:** Mic hiển thị "Mic error: network" sau thời gian chạy (~2-3 phút), dù đã chạy trên localhost (secure context).
+
+**Nguyên nhân:** Google Web Speech API có rate limiting. Khi không có speech, recognition tự động restart liên tục, tích lũy request và bị Google chặn tạm thời.
+
+**Vòng lặp gây lỗi:**
+```
+no-speech → onend → restart (instant) → no-speech → onend → restart...
+↑________________________________________________________|
+           (Spam API khi không nói gì)
+```
+
+**Giải pháp - Rate Limiting với Exponential Backoff:**
+- [x] Thêm tracking refs trong `VoiceCarAssistant.jsx`:
+  - `errorCountRef`: Đếm số lỗi network liên tiếp
+  - `lastErrorTimeRef`: Timestamp lỗi cuối
+  - `restartDelayRef`: Delay restart (500ms → 1s → 2s → 4s → 8s max)
+
+- [x] Sửa `onerror` handler:
+  - Tracking `network` và `audio-capture` errors
+  - Exponential backoff: delay × 2 mỗi lần lỗi (max 8s)
+  - Auto reset error count sau 30s không lỗi
+
+- [x] Sửa `onend` handler:
+  - Thêm `setTimeout` với delay động trước restart
+  - Log rõ ràng: "Auto-restarting in Xms (rate limiting protection)"
+
+**Kết quả:** Giảm thiểu lỗi `network`, tự động phục hồi sau gián đoạn.
