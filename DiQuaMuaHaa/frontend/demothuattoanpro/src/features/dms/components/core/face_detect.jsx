@@ -316,7 +316,7 @@ export default function FaceDetect() {
   const [faceVisible, setFaceVisible] = useState(true);
   const [verifyStatus, setVerifyStatus] = useState("IDLE");
 
-  // Identity state (from /api/identity/verify)
+  // Identity state (from /api/auth/verify)
   const [hasRegistered, setHasRegistered] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
   const [similarity, setSimilarity] = useState(null);
@@ -445,7 +445,7 @@ export default function FaceDetect() {
         setVerifyStatus("VERIFYING");
         setLastUpdated(new Date().toLocaleTimeString());
 
-        const vRes = await fetch(`${API_BASE}/api/identity/verify`, {
+        const vRes = await fetch(`${API_BASE}/api/auth/verify`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -550,7 +550,7 @@ export default function FaceDetect() {
     setRegisterLoading(true);
     setApiError("");
     try {
-      const res = await fetch(`${API_BASE}/api/identity/register`, {
+      const res = await fetch(`${API_BASE}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

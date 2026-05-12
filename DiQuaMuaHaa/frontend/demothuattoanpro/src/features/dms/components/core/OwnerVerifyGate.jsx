@@ -38,7 +38,7 @@ async function captureBurstFrames(videoEl, count = BURST_FRAMES, gapMs = BURST_G
 
 /**
  * OwnerVerifyGate
- * - Chuyên verify identity (driver_id) bằng /api/identity/verify
+ * - Chuyên verify identity (driver_id) bằng /api/auth/verify
  * - Điều khiển unlock/lock theo streak
  *
  * Props:
@@ -95,7 +95,7 @@ export default function OwnerVerifyGate({
       const frames = await captureBurstFrames(vid);
       if (!frames || frames.length === 0) return null;
 
-      const res = await fetch(`${apiBase}/api/identity/verify`, {
+      const res = await fetch(`${apiBase}/api/auth/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ driver_id: driverId, images: frames }),
@@ -106,7 +106,7 @@ export default function OwnerVerifyGate({
     }
 
     async function createDecisionRequest(similarity, threshold) {
-      const res = await fetch(`${apiBase}/api/identity/request_decision`, {
+      const res = await fetch(`${apiBase}/api/auth/request_decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -124,7 +124,7 @@ export default function OwnerVerifyGate({
 
     async function pollDecisionStatus(requestId) {
       const res = await fetch(
-        `${apiBase}/api/identity/decision_status?request_id=${encodeURIComponent(String(requestId))}`,
+        `${apiBase}/api/auth/decision_status?request_id=${encodeURIComponent(String(requestId))}`,
       );
       const data = await res.json().catch(() => ({}));
       return { ok: res.ok, data };

@@ -605,4 +605,34 @@ Chuẩn bị tách phần logic còn lại trong `frontend/demothuattoanpro/src/
 - [x] Bóc tách `data/api/runtime.py`: Tách `src/services/model_loader.py` (5 ML models)
 - [x] Bóc tách `data/api/runtime.py`: Tách `src/repositories/db_connection.py` (DB helpers)
 - [x] Refactor `runtime.py` để import từ các module mới
-- [ ] Xóa các folder rỗng: `src/repositories/`, `src/services/`, `src/utils/`, `src/app/`, `src/api/` (nếu chỉ còn `__init__.py`)
+- [x] Fix lỗi 500: Thêm import PATHs và auto-load models
+- [x] Xóa các folder rỗng: `src/repositories/`, `src/services/`, `src/utils/`, `src/app/`, `src/api/` (nếu chỉ còn `__init__.py`)
+
+#### Nhiệm vụ 4: Sprint 4 - Chuẩn hóa và Đổi tên API Routes ✅
+**Backend Changes:**
+- [x] Tạo `backend/src/api/routers/auth_routes.py` (từ `routes_identity.py`)
+  - Đổi `/api/identity/*` → `/api/auth/*`
+  - Giữ `/api/telegram/webhook`
+- [x] Tạo `backend/src/api/routers/monitor_routes.py` (từ `routes_prediction.py`)
+  - Đổi `/api/landmark/predict_from_frame` → `/api/monitor/face`
+  - Đổi `/api/landmark/predict` → `/api/monitor/face/predict`
+  - Đổi `/api/hand/predict_from_frame` → `/api/monitor/hand`
+  - Đổi `/api/hand/predict` → `/api/monitor/hand/predict`
+  - Đổi `/api/smoking/predict_from_frame` → `/api/monitor/smoking`
+  - Đổi `/api/phone/predict_from_frame` → `/api/monitor/phone`
+  - Đổi `/api/phone/detect_from_frame` → `/api/monitor/phone/detect`
+  - Giữ `/health`
+- [x] Tạo `backend/src/api/routers/session_routes.py` (từ `routes_driving.py`)
+  - Đổi `/api/driving/session/start` → `/api/session/start`
+  - Đổi `/api/driving/session/end` → `/api/session/end`
+  - Đổi `/api/driving/session/alert` → `/api/session/alert`
+  - Đổi `/api/driving/sessions` → `/api/session/list`
+  - Đổi `/api/driving/session/<id>` → `/api/session/<id>`
+- [x] Cập nhật `backend/data/api/api.py` để import từ routers mới
+
+**Frontend Changes:**
+- [x] Cập nhật `shared/api/drivingSessionApi.js` (4 endpoints)
+- [x] Cập nhật `features/dms/DmsDashboard.jsx` (3 endpoints)
+- [x] Cập nhật `features/gestures/components/handDetection.jsx` (1 endpoint)
+- [x] Cập nhật `features/dms/components/core/OwnerVerifyGate.jsx` (3 endpoints + comment)
+- [x] Cập nhật `features/dms/components/core/face_detect.jsx` (3 endpoints + comment)

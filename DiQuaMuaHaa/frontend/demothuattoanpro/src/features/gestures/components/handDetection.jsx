@@ -209,7 +209,7 @@ function HandDetection() {
         const imageBase64 = canvas.toDataURL("image/jpeg", 0.85);
 
         const res = await fetch(
-          `${getDmsApiBase()}/api/hand/predict_from_frame`,
+          `${getDmsApiBase()}/api/monitor/hand`,
           {
             method: "POST",
             headers: {

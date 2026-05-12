@@ -211,7 +211,7 @@ export default function DriverMonitorDMS() {
       if (!merged.profile_image_base64 && id) {
         try {
           const r = await fetch(
-            `${API_BASE}/api/identity/driver_profile?driver_id=${encodeURIComponent(id)}`,
+            `${API_BASE}/api/auth/driver_profile?driver_id=${encodeURIComponent(id)}`,
           );
           const d = await r.json();
           if (r.ok && d.driver_id) {
@@ -420,7 +420,7 @@ export default function DriverMonitorDMS() {
         }
 
         // Chỉ gọi landmark REST — smoking đã chuyển sang WebSocket
-        const res = await fetch(`${API_BASE}/api/landmark/predict_from_frame`, {
+        const res = await fetch(`${API_BASE}/api/monitor/face`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ image }),
@@ -480,7 +480,7 @@ export default function DriverMonitorDMS() {
           tid = setTimeout(loop, HAND_API_INTERVAL_MS);
           return;
         }
-        const res = await fetch(`${API_BASE}/api/hand/predict_from_frame`, {
+        const res = await fetch(`${API_BASE}/api/monitor/hand`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ image }),
