@@ -385,7 +385,7 @@ def phone_predict_from_frame() -> Any:
 @app.post("/api/phone/detect_from_frame")
 def phone_detect_from_frame() -> Any:
     """
-    Dùng YOLO (phone_yolo.pt) để detect vị trí điện thoại trong frame.
+    Dùng YOLO COCO pretrained để detect vị trí điện thoại (class 67 = cell phone).
 
     Body JSON:
       { "image": "data:image/jpeg;base64,..." }
@@ -398,12 +398,12 @@ def phone_detect_from_frame() -> Any:
       }
     với x,y,w,h là toạ độ chuẩn hoá [0,1] theo width/height, (x,y) là tâm bbox.
     """
-    if phone_yolo_model is None and phone_yolo_onnx is None:
+    if phone_yolo_model is None:
         return (
             jsonify(
                 {
-                    "error": "YOLO phone model chưa được load. Hãy train và lưu phone_yolo.pt, sau đó restart API.",
-                    "model_path": str(PHONE_YOLO_MODEL_PATH),
+                    "error": "YOLO COCO model chưa được load. Hãy cài ultralytics và restart API.",
+                    "phone_class_id": 67,
                 }
             ),
             500,
@@ -440,11 +440,12 @@ def phone_detect_from_frame() -> Any:
     if img is None:
         return jsonify({"error": "Không decode được ảnh từ base64."}), 400
 
-    # Run YOLO
+    # Run YOLO COCO - filter class 67 (cell phone)
+    PHONE_CLASS_ID = 67  # COCO class: cell phone
+    CONF_THRESHOLD = 0.4
+
     try:
-        if phone_yolo_onnx is not None:
-            return jsonify({"boxes": _yolo_onnx_detect(phone_yolo_onnx, img, conf_thres=0.4)})
-        results = phone_yolo_model(img, conf=0.4, iou=0.5, verbose=False)[0]  # type: ignore[attr-defined]
+        results = phone_yolo_model(img, classes=[PHONE_CLASS_ID], conf=CONF_THRESHOLD, verbose=False ,imgsz=320  )[0]  # type: ignore[attr-defined]
     except Exception as exc:
         return jsonify({"error": f"Lỗi YOLO detect: {exc}"}), 500
 
@@ -454,15 +455,10 @@ def phone_detect_from_frame() -> Any:
         # xywhn: normalized center x,y,w,h in [0,1]
         xywhn = results.boxes.xywhn.cpu().numpy()  # type: ignore[attr-defined]
         confs = results.boxes.conf.cpu().numpy()  # type: ignore[attr-defined]
-        clss = results.boxes.cls.cpu().numpy().astype(int)  # type: ignore[attr-defined]
         names = results.names  # type: ignore[attr-defined]
 
-        for (cx, cy, w, h), c, cls_idx in zip(xywhn, confs, clss):
-            label = (
-                str(names.get(int(cls_idx), int(cls_idx)))
-                if isinstance(names, dict)
-                else str(int(cls_idx))
-            )
+        for (cx, cy, w, h), c in zip(xywhn, confs):
+            label = str(names.get(PHONE_CLASS_ID, "phone")) if isinstance(names, dict) else "phone"
             boxes_out.append(
                 {
                     "label": label,

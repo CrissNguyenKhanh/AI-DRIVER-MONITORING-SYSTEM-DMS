@@ -9,8 +9,8 @@ export const EAR_HISTORY = 90;
 export const EYES_CLOSED_WARN_MS = 3000;
 
 // REST / WebSocket timing
-export const API_INTERVAL_MS = 1000;
-export const HAND_API_INTERVAL_MS = 1000;
+export const API_INTERVAL_MS = 1500 ;
+export const HAND_API_INTERVAL_MS = 800;
 export const PHONE_WS_FPS = 20;
 export const SMOKING_WS_FPS = 4;
 

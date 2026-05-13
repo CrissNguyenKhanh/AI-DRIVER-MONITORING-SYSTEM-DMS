@@ -8,6 +8,11 @@ from src.api.routers import monitor_routes  # noqa: F401
 from src.api.routers import session_routes  # noqa: F401
 from . import socket_handlers  # noqa: F401
 
+# Bind socketio vào app
+socketio.init_app(app)
+
 __all__ = ["app", "socketio"]
+
+# Chạy trực tiếp hoặc qua python -m đều được
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=8000, debug=True, allow_unsafe_werkzeug=True)

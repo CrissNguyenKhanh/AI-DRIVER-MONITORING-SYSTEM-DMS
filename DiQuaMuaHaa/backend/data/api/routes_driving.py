@@ -1,5 +1,5 @@
 from .runtime import *
-
+from data.api.socket_instance import socketio
 
 @app.post("/api/driving/session/start")
 def driving_session_start() -> Any:
@@ -242,4 +242,3 @@ def driving_session_detail(session_id: int) -> Any:
     )
 
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")

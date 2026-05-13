@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from urllib import parse, request as urlrequest
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from data.api.socket_instance import socketio
 
 # Import from refactored modules
 from src.core.config import (
@@ -424,7 +425,6 @@ def _get_face_embedding_from_image(image_b64: str) -> List[float] | None:
 
 
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 __all__ = [name for name in globals() if not name.startswith("__")]
 

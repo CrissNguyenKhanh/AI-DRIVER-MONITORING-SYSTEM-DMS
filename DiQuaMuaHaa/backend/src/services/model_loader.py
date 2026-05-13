@@ -30,7 +30,9 @@ idx_to_label: Dict[int, str] = {}
 hand_artifact: Dict[str, Any] | None = None
 hand_model = None
 hand_idx_to_label: Dict[int, str] = {}
-hand_vec_len: int = 126  # khớp artifact vec_len (63 = collect_hands normalize + dominant hand)
+hand_vec_len: int = (
+    126  # khớp artifact vec_len (63 = collect_hands normalize + dominant hand)
+)
 
 smoking_artifact: Dict[str, Any] | None = None
 smoking_model = None
@@ -47,6 +49,7 @@ phone_yolo_onnx = None
 # YOLO availability check
 try:
     from ultralytics import YOLO  # type: ignore
+
     YOLO_AVAILABLE = True
 except Exception:
     YOLO_AVAILABLE = False
@@ -123,39 +126,24 @@ def load_phone_model() -> None:
         except (TypeError, ValueError):
             phone_image_size = None
     except Exception as e:
-        print(f"[WARN] phone_model.pkl không load được (numpy/sklearn không tương thích): {e}")
+        print(
+            f"[WARN] phone_model.pkl không load được (numpy/sklearn không tương thích): {e}"
+        )
         phone_artifact = None
         phone_model = None
         phone_idx_to_label = {}
         phone_image_size = None
 
 
+# model_loader.py - load_phone_yolo_model chỉ load model, KHÔNG start worker
 def load_phone_yolo_model() -> None:
-    """Load the phone YOLO model (ONNX preferred, fallback to PyTorch)."""
     global phone_yolo_model, phone_yolo_onnx
-    
-    # Ưu tiên ONNX nếu có (nhẹ và ổn định), fallback sang .pt
-    if PHONE_YOLO_ONNX_PATH.exists():
-        try:
-            import onnxruntime as ort
-            sess_opts = ort.SessionOptions()
-            sess_opts.inter_op_num_threads = 1
-            sess_opts.intra_op_num_threads = 1
-            phone_yolo_onnx = ort.InferenceSession(
-                str(PHONE_YOLO_ONNX_PATH),
-                sess_options=sess_opts,
-                providers=["CPUExecutionProvider"],
-            )
-            phone_yolo_model = None
-            print("[INFO] phone_yolo.onnx loaded")
-            return
-        except Exception as e:
-            print(f"[WARN] phone_yolo.onnx không load được: {e}")
-            phone_yolo_onnx = None
 
-    if not PHONE_YOLO_MODEL_PATH.exists() or not YOLO_AVAILABLE:
+    if not YOLO_AVAILABLE:
         phone_yolo_model = None
+        phone_yolo_onnx = None
         return
+
     try:
         import torch as _torch
         _orig_load = _torch.load
@@ -163,13 +151,39 @@ def load_phone_yolo_model() -> None:
             kwargs.setdefault("weights_only", False)
             return _orig_load(f, *args, **kwargs)
         _torch.load = _patched_load
-        phone_yolo_model = YOLO(str(PHONE_YOLO_MODEL_PATH))
+
+        phone_yolo_model = YOLO("yolov8n.pt")
         _torch.load = _orig_load
+        print("[INFO] YOLO COCO model loaded")
+
+        # ── Xuất ONNX nếu chưa có ──
+        onnx_path = Path("yolov8n_phone.onnx")
+        if not onnx_path.exists():
+            print("[INFO] Đang xuất ONNX lần đầu...")
+            phone_yolo_model.export(format="onnx", imgsz=256, simplify=True)
+            import shutil
+            shutil.move("yolov8n.onnx", str(onnx_path))
+            print(f"[INFO] Đã xuất ONNX: {onnx_path}")
+
+        # ── Load ONNX Runtime ──
+        try:
+            import onnxruntime as ort
+            phone_yolo_onnx = ort.InferenceSession(
+                str(onnx_path),
+                providers=["CPUExecutionProvider"]
+            )
+            print("[INFO] ONNX Runtime loaded — dùng ONNX thay YOLO")
+        except Exception as e:
+            print(f"[WARN] ONNX Runtime không load được, dùng YOLO: {e}")
+            phone_yolo_onnx = None
+
+        phone_yolo_onnx = None  # tạm dùng YOLO trước
+
     except Exception as e:
-        print(f"[WARN] phone_yolo.pt không load được: {e}")
+        print(f"[WARN] YOLO không load được: {e}")
         phone_yolo_model = None
-
-
+        phone_yolo_onnx = None
+        
 # Auto-load all models on module import
 load_model()
 load_hand_model()

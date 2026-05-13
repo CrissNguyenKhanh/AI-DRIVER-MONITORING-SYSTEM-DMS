@@ -42,7 +42,7 @@ import {
 
 const API_BASE = getDmsApiBase();
 const HAND_QUICK_CONFIDENCE = 0.75;
-const IDENTITY_BURST_FRAMES = 5;
+const IDENTITY_BURST_FRAMES = 1;
 const IDENTITY_BURST_GAP_MS = 110;
 const DRIVER_ID_KEY = "driver_owner_id_v1";
 const DEFAULT_DRIVER_ID = "driver_001";

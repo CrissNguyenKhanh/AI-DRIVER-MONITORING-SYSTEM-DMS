@@ -228,10 +228,10 @@ export function useWebSocket({
       if (!vid || vid.readyState < 2) return;
 
       const c = document.createElement("canvas");
-      c.width = 320;
-      c.height = 240;
-      c.getContext("2d").drawImage(vid, 0, 0, 320, 240);
-      const image = c.toDataURL("image/jpeg", 0.55);
+      c.width = 640;
+      c.height = 480;
+      c.getContext("2d").drawImage(vid, 0, 0, 640, 480);
+      const image = c.toDataURL("image/jpeg", 0.65);
 
       wsPendingCountRef.current += 1;
       wsPendingRef.current = true;
