@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { getDmsApiBase } from "../../../../config/apiEndpoints";
 import { getWebcamSupportErrorMessage } from "../../../../shared/contexts/cameraContext";
 import { speakOwnerGreeting, warmSpeechVoices } from "../../../../shared/utils";
@@ -9,6 +10,7 @@ const BURST_GAP_MS = 120;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const DRIVER_ID_KEY = "driver_owner_id_v1";
 const DRIVER_IMAGE_KEY = "driver_owner_image_v1";
+const FACE_VERIFIED_KEY = "dms_face_verified_v1";
 const DEFAULT_DRIVER_ID = "driver_001";
 
 // Radar scan canvas overlay
@@ -305,6 +307,7 @@ function PulseDot({ color = "#00ffa0" }) {
 }
 
 export default function FaceDetect() {
+  const navigate = useNavigate();
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
@@ -331,6 +334,7 @@ export default function FaceDetect() {
   const similarityBufferRef = useRef([]);
   const lastDecisionRef = useRef(null);
   const ownerWelcomeSpokenRef = useRef(false);
+  const redirectTimerRef = useRef(null);
 
   // Load saved driver image & id from localStorage (just UI, not the signature)
   useEffect(() => {
@@ -349,6 +353,45 @@ export default function FaceDetect() {
   useEffect(() => {
     ownerWelcomeSpokenRef.current = false;
   }, [driverId]);
+
+  const clearVerifiedFaceSession = useCallback(() => {
+    try {
+      window.sessionStorage.removeItem(FACE_VERIFIED_KEY);
+    } catch {}
+  }, []);
+
+  const completeFaceVerification = useCallback(() => {
+    try {
+      window.sessionStorage.setItem(FACE_VERIFIED_KEY, "true");
+    } catch {}
+
+    if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
+    redirectTimerRef.current = setTimeout(() => {
+      navigate("/", { replace: true });
+    }, 900);
+  }, [navigate]);
+
+  useEffect(() => {
+    if (hasRegistered && isOwner && verifyStatus === "OWNER") {
+      completeFaceVerification();
+    }
+
+    if (hasRegistered && !isOwner && verifyStatus === "INTRUDER") {
+      clearVerifiedFaceSession();
+    }
+  }, [
+    hasRegistered,
+    isOwner,
+    verifyStatus,
+    completeFaceVerification,
+    clearVerifiedFaceSession,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
+    };
+  }, []);
 
   const startWebcam = async () => {
     const supportErr = getWebcamSupportErrorMessage();
@@ -586,6 +629,7 @@ export default function FaceDetect() {
   }, [driverId, captureBurstFrames]);
 
   const handleClearOwner = () => {
+    clearVerifiedFaceSession();
     setHasRegistered(false);
     setIsOwner(false);
     setSimilarity(null);
