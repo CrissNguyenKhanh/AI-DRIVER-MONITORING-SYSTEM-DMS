@@ -278,6 +278,12 @@ def bind_driver_telegram_owner() -> Any:
         with conn.cursor() as cur:
             _ensure_identity_tables(cur)
             cur.execute(
+                "SELECT driver_id FROM driver_identity WHERE driver_id = %s LIMIT 1",
+                (driver_id,),
+            )
+            if not cur.fetchone():
+                return jsonify({"error": "driver_id chua duoc dang ky."}), 404
+            cur.execute(
                 """
                 INSERT INTO driver_telegram_owner
                     (driver_id, telegram_chat_id, telegram_user_id, created_at, updated_at)
@@ -625,6 +631,13 @@ def telegram_webhook() -> Any:
             try:
                 with conn.cursor() as cur:
                     _ensure_identity_tables(cur)
+                    cur.execute(
+                        "SELECT driver_id FROM driver_identity WHERE driver_id = %s LIMIT 1",
+                        (driver_id,),
+                    )
+                    if not cur.fetchone():
+                        _telegram_send_text(chat_id, "driver_id chua duoc dang ky.")
+                        return jsonify({"ok": True})
                     cur.execute(
                         """
                         INSERT INTO driver_telegram_owner

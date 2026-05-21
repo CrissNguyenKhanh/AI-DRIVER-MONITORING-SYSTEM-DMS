@@ -19,6 +19,13 @@ def driving_session_start() -> Any:
     try:
         with conn.cursor() as cur:
             _ensure_driving_session_tables(cur)
+            if driver_id:
+                cur.execute(
+                    "SELECT driver_id FROM driver_identity WHERE driver_id = %s LIMIT 1",
+                    (driver_id,),
+                )
+                if not cur.fetchone():
+                    return jsonify({"error": "driver_id chua duoc dang ky."}), 404
             cur.execute(
                 """
                 INSERT INTO driving_sessions (driver_id, label, started_at, ended_at)

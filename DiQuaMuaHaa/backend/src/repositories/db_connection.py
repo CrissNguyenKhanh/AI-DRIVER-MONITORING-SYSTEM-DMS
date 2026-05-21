@@ -26,7 +26,7 @@ def _ensure_identity_tables(cur) -> None:
             embedding_json LONGTEXT NOT NULL,
             image_base64   LONGTEXT,
             created_at     DATETIME NOT NULL
-        )
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
     cur.execute(
@@ -36,8 +36,13 @@ def _ensure_identity_tables(cur) -> None:
             telegram_chat_id  BIGINT NOT NULL,
             telegram_user_id  BIGINT NULL,
             created_at        DATETIME NOT NULL,
-            updated_at        DATETIME NOT NULL
-        )
+            updated_at        DATETIME NOT NULL,
+            CONSTRAINT fk_dto_driver
+                FOREIGN KEY (driver_id)
+                REFERENCES driver_identity (driver_id)
+                ON UPDATE CASCADE
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
     cur.execute(
@@ -57,14 +62,21 @@ def _ensure_identity_tables(cur) -> None:
             telegram_message_id  BIGINT NULL,
             INDEX idx_identity_driver (driver_id),
             INDEX idx_identity_status (status),
-            INDEX idx_identity_expires (expires_at)
-        )
+            INDEX idx_identity_expires (expires_at),
+            CONSTRAINT fk_idr_driver
+                FOREIGN KEY (driver_id)
+                REFERENCES driver_identity (driver_id)
+                ON UPDATE CASCADE
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
+    _ensure_identity_relations(cur)
 
 
 def _ensure_driving_session_tables(cur) -> None:
     """Ensure driving session tracking tables exist."""
+    _ensure_identity_tables(cur)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS driving_sessions (
@@ -74,7 +86,12 @@ def _ensure_driving_session_tables(cur) -> None:
             started_at DATETIME NOT NULL,
             ended_at DATETIME NULL,
             INDEX idx_driving_driver (driver_id),
-            INDEX idx_driving_started (started_at)
+            INDEX idx_driving_started (started_at),
+            CONSTRAINT fk_driving_sessions_driver
+                FOREIGN KEY (driver_id)
+                REFERENCES driver_identity (driver_id)
+                ON UPDATE CASCADE
+                ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
@@ -85,8 +102,144 @@ def _ensure_driving_session_tables(cur) -> None:
             alert_type VARCHAR(32) NOT NULL,
             count INT NOT NULL DEFAULT 0,
             PRIMARY KEY (session_id, alert_type),
-            INDEX idx_dsa_session (session_id)
+            INDEX idx_dsa_session (session_id),
+            CONSTRAINT fk_dsa_session
+                FOREIGN KEY (session_id)
+                REFERENCES driving_sessions (id)
+                ON UPDATE CASCADE
+                ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+    _ensure_driving_session_relations(cur)
+
+
+def _constraint_exists(cur, constraint_name: str) -> bool:
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.TABLE_CONSTRAINTS
+        WHERE CONSTRAINT_SCHEMA = DATABASE()
+          AND CONSTRAINT_NAME = %s
+          AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+        LIMIT 1
+        """,
+        (constraint_name,),
+    )
+    return cur.fetchone() is not None
+
+
+def _ensure_table_engine(cur, table_name: str) -> None:
+    cur.execute(f"ALTER TABLE `{table_name}` ENGINE=InnoDB")
+
+
+def _ensure_foreign_key(cur, table_name: str, constraint_name: str, definition: str) -> None:
+    if _constraint_exists(cur, constraint_name):
+        return
+    cur.execute(f"ALTER TABLE `{table_name}` ADD CONSTRAINT {constraint_name} {definition}")
+
+
+def _ensure_identity_relations(cur) -> None:
+    """Add foreign keys for databases created before constraints were added."""
+    for table_name in (
+        "driver_identity",
+        "driver_telegram_owner",
+        "identity_decision_requests",
+    ):
+        _ensure_table_engine(cur, table_name)
+
+    _repair_identity_orphans(cur)
+
+    _ensure_foreign_key(
+        cur,
+        "driver_telegram_owner",
+        "fk_dto_driver",
+        """
+        FOREIGN KEY (driver_id)
+        REFERENCES driver_identity (driver_id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+        """,
+    )
+    _ensure_foreign_key(
+        cur,
+        "identity_decision_requests",
+        "fk_idr_driver",
+        """
+        FOREIGN KEY (driver_id)
+        REFERENCES driver_identity (driver_id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+        """,
+    )
+
+
+def _ensure_driving_session_relations(cur) -> None:
+    """Add driving-session foreign keys for existing databases."""
+    for table_name in ("driving_sessions", "driving_session_alerts"):
+        _ensure_table_engine(cur, table_name)
+
+    _repair_driving_session_orphans(cur)
+
+    _ensure_foreign_key(
+        cur,
+        "driving_sessions",
+        "fk_driving_sessions_driver",
+        """
+        FOREIGN KEY (driver_id)
+        REFERENCES driver_identity (driver_id)
+        ON UPDATE CASCADE
+        ON DELETE SET NULL
+        """,
+    )
+    _ensure_foreign_key(
+        cur,
+        "driving_session_alerts",
+        "fk_dsa_session",
+        """
+        FOREIGN KEY (session_id)
+        REFERENCES driving_sessions (id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+        """,
+    )
+
+
+def _repair_identity_orphans(cur) -> None:
+    cur.execute(
+        """
+        DELETE dto
+        FROM driver_telegram_owner dto
+        LEFT JOIN driver_identity di ON di.driver_id = dto.driver_id
+        WHERE di.driver_id IS NULL
+        """
+    )
+    cur.execute(
+        """
+        DELETE idr
+        FROM identity_decision_requests idr
+        LEFT JOIN driver_identity di ON di.driver_id = idr.driver_id
+        WHERE di.driver_id IS NULL
+        """
+    )
+
+
+def _repair_driving_session_orphans(cur) -> None:
+    cur.execute(
+        """
+        UPDATE driving_sessions ds
+        LEFT JOIN driver_identity di ON di.driver_id = ds.driver_id
+        SET ds.driver_id = NULL
+        WHERE ds.driver_id IS NOT NULL
+          AND di.driver_id IS NULL
+        """
+    )
+    cur.execute(
+        """
+        DELETE dsa
+        FROM driving_session_alerts dsa
+        LEFT JOIN driving_sessions ds ON ds.id = dsa.session_id
+        WHERE ds.id IS NULL
         """
     )
 
