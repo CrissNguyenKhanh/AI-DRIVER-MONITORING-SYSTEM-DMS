@@ -4,6 +4,7 @@ from .runtime import app, socketio
 
 # Import for side effects: these modules register Flask routes / Socket.IO handlers.
 from src.api.routers import auth_routes  # noqa: F401
+from src.api.routers import admin_routes  # noqa: F401
 from src.api.routers import monitor_routes  # noqa: F401
 from src.api.routers import session_routes  # noqa: F401
 from . import socket_handlers  # noqa: F401

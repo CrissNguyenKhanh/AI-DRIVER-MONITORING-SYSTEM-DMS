@@ -5,6 +5,7 @@ import Login from "./features/auth/components/Login";
 import Thumuctest from "./features/dms/DmsDashboard";
 import DectionHand from "./features/gestures/components/handDetection";
 import Verification from "./features/auth/components/verification";
+import AdminDashboard from "./features/admin/AdminDashboard";
 
 import { FaceDetect } from "./features/dms/components";
 
@@ -31,6 +32,7 @@ function App() {
       <Routes>
         <Route path="/" element={<ProtectedDashboard />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/admin" element={<AdminDashboard />} />
         <Route path="/dashboard" element={<Navigate to="/" replace />} />
         {/* Trang thống kê */}
         {/* Trang Test 3 */}
