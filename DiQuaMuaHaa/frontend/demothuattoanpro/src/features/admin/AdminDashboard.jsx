@@ -6,6 +6,8 @@ import {
   Car,
   CheckCircle2,
   Clock3,
+  Download,
+  FileText,
   MapPinned,
   RefreshCw,
   ShieldCheck,
@@ -67,6 +69,269 @@ function fmtDate(value) {
 function imageSrc(raw) {
   if (!raw) return "";
   return raw.startsWith("data:") ? raw : `data:image/jpeg;base64,${raw}`;
+}
+
+function safeFileName(value) {
+  return String(value || "driver")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "driver";
+}
+
+function csvCell(value) {
+  if (value === null || value === undefined) return "";
+  const text = String(value).replace(/\r?\n/g, " ");
+  return /[",;\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadTextFile(filename, content, type = "text/csv;charset=utf-8") {
+  const blob = new Blob(["\ufeff", content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function buildDriverCsv(driver) {
+  const rows = [];
+  rows.push(["DMS DRIVER REPORT"]);
+  rows.push(["Driver ID", driver.driver_id]);
+  rows.push(["Name", driver.name]);
+  rows.push(["Registered at", driver.registered_at]);
+  rows.push(["Telegram bound", driver.telegram?.bound ? "yes" : "no"]);
+  rows.push(["Telegram chat id", driver.telegram?.chat_id || ""]);
+  rows.push(["Total sessions", driver.stats?.sessions || 0]);
+  rows.push(["Active sessions", driver.stats?.active_sessions || 0]);
+  rows.push(["Total minutes", driver.stats?.total_minutes || 0]);
+  rows.push(["Total alerts", driver.stats?.total_alerts || 0]);
+  rows.push(["GPS points", driver.stats?.gps_points || 0]);
+  rows.push([]);
+
+  rows.push(["ALERT SUMMARY"]);
+  rows.push(["Alert type", "Count"]);
+  Object.entries(driver.stats?.alerts || {}).forEach(([key, value]) => {
+    rows.push([ALERT_LABELS[key] || key, value]);
+  });
+  rows.push([]);
+
+  rows.push(["SESSION HISTORY"]);
+  rows.push([
+    "Session ID",
+    "Status",
+    "Started at",
+    "Ended at",
+    "Duration min",
+    "Alert count",
+    "Route source",
+    "GPS points",
+    "Address",
+    "Alerts JSON",
+  ]);
+  (driver.sessions || []).forEach((session) => {
+    rows.push([
+      session.session_id,
+      session.status,
+      session.started_at,
+      session.ended_at || "",
+      session.duration_min,
+      session.alert_count,
+      session.route_source,
+      session.location_count,
+      session.address,
+      JSON.stringify(session.alerts || {}),
+    ]);
+  });
+  rows.push([]);
+
+  rows.push(["TELEGRAM DECISIONS"]);
+  rows.push([
+    "Request ID",
+    "Status",
+    "Reason",
+    "Similarity",
+    "Threshold",
+    "Requested at",
+    "Decided at",
+    "Telegram chat id",
+  ]);
+  (driver.decisions || []).forEach((item) => {
+    rows.push([
+      item.request_id,
+      item.status,
+      item.reason || "",
+      item.similarity ?? "",
+      item.threshold ?? "",
+      item.requested_at,
+      item.decided_at || "",
+      item.telegram_chat_id || "",
+    ]);
+  });
+  rows.push([]);
+
+  rows.push(["GPS ROUTE POINTS"]);
+  rows.push(["Session ID", "Point", "Lat", "Lng", "Accuracy", "Speed", "Heading", "Recorded at"]);
+  (driver.sessions || []).forEach((session) => {
+    (session.route || []).forEach((point, idx) => {
+      rows.push([
+        session.session_id,
+        point.label || idx + 1,
+        point.lat,
+        point.lng,
+        point.accuracy ?? "",
+        point.speed ?? "",
+        point.heading ?? "",
+        point.recorded_at || "",
+      ]);
+    });
+  });
+
+  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+function exportDriverCsv(driver) {
+  if (!driver) return;
+  const stamp = new Date().toISOString().slice(0, 10);
+  downloadTextFile(
+    `dms_report_${safeFileName(driver.driver_id)}_${stamp}.csv`,
+    buildDriverCsv(driver),
+  );
+}
+
+function htmlEscape(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function openDriverPdfReport(driver) {
+  if (!driver) return;
+  const alertRows = Object.entries(driver.stats?.alerts || {})
+    .map(
+      ([key, value]) =>
+        `<tr><td>${htmlEscape(ALERT_LABELS[key] || key)}</td><td>${htmlEscape(value)}</td></tr>`,
+    )
+    .join("");
+  const sessionRows = (driver.sessions || [])
+    .map(
+      (session) => `
+        <tr>
+          <td>#${htmlEscape(session.session_id)}</td>
+          <td>${htmlEscape(session.status)}</td>
+          <td>${htmlEscape(fmtDate(session.started_at))}</td>
+          <td>${htmlEscape(fmtDate(session.ended_at))}</td>
+          <td>${htmlEscape(session.duration_min)} phút</td>
+          <td>${htmlEscape(session.alert_count)}</td>
+          <td>${htmlEscape(session.route_source === "gps" ? "GPS thật" : "Mô phỏng")}</td>
+          <td>${htmlEscape(session.location_count || 0)}</td>
+        </tr>`,
+    )
+    .join("");
+  const decisionRows = (driver.decisions || [])
+    .slice(0, 20)
+    .map(
+      (item) => `
+        <tr>
+          <td>#${htmlEscape(item.request_id)}</td>
+          <td>${htmlEscape(item.status)}</td>
+          <td>${htmlEscape(item.reason || "")}</td>
+          <td>${typeof item.similarity === "number" ? htmlEscape(`${(item.similarity * 100).toFixed(1)}%`) : "--"}</td>
+          <td>${htmlEscape(fmtDate(item.requested_at))}</td>
+          <td>${htmlEscape(fmtDate(item.decided_at))}</td>
+        </tr>`,
+    )
+    .join("");
+  const latestRoute = driver.sessions?.[0]?.route || [];
+  const routeRows = latestRoute
+    .map(
+      (point, idx) => `
+        <tr>
+          <td>${htmlEscape(point.label || idx + 1)}</td>
+          <td>${htmlEscape(point.lat)}</td>
+          <td>${htmlEscape(point.lng)}</td>
+          <td>${htmlEscape(point.accuracy ?? "")}</td>
+          <td>${htmlEscape(point.recorded_at || "")}</td>
+        </tr>`,
+    )
+    .join("");
+
+  const reportHtml = `
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>DMS Report - ${htmlEscape(driver.driver_id)}</title>
+  <style>
+    *{box-sizing:border-box}
+    body{font-family:Arial,sans-serif;margin:0;color:#0f172a;background:#f8fafc}
+    main{max-width:980px;margin:0 auto;padding:28px}
+    header{display:flex;justify-content:space-between;gap:24px;border-bottom:3px solid #0f172a;padding-bottom:18px;margin-bottom:22px}
+    h1{font-size:28px;margin:0 0 8px}
+    h2{font-size:17px;margin:26px 0 10px}
+    .muted{color:#64748b;font-size:12px}
+    .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}
+    .tile{border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:12px}
+    .tile b{display:block;font-size:22px;margin-top:4px}
+    table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #cbd5e1}
+    th,td{border-bottom:1px solid #e2e8f0;text-align:left;padding:8px;font-size:12px;vertical-align:top}
+    th{background:#e2e8f0;font-size:11px;text-transform:uppercase;color:#475569}
+    .profile{display:flex;gap:14px;align-items:center}
+    .avatar{width:72px;height:72px;border-radius:8px;object-fit:cover;border:1px solid #cbd5e1}
+    .badge{display:inline-block;border-radius:999px;background:#dcfce7;color:#166534;padding:4px 8px;font-weight:700;font-size:11px}
+    @media print{body{background:#fff} main{padding:0}.no-print{display:none}}
+  </style>
+</head>
+<body>
+  <main>
+    <button class="no-print" onclick="window.print()" style="float:right;margin-bottom:16px;padding:8px 14px;border:0;border-radius:8px;background:#0f172a;color:white;font-weight:700">In / Lưu PDF</button>
+    <header>
+      <div class="profile">
+        ${imageSrc(driver.image_base64) ? `<img class="avatar" src="${htmlEscape(imageSrc(driver.image_base64))}" />` : ""}
+        <div>
+          <h1>Báo cáo giám sát tài xế</h1>
+          <div><b>${htmlEscape(driver.name || driver.driver_id)}</b> · <code>${htmlEscape(driver.driver_id)}</code></div>
+          <div class="muted">Ngày xuất báo cáo: ${htmlEscape(fmtDate(new Date().toISOString()))}</div>
+        </div>
+      </div>
+      <div>
+        <span class="badge">${driver.telegram?.bound ? "Đã liên kết Telegram" : "Chưa liên kết Telegram"}</span>
+        <div class="muted" style="margin-top:8px">Chat ID: ${htmlEscape(driver.telegram?.chat_id || "--")}</div>
+      </div>
+    </header>
+
+    <section class="grid">
+      <div class="tile">Tổng phiên<b>${htmlEscape(driver.stats?.sessions || 0)}</b></div>
+      <div class="tile">Phút lái<b>${htmlEscape(driver.stats?.total_minutes || 0)}</b></div>
+      <div class="tile">Cảnh báo<b>${htmlEscape(driver.stats?.total_alerts || 0)}</b></div>
+      <div class="tile">Điểm GPS<b>${htmlEscape(driver.stats?.gps_points || 0)}</b></div>
+    </section>
+
+    <h2>Tổng hợp cảnh báo</h2>
+    <table><thead><tr><th>Loại</th><th>Số lần</th></tr></thead><tbody>${alertRows || "<tr><td colspan='2'>Không có cảnh báo</td></tr>"}</tbody></table>
+
+    <h2>Lịch sử phiên lái</h2>
+    <table><thead><tr><th>Phiên</th><th>Trạng thái</th><th>Bắt đầu</th><th>Kết thúc</th><th>Thời lượng</th><th>Cảnh báo</th><th>Route</th><th>GPS</th></tr></thead><tbody>${sessionRows || "<tr><td colspan='8'>Chưa có phiên lái</td></tr>"}</tbody></table>
+
+    <h2>Quyết định Telegram</h2>
+    <table><thead><tr><th>Request</th><th>Status</th><th>Reason</th><th>Similarity</th><th>Requested</th><th>Decided</th></tr></thead><tbody>${decisionRows || "<tr><td colspan='6'>Chưa có quyết định</td></tr>"}</tbody></table>
+
+    <h2>GPS route gần nhất</h2>
+    <table><thead><tr><th>Điểm</th><th>Lat</th><th>Lng</th><th>Accuracy</th><th>Recorded at</th></tr></thead><tbody>${routeRows || "<tr><td colspan='5'>Chưa có GPS thật</td></tr>"}</tbody></table>
+  </main>
+  <script>setTimeout(() => window.print(), 300)</script>
+</body>
+</html>`;
+
+  const reportWindow = window.open("", "_blank", "width=1100,height=800");
+  if (!reportWindow) return;
+  reportWindow.document.open();
+  reportWindow.document.write(reportHtml);
+  reportWindow.document.close();
 }
 
 function StatTile({ icon: Icon, label, value, tone = "cyan", detail }) {
@@ -228,6 +493,25 @@ export default function AdminDashboard() {
               Quản trị tài xế, danh tính và lịch trình
             </h1>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => exportDriverCsv(selected)}
+              disabled={!selected}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" />
+              Xuất CSV
+            </button>
+            <button
+              type="button"
+              onClick={() => openDriverPdfReport(selected)}
+              disabled={!selected}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-2.5 text-sm font-semibold text-cyan-800 shadow-sm transition hover:bg-cyan-100 disabled:opacity-50"
+            >
+              <FileText className="h-4 w-4" />
+              In PDF
+            </button>
           <button
             type="button"
             onClick={loadData}
@@ -236,6 +520,7 @@ export default function AdminDashboard() {
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             Làm mới dữ liệu
           </button>
+          </div>
         </div>
       </header>
 
