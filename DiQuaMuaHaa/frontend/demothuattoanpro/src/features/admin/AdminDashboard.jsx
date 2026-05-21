@@ -326,7 +326,7 @@ export default function AdminDashboard() {
                     <StatTile icon={Car} label="Phiên" value={fmtNumber(selected.stats?.sessions)} tone="cyan" />
                     <StatTile icon={Clock3} label="Phút lái" value={fmtNumber(selected.stats?.total_minutes)} tone="green" />
                     <StatTile icon={Activity} label="Đang chạy" value={fmtNumber(selected.stats?.active_sessions)} tone="amber" />
-                    <StatTile icon={AlertTriangle} label="Cảnh báo" value={fmtNumber(selected.stats?.total_alerts)} tone="rose" />
+                    <StatTile icon={MapPinned} label="Điểm GPS" value={fmtNumber(selected.stats?.gps_points)} tone="rose" />
                   </div>
                 </div>
               ) : (
@@ -420,6 +420,8 @@ export default function AdminDashboard() {
                 <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
                   <div>Phiên: <b className="text-slate-900">{latestSession?.session_id || "--"}</b></div>
                   <div>Trạng thái: <b className={latestSession?.status === "active" ? "text-emerald-700" : "text-slate-900"}>{latestSession?.status || "--"}</b></div>
+                  <div>Nguồn route: <b className={latestSession?.route_source === "gps" ? "text-emerald-700" : "text-amber-700"}>{latestSession?.route_source === "gps" ? "GPS thật" : "Mô phỏng"}</b></div>
+                  <div>Số điểm GPS: <b className="text-slate-900">{fmtNumber(latestSession?.location_count)}</b></div>
                   <div>Bắt đầu: <b className="text-slate-900">{fmtDate(latestSession?.started_at)}</b></div>
                   <div>Kết thúc: <b className="text-slate-900">{fmtDate(latestSession?.ended_at)}</b></div>
                   <div className="sm:col-span-2">Địa chỉ: <b className="text-slate-900">{latestSession?.address || "--"}</b></div>

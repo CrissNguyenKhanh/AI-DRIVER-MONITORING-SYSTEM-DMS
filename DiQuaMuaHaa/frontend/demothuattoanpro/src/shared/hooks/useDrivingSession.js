@@ -3,8 +3,11 @@ import {
   startDrivingSession,
   endDrivingSession,
   recordDrivingAlert,
+  recordDrivingLocation,
   listDrivingSessions,
 } from "../api/drivingSessionApi";
+
+const GPS_MIN_SEND_MS = 5000;
 
 export function useDrivingSession({
   apiBase,
@@ -18,6 +21,8 @@ export function useDrivingSession({
   const prevPhoneAlertRef = useRef(null);
   const prevSmokingAlertRef = useRef(null);
   const prevDrowsyAlertRef = useRef(null);
+  const gpsWatchIdRef = useRef(null);
+  const gpsLastSentAtRef = useRef(0);
 
   const [drivingSessionId, setDrivingSessionId] = useState(null);
   const [drivingSessionStartedAt, setDrivingSessionStartedAt] = useState(null);
@@ -110,6 +115,44 @@ export function useDrivingSession({
     }
     prevDrowsyAlertRef.current = drowsyAlert;
   }, [apiBase, phoneAlert, smokingAlert, drowsyAlert, status]);
+
+  useEffect(() => {
+    const sid = drivingSessionIdRef.current;
+    if (!sid || status !== "active" || !navigator.geolocation) return;
+
+    gpsLastSentAtRef.current = 0;
+    gpsWatchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const now = Date.now();
+        if (now - gpsLastSentAtRef.current < GPS_MIN_SEND_MS) return;
+        gpsLastSentAtRef.current = now;
+        const c = pos.coords;
+        recordDrivingLocation(apiBase, sid, {
+          lat: c.latitude,
+          lng: c.longitude,
+          accuracy: typeof c.accuracy === "number" ? c.accuracy : null,
+          speed: typeof c.speed === "number" && !Number.isNaN(c.speed) ? c.speed : null,
+          heading:
+            typeof c.heading === "number" && !Number.isNaN(c.heading)
+              ? c.heading
+              : null,
+        }).catch(() => {});
+      },
+      () => {},
+      {
+        enableHighAccuracy: true,
+        maximumAge: 2000,
+        timeout: 15000,
+      },
+    );
+
+    return () => {
+      if (gpsWatchIdRef.current != null) {
+        navigator.geolocation.clearWatch(gpsWatchIdRef.current);
+        gpsWatchIdRef.current = null;
+      }
+    };
+  }, [apiBase, drivingSessionId, status]);
 
   const refreshSessionLog = useCallback(async () => {
     setSessionLogLoading(true);

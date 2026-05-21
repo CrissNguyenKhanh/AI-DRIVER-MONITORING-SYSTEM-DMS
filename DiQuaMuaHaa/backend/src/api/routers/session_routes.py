@@ -143,6 +143,69 @@ def driving_session_alert() -> Any:
     )
 
 
+@app.post("/api/session/location")
+def driving_session_location() -> Any:
+    """Ghi mot diem GPS cho phien lai dang ton tai."""
+    payload = request.get_json(silent=True) or {}
+    try:
+        session_id = int(payload.get("session_id"))
+        lat = float(payload.get("lat"))
+        lng = float(payload.get("lng"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Thieu hoac sai session_id/lat/lng."}), 400
+
+    if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
+        return jsonify({"error": "Toa do GPS khong hop le."}), 400
+
+    def _optional_float(key: str) -> float | None:
+        raw = payload.get(key)
+        if raw is None or raw == "":
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    accuracy = _optional_float("accuracy")
+    speed = _optional_float("speed")
+    heading = _optional_float("heading")
+    recorded_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            _ensure_driving_session_tables(cur)
+            cur.execute(
+                "SELECT id FROM driving_sessions WHERE id = %s LIMIT 1",
+                (session_id,),
+            )
+            if not cur.fetchone():
+                return jsonify({"error": "session_id khong ton tai."}), 404
+            cur.execute(
+                """
+                INSERT INTO driving_session_locations
+                    (session_id, lat, lng, accuracy, speed, heading, recorded_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (session_id, lat, lng, accuracy, speed, heading, recorded_at),
+            )
+            location_id = int(cur.lastrowid)
+        conn.commit()
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    finally:
+        conn.close()
+
+    return jsonify(
+        {
+            "ok": True,
+            "location_id": location_id,
+            "session_id": session_id,
+            "recorded_at": recorded_at,
+        }
+    )
+
+
 @app.get("/api/session/list")
 def driving_sessions_list() -> Any:
     """Danh sách phiên gần đây (kèm tổng cảnh báo)."""
@@ -239,6 +302,27 @@ def driving_session_detail(session_id: int) -> Any:
                 (session_id,),
             )
             alerts = {str(r["alert_type"]): int(r["count"]) for r in (cur.fetchall() or [])}
+            cur.execute(
+                """
+                SELECT lat, lng, accuracy, speed, heading, recorded_at
+                FROM driving_session_locations
+                WHERE session_id = %s
+                ORDER BY recorded_at ASC
+                LIMIT 1000
+                """,
+                (session_id,),
+            )
+            locations = [
+                {
+                    "lat": float(r["lat"]),
+                    "lng": float(r["lng"]),
+                    "accuracy": r.get("accuracy"),
+                    "speed": r.get("speed"),
+                    "heading": r.get("heading"),
+                    "recorded_at": _session_dt_iso(r.get("recorded_at")),
+                }
+                for r in (cur.fetchall() or [])
+            ]
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
     finally:
@@ -252,5 +336,6 @@ def driving_session_detail(session_id: int) -> Any:
             "started_at": _session_dt_iso(s.get("started_at")),
             "ended_at": _session_dt_iso(s.get("ended_at")),
             "alerts": alerts,
+            "locations": locations,
         }
     )

@@ -90,6 +90,16 @@ def admin_drivers_overview() -> Any:
 
             cur.execute(
                 """
+                SELECT session_id, lat, lng, accuracy, speed, heading, recorded_at
+                FROM driving_session_locations
+                ORDER BY recorded_at ASC
+                LIMIT 5000
+                """
+            )
+            location_rows = cur.fetchall() or []
+
+            cur.execute(
+                """
                 SELECT request_id, driver_id, status, reason, similarity, threshold,
                        requested_at, expires_at, decided_at, decided_by_chat_id,
                        telegram_chat_id, telegram_message_id
@@ -106,6 +116,21 @@ def admin_drivers_overview() -> Any:
     for row in alert_rows:
         sid = int(row["session_id"])
         alerts_by_session[sid][str(row["alert_type"])] = int(row["count"] or 0)
+
+    locations_by_session: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for row in location_rows:
+        sid = int(row["session_id"])
+        locations_by_session[sid].append(
+            {
+                "lat": float(row["lat"]),
+                "lng": float(row["lng"]),
+                "accuracy": row.get("accuracy"),
+                "speed": row.get("speed"),
+                "heading": row.get("heading"),
+                "recorded_at": _dt_text(row.get("recorded_at")),
+                "label": f"G{len(locations_by_session[sid]) + 1}",
+            }
+        )
 
     sessions_by_driver: dict[str, list[dict[str, Any]]] = defaultdict(list)
     active_session_ids = set()
@@ -127,6 +152,8 @@ def admin_drivers_overview() -> Any:
         day = (_dt_text(row.get("started_at")) or "")[:10] or "unknown"
         timeline[day]["sessions"] += 1
         timeline[day]["alerts"] += alert_count
+        route = locations_by_session.get(sid, [])
+        has_real_gps = len(route) > 0
         sessions_by_driver[did].append(
             {
                 "session_id": sid,
@@ -137,8 +164,15 @@ def admin_drivers_overview() -> Any:
                 "alerts": alerts,
                 "alert_count": alert_count,
                 "status": "active" if sid in active_session_ids else "completed",
-                "route": _route_points(did, sid),
-                "address": "Chua co GPS that - dang hien thi lo trinh mo phong",
+                "route": route if has_real_gps else _route_points(did, sid),
+                "route_source": "gps" if has_real_gps else "demo",
+                "location_count": len(route),
+                "last_location": route[-1] if has_real_gps else None,
+                "address": (
+                    f"GPS: {route[-1]['lat']:.5f}, {route[-1]['lng']:.5f}"
+                    if has_real_gps
+                    else "Chua co GPS that - dang hien thi lo trinh mo phong"
+                ),
             }
         )
 
@@ -193,6 +227,7 @@ def admin_drivers_overview() -> Any:
                     "active_sessions": sum(1 for s in sessions if s["status"] == "active"),
                     "total_minutes": round(sum(s["duration_min"] for s in sessions), 1),
                     "total_alerts": sum(driver_alerts.values()),
+                    "gps_points": sum(int(s.get("location_count") or 0) for s in sessions),
                     "alerts": dict(driver_alerts),
                 },
             }
@@ -208,6 +243,7 @@ def admin_drivers_overview() -> Any:
                 "sessions": len(session_rows),
                 "total_minutes": round(total_minutes, 1),
                 "total_alerts": sum(alert_totals.values()),
+                "gps_points": len(location_rows),
                 "alerts": dict(alert_totals),
                 "decisions": dict(decision_status_totals),
             },

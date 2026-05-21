@@ -35,6 +35,23 @@ export async function recordDrivingAlert(apiBase, sessionId, alertType, delta = 
   return { ok: r.ok, data };
 }
 
+export async function recordDrivingLocation(apiBase, sessionId, location = {}) {
+  const r = await fetch(`${apiBase}/api/session/location`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_id: sessionId,
+      lat: location.lat,
+      lng: location.lng,
+      accuracy: location.accuracy ?? null,
+      speed: location.speed ?? null,
+      heading: location.heading ?? null,
+    }),
+  });
+  const data = await r.json().catch(() => ({}));
+  return { ok: r.ok, data };
+}
+
 export async function listDrivingSessions(apiBase, { limit = 30, driverId = null } = {}) {
   const q = new URLSearchParams();
   q.set("limit", String(limit));

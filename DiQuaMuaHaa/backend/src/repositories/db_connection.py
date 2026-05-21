@@ -111,6 +111,26 @@ def _ensure_driving_session_tables(cur) -> None:
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS driving_session_locations (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            session_id BIGINT NOT NULL,
+            lat DOUBLE NOT NULL,
+            lng DOUBLE NOT NULL,
+            accuracy DOUBLE NULL,
+            speed DOUBLE NULL,
+            heading DOUBLE NULL,
+            recorded_at DATETIME NOT NULL,
+            INDEX idx_dsl_session_time (session_id, recorded_at),
+            CONSTRAINT fk_dsl_session
+                FOREIGN KEY (session_id)
+                REFERENCES driving_sessions (id)
+                ON UPDATE CASCADE
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
     _ensure_driving_session_relations(cur)
 
 
@@ -176,7 +196,11 @@ def _ensure_identity_relations(cur) -> None:
 
 def _ensure_driving_session_relations(cur) -> None:
     """Add driving-session foreign keys for existing databases."""
-    for table_name in ("driving_sessions", "driving_session_alerts"):
+    for table_name in (
+        "driving_sessions",
+        "driving_session_alerts",
+        "driving_session_locations",
+    ):
         _ensure_table_engine(cur, table_name)
 
     _repair_driving_session_orphans(cur)
@@ -196,6 +220,17 @@ def _ensure_driving_session_relations(cur) -> None:
         cur,
         "driving_session_alerts",
         "fk_dsa_session",
+        """
+        FOREIGN KEY (session_id)
+        REFERENCES driving_sessions (id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+        """,
+    )
+    _ensure_foreign_key(
+        cur,
+        "driving_session_locations",
+        "fk_dsl_session",
         """
         FOREIGN KEY (session_id)
         REFERENCES driving_sessions (id)
@@ -239,6 +274,14 @@ def _repair_driving_session_orphans(cur) -> None:
         DELETE dsa
         FROM driving_session_alerts dsa
         LEFT JOIN driving_sessions ds ON ds.id = dsa.session_id
+        WHERE ds.id IS NULL
+        """
+    )
+    cur.execute(
+        """
+        DELETE dsl
+        FROM driving_session_locations dsl
+        LEFT JOIN driving_sessions ds ON ds.id = dsl.session_id
         WHERE ds.id IS NULL
         """
     )
