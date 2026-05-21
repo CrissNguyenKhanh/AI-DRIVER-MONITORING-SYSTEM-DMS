@@ -184,7 +184,9 @@ def predict_from_frame() -> Any:
     if scores and len(scores) >= 2:
         sorted_probs = sorted(scores.values(), reverse=True)
         margin = sorted_probs[0] - sorted_probs[1]
-        if best_prob is not None and (best_prob < CONFIDENCE_THRESHOLD or margin < MARGIN_THRESHOLD):
+        if best_prob is not None and (
+            best_prob < CONFIDENCE_THRESHOLD or margin < MARGIN_THRESHOLD
+        ):
             label = "safe"
 
     return jsonify(
@@ -445,7 +447,7 @@ def phone_detect_from_frame() -> Any:
     CONF_THRESHOLD = 0.4
 
     try:
-        results = phone_yolo_model(img, classes=[PHONE_CLASS_ID], conf=CONF_THRESHOLD, verbose=False ,imgsz=320  )[0]  # type: ignore[attr-defined]
+        results = phone_yolo_model(img, classes=[PHONE_CLASS_ID], conf=CONF_THRESHOLD, verbose=False, imgsz=320)[0]  # type: ignore[attr-defined]
     except Exception as exc:
         return jsonify({"error": f"Lỗi YOLO detect: {exc}"}), 500
 
@@ -458,7 +460,11 @@ def phone_detect_from_frame() -> Any:
         names = results.names  # type: ignore[attr-defined]
 
         for (cx, cy, w, h), c in zip(xywhn, confs):
-            label = str(names.get(PHONE_CLASS_ID, "phone")) if isinstance(names, dict) else "phone"
+            label = (
+                str(names.get(PHONE_CLASS_ID, "phone"))
+                if isinstance(names, dict)
+                else "phone"
+            )
             boxes_out.append(
                 {
                     "label": label,
@@ -666,5 +672,3 @@ def hand_predict_from_frame() -> Any:
 # ═══════════════════════════════════════════════════════════════
 # IDENTITY API (xác thực tài xế chính chủ bằng khuôn mặt)
 # ═══════════════════════════════════════════════════════════════
-
-

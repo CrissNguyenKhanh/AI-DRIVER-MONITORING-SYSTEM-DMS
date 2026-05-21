@@ -38,6 +38,7 @@ import {
   PHONE_WARN_MS,
   SMOKING_WARN_MS,
   STATUS_ICONS,
+  YAWN_WARN_MS,
 } from "../../shared/constants";
 
 const API_BASE = getDmsApiBase();
@@ -87,6 +88,8 @@ export default function DriverMonitorDMS() {
     blinkDurRef,
     eyesClosedSinceRef,
     eyesClosedSecRef,
+    mouthOpenSinceRef,
+    mouthOpenSecRef,
     frameCount: mpFrameCount,
     displayPose,
     displayEye,
@@ -290,6 +293,8 @@ export default function DriverMonitorDMS() {
       phoneSecRef.current = 0;
       smokingSinceRef.current = null;
       smokingSecRef.current = 0;
+      mouthOpenSinceRef.current = null;
+      mouthOpenSecRef.current = 0;
       return;
     }
 
@@ -351,6 +356,8 @@ export default function DriverMonitorDMS() {
     phoneDetectionRef,
     smokingDetectionRef,
     eyesClosedSecRef,
+    mouthOpenSinceRef,
+    mouthOpenSecRef,
     startAlarm,
     stopAlarm,
   ]);
@@ -551,7 +558,9 @@ export default function DriverMonitorDMS() {
       }
     }
   }
-  const smoothedLabel = stableLabelRef.current;
+  const yawnSec = Number(mouthOpenSecRef.current || 0);
+  const isYawningByMouth = yawnSec * 1000 >= YAWN_WARN_MS;
+  const smoothedLabel = isYawningByMouth ? "yawning" : stableLabelRef.current;
   const currentLabel = smoothedLabel;
   const info = LABEL_MAP[currentLabel] || LABEL_MAP.unknown;
   const isAlert = info.level === "risk" || info.level === "warning";
@@ -698,6 +707,7 @@ export default function DriverMonitorDMS() {
             {[
               { label: "Pupil dilation", val: `${displayEye.pupilL}%` },
               { label: "Blink rate", val: `${displayEye.blinkRate}` },
+              { label: "Mouth MAR", val: displayEye.mouthMAR },
             ].map(({ label, val }) => (
               <div
                 key={label}
@@ -2139,9 +2149,11 @@ export default function DriverMonitorDMS() {
               >
                 {info.vi}
               </span>
-              {apiResult?.prob != null && (
+              {(apiResult?.prob != null || isYawningByMouth) && (
                 <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
-                  {(apiResult.prob * 100).toFixed(1)}%
+                  {isYawningByMouth
+                    ? `MAR ${displayEye.mouthMAR}`
+                    : `${(apiResult.prob * 100).toFixed(1)}%`}
                 </span>
               )}
               {apiLoading && (

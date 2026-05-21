@@ -71,8 +71,14 @@ export default function VoiceCarAssistant({
       const t = String(transcript || "").trim();
       if (!t) return;
 
-      if (isSpeakingRef.current) return;
-      if (cooldownRef.current) return;
+      const urgentIntent = armedRef.current
+        ? parseVoiceIntent(t, { requireWake: requireWake && !allowCommandWithoutWake })
+        : null;
+      const bypassCooldown =
+        urgentIntent?.cmd === "youtube_close" || urgentIntent?.cmd === "stop_voice";
+
+      if (isSpeakingRef.current && !bypassCooldown) return;
+      if (cooldownRef.current && !bypassCooldown) return;
 
       const now = Date.now();
       if (t === lastFinalRef.current && now - lastFinalTimeRef.current < 700) return;
@@ -92,7 +98,9 @@ export default function VoiceCarAssistant({
         return;
       }
 
-      let intent = parseVoiceIntent(t, { requireWake: false });
+      let intent =
+        urgentIntent ||
+        parseVoiceIntent(t, { requireWake: requireWake && !allowCommandWithoutWake });
       if (intent?.error === "no_wake" && allowCommandWithoutWake) {
         intent = parseVoiceIntent(t, { requireWake: false });
       }
@@ -153,14 +161,18 @@ export default function VoiceCarAssistant({
     },
     [
       onLightChange, onAcChange, onYoutubeOpen, onYoutubeClose,
-      allowCommandWithoutWake, speak, syncArmed, startCooldown,
+      allowCommandWithoutWake, requireWake, speak, syncArmed, startCooldown,
     ],
   );
 
   const stopRec = useCallback(() => {
     wantListenRef.current = false;
     syncArmed(false);
-    try { recRef.current?.stop?.(); } catch (_) {}
+    try {
+      recRef.current?.stop?.();
+    } catch {
+      /* ignore stop errors from inactive recognition */
+    }
     recRef.current = null;
     setListening(false);
   }, [syncArmed]);

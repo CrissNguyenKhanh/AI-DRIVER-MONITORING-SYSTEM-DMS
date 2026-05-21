@@ -84,6 +84,14 @@ function fuzzyContains(t, kw, maxDist = 1) {
   return false;
 }
 
+function wantsBack(t) {
+  if (/\b(back|close|exit|quit|return|previous|home)\b/.test(t)) return true;
+  if (/\b(go|come)\s+(back|home)\b/.test(t)) return true;
+  if (/\b(quay\s*lai|tro\s*ve|thoat|dong)\b/.test(t)) return true;
+  const words = t.split(/\s+/).filter(Boolean);
+  return words.some((w) => ["back", "beck", "bek", "bag", "bake"].includes(w));
+}
+
 // ─── ARM ──────────────────────────────────────────────────────────────────────
 
 export function tryVoiceArm(fullTranscript) {
@@ -117,6 +125,9 @@ export function parseVoiceIntent(fullTranscript, options = {}) {
 // ─── Command matcher ──────────────────────────────────────────────────────────
 
 function matchCommand(t) {
+  if (wantsBack(t)) {
+    return { cmd: "youtube_close" };
+  }
 
   // ── YouTube open ─────────────────────────────────────────────────────────
   const hasYT = /youtube|you\s*tube/.test(t) || fuzzyContains(t, "youtube", 2);

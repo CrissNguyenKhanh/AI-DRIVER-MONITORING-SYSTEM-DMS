@@ -8,6 +8,11 @@ export const EAR_BLINK_THRESH = 0.21;
 export const EAR_HISTORY = 90;
 export const EYES_CLOSED_WARN_MS = 3000;
 
+// Mouth Aspect Ratio (MAR) Constants
+export const YAWN_MAR_OPEN_THRESH = 0.2;
+export const YAWN_MAR_CLOSE_THRESH = 0.14;
+export const YAWN_WARN_MS = 650;
+
 // REST / WebSocket timing
 export const API_INTERVAL_MS = 1500 ;
 export const HAND_API_INTERVAL_MS = 800;
@@ -74,6 +79,14 @@ export const R_EYE = {
   outer: 362,
   inner: 263,
   iris: [473, 474, 475, 476, 477],
+};
+
+// Mouth landmark indices (MediaPipe FaceMesh)
+export const MOUTH = {
+  upperInner: 13,
+  lowerInner: 14,
+  leftCorner: 61,
+  rightCorner: 291,
 };
 
 // Hand connections — topology MediaPipe Hands (21 points)

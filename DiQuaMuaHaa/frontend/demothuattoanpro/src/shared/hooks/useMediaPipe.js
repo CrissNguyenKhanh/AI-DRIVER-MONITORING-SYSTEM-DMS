@@ -3,10 +3,14 @@ import {
   EAR_BLINK_THRESH,
   EAR_HISTORY,
   L_EYE,
+  MOUTH,
   R_EYE,
+  YAWN_MAR_CLOSE_THRESH,
+  YAWN_MAR_OPEN_THRESH,
 } from "../constants/dmsConstants";
 import {
   computeEAR,
+  computeMAR,
   computePupilRadius,
   estimateHeadPose,
 } from "../utils/dmsMath";
@@ -38,6 +42,10 @@ export function useMediaPipe({ videoRef, status, enabled = true }) {
   const blinkDurRef = useRef({ start: null, dur: 0 });
   const eyesClosedSinceRef = useRef(null);
   const eyesClosedSecRef = useRef(0);
+  const mouthOpenSinceRef = useRef(null);
+  const mouthOpenSecRef = useRef(0);
+  const mouthOpenStateRef = useRef(false);
+  const mouthMARRef = useRef(0);
 
   // Frame counter for UI updates (trigger re-render)
   const [frameCount, setFrameCount] = useState(0);
@@ -58,6 +66,8 @@ export function useMediaPipe({ videoRef, status, enabled = true }) {
     rX: "63.2",
     rY: "9.7",
     rZ: "-3.3",
+    mouthMAR: "0.00",
+    mouthOpenSec: 0,
   });
 
   // Helper: Load script dynamically
@@ -100,6 +110,10 @@ export function useMediaPipe({ videoRef, status, enabled = true }) {
         fm.onResults((results) => {
           if (!results.multiFaceLandmarks || !results.multiFaceLandmarks[0]) {
             landmarksRef.current = [];
+            mouthOpenSinceRef.current = null;
+            mouthOpenSecRef.current = 0;
+            mouthOpenStateRef.current = false;
+            mouthMARRef.current = 0;
             return;
           }
           const lm = results.multiFaceLandmarks[0];
@@ -108,6 +122,8 @@ export function useMediaPipe({ videoRef, status, enabled = true }) {
 
           const earL = computeEAR(lm, L_EYE);
           const earR = computeEAR(lm, R_EYE);
+          const mar = computeMAR(lm, MOUTH);
+          mouthMARRef.current = mar;
           const prL = computePupilRadius(lm, L_EYE.iris) * 100;
 
           // Calculate eye gaze
@@ -152,6 +168,19 @@ export function useMediaPipe({ videoRef, status, enabled = true }) {
           } else {
             eyesClosedSinceRef.current = null;
             eyesClosedSecRef.current = 0;
+          }
+
+          const mouthOpen = mouthOpenStateRef.current
+            ? mar > YAWN_MAR_CLOSE_THRESH
+            : mar > YAWN_MAR_OPEN_THRESH;
+          mouthOpenStateRef.current = mouthOpen;
+          if (mouthOpen) {
+            if (mouthOpenSinceRef.current === null)
+              mouthOpenSinceRef.current = now;
+            mouthOpenSecRef.current = (now - mouthOpenSinceRef.current) / 1000;
+          } else {
+            mouthOpenSinceRef.current = null;
+            mouthOpenSecRef.current = 0;
           }
 
           eyeDataRef.current = {
@@ -254,7 +283,9 @@ export function useMediaPipe({ videoRef, status, enabled = true }) {
           if (fm) {
             try {
               await fm.send({ image: vid });
-            } catch (_) {}
+            } catch {
+              /* ignore transient frame errors */
+            }
           }
           if (hs) {
             try {
@@ -285,7 +316,6 @@ export function useMediaPipe({ videoRef, status, enabled = true }) {
       setDisplayPose({ yaw: p.yaw, pitch: p.pitch, roll: p.roll });
 
       const ed = eyeDataRef.current;
-      const now = Date.now();
       setDisplayEye({
         blinkRate: blinkTimesRef.current.length,
         blinkDur: blinkDurRef.current.dur,
@@ -300,6 +330,8 @@ export function useMediaPipe({ videoRef, status, enabled = true }) {
         rX: (ed.right.ear * 100).toFixed(1),
         rY: ((ed.right.yaw || 0) * 100).toFixed(1),
         rZ: ((ed.right.pitch || 0) * 100).toFixed(1),
+        mouthMAR: mouthMARRef.current.toFixed(2),
+        mouthOpenSec: mouthOpenSecRef.current,
       });
     }, 200);
 
@@ -320,6 +352,8 @@ export function useMediaPipe({ videoRef, status, enabled = true }) {
     blinkDurRef,
     eyesClosedSinceRef,
     eyesClosedSecRef,
+    mouthOpenSinceRef,
+    mouthOpenSecRef,
     // State
     isLoaded,
     frameCount,

@@ -155,7 +155,10 @@ export function useWebSocket({
       }
 
       const strongDetected =
-        bestBox !== null && rawProb >= PHONE_YOLO_MIN_PROB && sizeOk && motionOk;
+        bestBox !== null &&
+        rawProb >= PHONE_YOLO_MIN_PROB &&
+        sizeOk &&
+        motionOk;
 
       if (strongDetected && yoloBox) {
         phoneLastBoxRef.current = yoloBox;

@@ -1,6 +1,6 @@
 /**
- * getUserMedia chỉ có trong "secure context": HTTPS hoặc localhost/127.0.0.1.
- * Mở http://192.168.x.x trên điện thoại → isSecureContext === false → không có mediaDevices.
+ * getUserMedia chi co trong "secure context": HTTPS hoac localhost/127.0.0.1.
+ * Localhost HTTP van duoc trinh duyet cho phep camera; HTTP qua IP LAN thi khong.
  */
 export function isCameraSecureContext() {
   if (typeof window === "undefined") return true;
@@ -15,19 +15,19 @@ export function hasGetUserMedia() {
   );
 }
 
-/** Thông báo tiếng Việt khi không gọi được camera */
+/** Thong bao tieng Viet khi khong goi duoc camera */
 export function getWebcamSupportErrorMessage() {
   if (!isCameraSecureContext()) {
     return (
-      "Trình duyệt chặn camera vì trang không chạy ở chế độ bảo mật (HTTPS hoặc localhost). " +
-      "Địa chỉ http://IP-máy-tính sẽ không bật được webcam và không hiện nút Allow. " +
-      "Hãy mở https://<cùng-IP>:5173 (chạy npm run dev — server đã bật HTTPS), chọn Advanced → Proceed, rồi thử Activate Camera lại."
+      "Trinh duyet chan camera vi trang khong o secure context. " +
+      "Hay mo bang http://localhost:5173 hoac http://127.0.0.1:5173 tren chinh may nay. " +
+      "Neu mo bang http://IP-may-tinh:5173 tu dien thoai/may khac thi browser se khong cho camera tren HTTP."
     );
   }
   if (!hasGetUserMedia()) {
     return (
-      "Trình duyệt không hỗ trợ truy cập camera (getUserMedia). " +
-      "Thử Chrome/Safari bản mới, hoặc kiểm tra trang đã là HTTPS/localhost."
+      "Trinh duyet khong ho tro truy cap camera (getUserMedia). " +
+      "Thu Chrome/Safari ban moi, hoac kiem tra quyen camera cua trinh duyet."
     );
   }
   return "";

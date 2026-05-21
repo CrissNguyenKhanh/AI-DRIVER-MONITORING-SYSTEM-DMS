@@ -28,6 +28,19 @@ export function computeEAR(lm, eye) {
 }
 
 /**
+ * Tinh Mouth Aspect Ratio (MAR) de bat mieng mo/ngap.
+ * Safe la fallback, nen yawning nen duoc bat bang hinh hoc thay vi doi model hoc "safe".
+ */
+export function computeMAR(lm, mouth) {
+  const upper = lm[mouth.upperInner],
+    lower = lm[mouth.lowerInner],
+    left = lm[mouth.leftCorner],
+    right = lm[mouth.rightCorner];
+  if (!upper || !lower || !left || !right) return 0;
+  return distPts(upper, lower) / (distPts(left, right) + 0.001);
+}
+
+/**
  * Tính bán kính đồng tử
  * @param {Array} lm - Landmarks từ MediaPipe
  * @param {Array} irisIdx - Mảng indices của iris (từ L_EYE.iris hoặc R_EYE.iris)
