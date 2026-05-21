@@ -159,6 +159,7 @@ function RoutePreview({ points = [] }) {
 
 export default function AdminDashboard() {
   const [data, setData] = useState(null);
+  const [modelData, setModelData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState("");
@@ -172,6 +173,9 @@ export default function AdminDashboard() {
       if (!res.ok) throw new Error(json?.error || "Không tải được admin data");
       setData(json);
       setSelectedId((prev) => prev || json?.drivers?.[0]?.driver_id || "");
+      const modelRes = await fetch(`${API_BASE}/api/admin/model_analytics`);
+      const modelJson = await modelRes.json();
+      if (modelRes.ok) setModelData(modelJson);
     } catch (err) {
       setError(err.message || "Không tải được admin data");
     } finally {
@@ -209,6 +213,7 @@ export default function AdminDashboard() {
   );
 
   const timeline = data?.timeline || [];
+  const modelAnalytics = modelData?.models || [];
 
   return (
     <main className="min-h-screen bg-slate-100 text-slate-950">
@@ -516,9 +521,158 @@ export default function AdminDashboard() {
                 </table>
               </div>
             </section>
+
+            <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-200 px-5 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold">Model Analytics</h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Accuracy, precision/recall/F1 và confusion matrix từ dataset local.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                    {modelData?.generated_at ? `Cập nhật ${fmtDate(modelData.generated_at)}` : "Đang tải"}
+                  </span>
+                </div>
+              </div>
+              <div className="grid gap-5 p-5">
+                {modelAnalytics.map((modelItem) => (
+                  <ModelAnalyticsPanel key={modelItem.key} model={modelItem} />
+                ))}
+                {!modelAnalytics.length && (
+                  <div className="rounded-lg border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-500">
+                    Chưa tải được dữ liệu đánh giá model
+                  </div>
+                )}
+              </div>
+            </section>
           </section>
         </section>
       </div>
     </main>
+  );
+}
+
+function pct(value) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "--";
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function ModelAnalyticsPanel({ model }) {
+  if (!model?.available) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h4 className="font-bold text-amber-950">{model?.title || "Model"}</h4>
+          <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700">
+            Chưa sẵn sàng
+          </span>
+        </div>
+        <p className="mt-2 text-sm text-amber-800">{model?.error || "Không có dữ liệu đánh giá."}</p>
+        <p className="mt-2 break-all font-mono text-xs text-amber-700">{model?.model_path}</p>
+      </div>
+    );
+  }
+
+  const classes = model.classes || [];
+  const matrix = model.confusion_matrix || [];
+  const maxCell = Math.max(1, ...matrix.flat().map((v) => Number(v || 0)));
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h4 className="text-lg font-bold text-slate-950">{model.title}</h4>
+          <p className="mt-1 text-xs text-slate-500">
+            {fmtNumber(model.samples)} mẫu · {fmtNumber(model.features)} features · split {model.split}
+          </p>
+        </div>
+        <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">
+          Đã đánh giá
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <MetricBox label="Accuracy" value={pct(model.accuracy)} />
+        <MetricBox label="Precision" value={pct(model.macro_precision)} />
+        <MetricBox label="Recall" value={pct(model.macro_recall)} />
+        <MetricBox label="Macro F1" value={pct(model.macro_f1)} />
+        <MetricBox label="Weighted F1" value={pct(model.weighted_f1)} />
+      </div>
+
+      <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white p-3">
+          <div className="mb-3 text-sm font-semibold text-slate-700">Confusion matrix</div>
+          <div
+            className="grid min-w-max gap-1"
+            style={{ gridTemplateColumns: `120px repeat(${classes.length}, minmax(68px, 1fr))` }}
+          >
+            <div />
+            {classes.map((name) => (
+              <div key={`head-${name}`} className="truncate rounded bg-slate-100 px-2 py-1 text-center text-xs font-bold text-slate-600">
+                {name}
+              </div>
+            ))}
+            {matrix.map((row, rowIdx) => (
+              <React.Fragment key={classes[rowIdx] || rowIdx}>
+                <div className="truncate rounded bg-slate-100 px-2 py-2 text-xs font-bold text-slate-600">
+                  True: {classes[rowIdx]}
+                </div>
+                {row.map((value, colIdx) => {
+                  const intensity = Number(value || 0) / maxCell;
+                  const isHit = rowIdx === colIdx;
+                  return (
+                    <div
+                      key={`${rowIdx}-${colIdx}`}
+                      className="rounded px-2 py-2 text-center text-sm font-bold"
+                      style={{
+                        background: isHit
+                          ? `rgba(16, 185, 129, ${0.16 + intensity * 0.72})`
+                          : `rgba(244, 63, 94, ${0.08 + intensity * 0.55})`,
+                        color: intensity > 0.55 ? "#0f172a" : "#334155",
+                      }}
+                    >
+                      {value}
+                    </div>
+                  );
+                })}
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-slate-200 bg-white p-3">
+          <div className="mb-3 text-sm font-semibold text-slate-700">Precision / Recall theo class</div>
+          <div className="space-y-2">
+            {classes.map((name) => {
+              const item = model.per_class?.[name] || {};
+              return (
+                <div key={name} className="rounded-lg bg-slate-50 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2 text-sm">
+                    <b className="truncate">{name}</b>
+                    <span className="text-xs text-slate-500">{fmtNumber(item.support)} mẫu test</span>
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-slate-600">
+                    <span>P: <b className="text-slate-900">{pct(item.precision)}</b></span>
+                    <span>R: <b className="text-slate-900">{pct(item.recall)}</b></span>
+                    <span>F1: <b className="text-slate-900">{pct(item.f1)}</b></span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetricBox({ label, value }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-1 text-xl font-bold text-slate-950">{value}</div>
+    </div>
   );
 }

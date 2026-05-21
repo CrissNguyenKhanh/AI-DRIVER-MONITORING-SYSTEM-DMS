@@ -1,10 +1,22 @@
 """Admin dashboard routes for driver identity and trip analytics."""
 from __future__ import annotations
 
+import csv
 import hashlib
-from collections import defaultdict
+from collections import Counter, defaultdict
+from pathlib import Path
 
 from data.api.runtime import *
+from src.core.config import BASE_DIR
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.model_selection import train_test_split
+
+
+FACE_CSV_PATH = BASE_DIR / "driver_training" / "collect" / "data" / "landmarks.csv"
+HAND_CSV_PATH = BASE_DIR / "driver_training" / "collect" / "hand_dataset.csv"
+SMOKING_CSV_PATH = (
+    BASE_DIR / "driver_training" / "collect" / "data" / "smoking_landmarks_binary.csv"
+)
 
 
 def _dt_text(value: Any) -> str | None:
@@ -43,6 +55,161 @@ def _route_points(driver_id: str, session_id: int) -> list[dict[str, Any]]:
             }
         )
     return points
+
+
+def _load_labeled_csv(csv_path: Path) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
+    labels: list[str] = []
+    rows: list[list[float]] = []
+    with csv_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if not row:
+                continue
+            try:
+                vec = [float(v) for v in row[1:]]
+            except ValueError:
+                continue
+            labels.append(str(row[0]).strip())
+            rows.append(vec)
+    if not rows:
+        raise ValueError("CSV rong hoac khong doc duoc du lieu.")
+    label_to_idx = {label: idx for idx, label in enumerate(sorted(set(labels)))}
+    y = np.asarray([label_to_idx[label] for label in labels], dtype=np.int64)
+    X = np.asarray(rows, dtype=np.float32)
+    return X, y, label_to_idx
+
+
+def _evaluate_classifier(
+    *,
+    key: str,
+    title: str,
+    csv_path: Path,
+    model_obj: Any,
+    model_path: Path,
+    expected_features: int | None = None,
+    test_size: float = 0.2,
+) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "key": key,
+        "title": title,
+        "model_path": str(model_path),
+        "csv_path": str(csv_path),
+        "available": bool(model_obj is not None and csv_path.exists()),
+    }
+    if model_obj is None:
+        return {**base, "error": "Model chua duoc load hoac chua ton tai."}
+    if not csv_path.exists():
+        return {**base, "error": "Khong tim thay dataset CSV."}
+
+    try:
+        X, y, label_to_idx = _load_labeled_csv(csv_path)
+        if expected_features is not None and X.shape[1] != expected_features:
+            return {
+                **base,
+                "available": False,
+                "samples": int(X.shape[0]),
+                "features": int(X.shape[1]),
+                "error": f"So feature dataset ({X.shape[1]}) khong khop model ({expected_features}).",
+            }
+
+        counts = Counter(int(v) for v in y.tolist())
+        stratify = y if len(counts) > 1 and min(counts.values()) >= 2 else None
+        _, X_test, _, y_test = train_test_split(
+            X,
+            y,
+            test_size=test_size,
+            random_state=42,
+            stratify=stratify,
+        )
+        y_pred = model_obj.predict(X_test)
+        labels_order = [idx for _, idx in sorted(label_to_idx.items(), key=lambda kv: kv[1])]
+        class_names = [label for label, _ in sorted(label_to_idx.items(), key=lambda kv: kv[1])]
+        report = classification_report(
+            y_test,
+            y_pred,
+            labels=labels_order,
+            target_names=class_names,
+            output_dict=True,
+            zero_division=0,
+        )
+        cm = confusion_matrix(y_test, y_pred, labels=labels_order)
+
+        return {
+            **base,
+            "available": True,
+            "samples": int(X.shape[0]),
+            "features": int(X.shape[1]),
+            "train_samples": int(X.shape[0] - X_test.shape[0]),
+            "test_samples": int(X_test.shape[0]),
+            "classes": class_names,
+            "class_distribution": {
+                class_names[idx]: int(counts.get(idx, 0))
+                for idx in range(len(class_names))
+            },
+            "accuracy": float(accuracy_score(y_test, y_pred)),
+            "macro_precision": float(report["macro avg"]["precision"]),
+            "macro_recall": float(report["macro avg"]["recall"]),
+            "macro_f1": float(report["macro avg"]["f1-score"]),
+            "weighted_f1": float(report["weighted avg"]["f1-score"]),
+            "per_class": {
+                name: {
+                    "precision": float(report[name]["precision"]),
+                    "recall": float(report[name]["recall"]),
+                    "f1": float(report[name]["f1-score"]),
+                    "support": int(report[name]["support"]),
+                }
+                for name in class_names
+            },
+            "confusion_matrix": cm.astype(int).tolist(),
+            "split": "80/20 random_state=42",
+        }
+    except Exception as exc:
+        return {**base, "available": False, "error": str(exc)}
+
+
+@app.get("/api/admin/model_analytics")
+def admin_model_analytics() -> Any:
+    """Evaluate loaded ML models against their local CSV datasets."""
+    hand_features = None
+    try:
+        hand_features = int(hand_vec_len)
+    except Exception:
+        hand_features = None
+
+    models = [
+        _evaluate_classifier(
+            key="face_landmarks",
+            title="Face Landmark Drowsiness",
+            csv_path=FACE_CSV_PATH,
+            model_obj=model,
+            model_path=MODEL_PATH,
+            test_size=0.2,
+        ),
+        _evaluate_classifier(
+            key="hand_gesture",
+            title="Hand Gesture Control",
+            csv_path=HAND_CSV_PATH,
+            model_obj=hand_model,
+            model_path=HAND_MODEL_PATH,
+            expected_features=hand_features,
+            test_size=0.15,
+        ),
+        _evaluate_classifier(
+            key="smoking",
+            title="Smoking Detection",
+            csv_path=SMOKING_CSV_PATH,
+            model_obj=smoking_model,
+            model_path=SMOKING_MODEL_PATH,
+            test_size=0.2,
+        ),
+    ]
+
+    return jsonify(
+        {
+            "models": models,
+            "generated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    )
 
 
 @app.get("/api/admin/drivers")
