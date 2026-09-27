@@ -10,3 +10,6 @@ if __name__ == "__main__":
     use_reloader=False,       # ← không watch file thay đổi
     allow_unsafe_werkzeug=True
 )
+   
+   
+#    khoi dong lai du an ( test commit )
