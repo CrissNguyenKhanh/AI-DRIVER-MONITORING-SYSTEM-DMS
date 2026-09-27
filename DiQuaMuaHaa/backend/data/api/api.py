@@ -38,24 +38,14 @@ except Exception:  # ImportError, RuntimeError, ...
 
 
 app = Flask(__name__)
-CORS(app, origins="*", supports_credentials=True)
+from data.security import cors_origins
+
+CORS_ORIGINS = cors_origins()
+CORS(app, origins=CORS_ORIGINS, supports_credentials=True)
 
 # Tránh lỗi server khi client gửi base64 ảnh quá lớn
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25MB
 
-# Khi worker crash / exception ngoài view, vẫn gửi CORS để browser không báo sai "CORS"
-@app.after_request
-def _cors_all_responses(response: Any):
-    response.headers.setdefault("Access-Control-Allow-Origin", "*")
-    response.headers.setdefault(
-        "Access-Control-Allow-Headers",
-        "Content-Type, Authorization, X-Requested-With",
-    )
-    response.headers.setdefault(
-        "Access-Control-Allow-Methods",
-        "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    )
-    return response
 
 
 @app.errorhandler(413)
@@ -100,8 +90,8 @@ IDENTITY_SIM_THRESHOLD = float(os.getenv("IDENTITY_SIM_THRESHOLD", "0.975"))
 IDENTITY_MIN_REGISTER_SAMPLES = int(os.getenv("IDENTITY_MIN_REGISTER_SAMPLES", "3"))
 IDENTITY_MIN_VERIFY_SAMPLES = int(os.getenv("IDENTITY_MIN_VERIFY_SAMPLES", "2"))
 IDENTITY_DECISION_TIMEOUT_SEC = int(os.getenv("IDENTITY_DECISION_TIMEOUT_SEC", "30"))
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8778925999:AAEvtjjjwulzUvGTC8ThTfvwOkJ7ALGuyoQ").strip()
-TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "Khanhdz123").strip()
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
 
 
 artifact: Dict[str, Any] | None = None
@@ -2356,6 +2346,8 @@ def identity_decision_status() -> Any:
 
 @app.post("/api/telegram/webhook")
 def telegram_webhook() -> Any:
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_WEBHOOK_SECRET:
+        return jsonify({"ok": False, "error": "Telegram unavailable"}), 503
     if TELEGRAM_WEBHOOK_SECRET:
         got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
         if got != TELEGRAM_WEBHOOK_SECRET:
@@ -2736,7 +2728,7 @@ except Exception:
     # Local run / environment may not have eventlet or EngineIO may not accept it.
     _async_mode = "threading"
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode=_async_mode)
+socketio = SocketIO(app, cors_allowed_origins=CORS_ORIGINS, async_mode=_async_mode)
 
 
 # phone pro

@@ -28,17 +28,18 @@ from sqlalchemy import text  # Dùng để sửa bảng database tự động
 
 
 app = Flask(__name__)
-CORS(app)
+from data.security import cors_origins
+CORS(app, origins=cors_origins())
 
 # MySQL Database configuration for XAMPP
-app.config["SQLALCHEMY_DATABASE_URI"] = (
-    "mysql+pymysql://root:@localhost:3306/medical_diagnosis"
-)
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ["MEDICAL_DATABASE_URL"]
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["SQLALCHEMY_ECHO"] = True
+app.config["SQLALCHEMY_ECHO"] = False
 
 # --- CẤU HÌNH JWT (TOKEN) ---
-app.config["JWT_SECRET_KEY"] = "chuoi-bi-mat-nay-nen-rat-dai-va-ngau-nhien"
+app.config["JWT_SECRET_KEY"] = os.environ["JWT_SECRET_KEY"]
+if not app.config["JWT_SECRET_KEY"].strip():
+    raise RuntimeError("JWT_SECRET_KEY must be configured for the medical API")
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=7)  # Token sống 7 ngày
 jwt = JWTManager(app)
 # ----------------------------
