@@ -120,10 +120,6 @@ hand_model = None
 hand_idx_to_label: Dict[int, str] = {}
 hand_vec_len: int = 126  # khớp artifact vec_len (63 = collect_hands normalize + dominant hand)
 
-smoking_artifact: Dict[str, Any] | None = None
-smoking_model = None
-smoking_idx_to_label: Dict[int, str] = {}
-
 phone_artifact: Dict[str, Any] | None = None
 phone_model = None
 phone_idx_to_label: Dict[int, str] = {}
@@ -531,20 +527,6 @@ def load_hand_model() -> None:
         hand_vec_len = int(hand_artifact.get("vec_len", 126))
     except (TypeError, ValueError):
         hand_vec_len = 126
-
-
-def load_smoking_model() -> None:
-    global smoking_artifact, smoking_model, smoking_idx_to_label
-    if not SMOKING_MODEL_PATH.exists():
-        smoking_artifact = None
-        smoking_model = None
-        smoking_idx_to_label = {}
-        return
-
-    smoking_artifact = _compat_joblib_load(SMOKING_MODEL_PATH)
-    smoking_model = smoking_artifact.get("model")
-    label_to_idx = smoking_artifact.get("label_to_idx", {})
-    smoking_idx_to_label = {v: k for k, v in label_to_idx.items()}
 
 
 def load_phone_model() -> None:
@@ -1147,11 +1129,12 @@ def health() -> Any:
     for name, path, loaded, enabled in [
         ("landmark", MODEL_PATH, model is not None, True),
         ("hand", HAND_MODEL_PATH, hand_model is not None, not DISABLE_HAND_DETECT),
-        ("smoking", SMOKING_MODEL_PATH, smoking_model is not None, False),
+        ("smoking", SMOKING_MODEL_PATH, False, False),
         ("phone", PHONE_YOLO_ONNX_PATH if PHONE_YOLO_ONNX_PATH.exists() else PHONE_YOLO_MODEL_PATH,
          _yolo_available(), not DISABLE_PHONE_YOLO),
     ]:
         models[name] = {"artifact_present": path.is_file(), "loaded": loaded, "enabled": enabled}
+    models["smoking"]["reason"] = _smoking_unavailable()["reason"]
     return jsonify({"status": "ok" if available else "degraded",
                     "database": {"available": available, "backend": DB_BACKEND},
                     "models": models}), 200 if available else 503
@@ -1337,94 +1320,17 @@ def predict_from_frame() -> Any:
 # ═══════════════════════════════════════════════════════════════
 
 
+def _smoking_unavailable():
+    # Artifact is absent in this checkout. Presence alone must not enable an
+    # unvalidated pipeline or fabricate a negative safety classification.
+    return {"label": "unavailable", "prob": None, "available": False,
+            "reason": "model_missing" if not SMOKING_MODEL_PATH.is_file() else "validation_required",
+            "error": "Smoking detection unavailable"}
+
+
 @app.post("/api/smoking/predict_from_frame")
 def smoking_predict_from_frame() -> Any:
-    """
-    Nhận ảnh base64 (từ webcam), chạy MediaPipe Face Mesh để trích landmark,
-    rồi dùng smoking model để dự đoán label.
-
-    Body JSON: { "image": "data:image/jpeg;base64,..." hoặc "base64_string" }
-    """
-    _ensure_models_loaded()
-    if smoking_model is None or not smoking_idx_to_label:
-        return (
-            jsonify(
-                {
-                    "error": "Smoking model chưa được load. Hãy train model trước (train_smoking.py).",
-                }
-            ),
-            500,
-        )
-
-    try:
-        payload = request.get_json(force=True, silent=False)
-        if payload is None:
-            raise ValueError("Body phải là JSON hợp lệ.")
-    except Exception:
-        return (
-            jsonify(
-                {
-                    "error": "Không đọc được JSON body. Hãy gửi Content-Type: application/json.",
-                }
-            ),
-            400,
-        )
-
-    image_b64 = payload.get("image")
-    if not image_b64 or not isinstance(image_b64, str):
-        return jsonify({"error": "Thiếu trường 'image' (base64) trong JSON body."}), 400
-
-    if image_b64.startswith("data:"):
-        image_b64 = image_b64.split(",", 1)[-1]
-
-    try:
-        vec = _image_base64_to_landmarks(image_b64)
-    except ValueError as exc:
-        return jsonify({"error": "Invalid request data"}), 400
-
-    if vec is None:
-        return jsonify(
-            {
-                "label": "no_face",
-                "prob": None,
-                "scores": {},
-            }
-        )
-
-    x = np.asarray(vec, dtype=np.float32).reshape(1, -1)
-
-    try:
-        pred_idx = int(smoking_model.predict(x)[0])
-        if hasattr(smoking_model, "predict_proba"):
-            proba = smoking_model.predict_proba(x)[0]
-        else:
-            proba = None
-    except Exception as exc:
-        return _api_error()
-
-    label = smoking_idx_to_label.get(pred_idx, str(pred_idx))
-    scores: Dict[str, float] = {}
-    if proba is not None:
-        for i, p in enumerate(proba):
-            scores[smoking_idx_to_label.get(i, str(i))] = float(p)
-
-    best_prob = float(max(scores.values())) if scores else None
-
-    # Hysteresis: chỉ coi là "smoking" nếu xác suất đủ cao,
-    # ngược lại coi là "no_smoking" để giảm false positive.
-    SMOKING_HARD_THRESHOLD = 0.90  # yêu cầu prob >= 90% mới trả về smoking
-    if label == "smoking" and (best_prob is None or best_prob < SMOKING_HARD_THRESHOLD):
-        label = "no_smoking"
-
-    return jsonify(
-        {
-            "label": label,
-            "prob": best_prob,
-            "scores": scores,
-            # FIX: thêm raw_label để frontend biết model predict gì trước khi filter
-            "raw_label": smoking_idx_to_label.get(pred_idx, str(pred_idx)),
-        }
-    )
+    return jsonify(_smoking_unavailable()), 503
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2778,77 +2684,8 @@ def handle_phone_frame(data):
 
 
 @socketio.on("smoking_frame")
-def handle_smoking_frame(data):
-    """
-    Client gửi: { "image": "data:image/jpeg;base64,..." }
-    Server trả: { "label": "...", "prob": <float> } cho frontend smoking WS.
-    """
-    # Tạm tắt smoking để tập trung debug/tinh chỉnh phone detection.
-    emit("smoking_result", {"label": "no_smoking", "prob": 0, "raw_label": "no_smoking"})
-    return
-        
-    if smoking_model is None or not smoking_idx_to_label:
-        emit(
-            "smoking_result", {"label": "no_model", "prob": 0, "raw_label": "no_model"}
-        )
-        return
- 
-    image_b64 = data.get("image", "")
-    if image_b64.startswith("data:"):
-        image_b64 = image_b64.split(",", 1)[-1]
- 
-    if not image_b64:
-        emit("smoking_result", {"label": "no_face", "prob": 0, "raw_label": "no_face"})
-        return
- 
-    try:
-        vec = _image_base64_to_landmarks(image_b64)
-    except Exception as exc:
-        app.logger.exception("Smoking inference failed")
-        emit("smoking_result", {"label": "error", "prob": 0, "raw_label": "inference_error"})
-        return
-
-    if vec is None:
-        emit("smoking_result", {"label": "no_face", "prob": 0, "raw_label": "no_face"})
-        return
-
-    x = np.asarray(vec, dtype=np.float32).reshape(1, -1)
-
-    try:
-        pred_idx = int(smoking_model.predict(x)[0])
-        raw_label = smoking_idx_to_label.get(pred_idx, str(pred_idx))
-
-        if hasattr(smoking_model, "predict_proba"):
-            proba = smoking_model.predict_proba(x)[0]
-        else:
-            proba = None
-    except Exception as exc:
-        app.logger.exception("Smoking inference failed")
-        emit("smoking_result", {"label": "error", "prob": 0, "raw_label": "inference_error"})
-        return
-
-    scores: Dict[str, float] = {}
-    if proba is not None:
-        for i, p in enumerate(proba):
-            scores[smoking_idx_to_label.get(i, str(i))] = float(p)
-
-    best_prob = float(max(scores.values())) if scores else None
-
-    # Hysteresis/threshold giống REST để giảm false-positive.
-    SMOKING_HARD_THRESHOLD = 0.90
-    label = raw_label
-    if label == "smoking" and (best_prob is None or best_prob < SMOKING_HARD_THRESHOLD):
-        label = "no_smoking"
-
-    emit(
-        "smoking_result",
-        {
-            "label": label,
-            "prob": best_prob or 0,
-            "raw_label": raw_label,
-        },
-    )
-
+def handle_smoking_frame(_data):
+    emit("smoking_result", _smoking_unavailable())
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))

@@ -57,7 +57,7 @@ const SMOKING_OFF_FRAMES = 14;
 const SMOKING_WARN_MS = 4000;
 // ─────────────────────────────────────────────────────────────
 
-// Tạm tắt smoking trong test để tập trung fix phone detection
+// Unavailable: no validated smoking artifact is shipped. Do not just flip this flag.
 const SMOKING_ENABLED = false;
 
 // ── IDENTITY AUTH (vehicle UUID) ──────────────────────────────
@@ -3032,6 +3032,11 @@ export default function DriverMonitorDMS() {
                     : smokingResult
                       ? "NO"
                       : "..."}
+                </div>
+              )}
+              {!SMOKING_ENABLED && (
+                <div role="status" style={{ fontSize: 12, color: "#b8c3d6" }}>
+                  Smoking: unavailable (chưa có model được kiểm chứng)
                 </div>
               )}
               {SMOKING_ENABLED && smokingError && (

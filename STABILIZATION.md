@@ -41,6 +41,19 @@ large registration images can exceed their capacity: inspect schema and plan
 an independently approved migration after backup. No migration/data deletion
 has been run by this stabilization work.
 
+## Smoking availability
+
+No smoking model artifact exists in this checkout. The old socket returned a
+fabricated `no_smoking` before unreachable inference. It now returns
+`label=unavailable`, `prob=null`, `available=false`; REST returns HTTP 503.
+Health reports `model_missing` (or `validation_required` if a file is provided).
+The dashboard explicitly shows unavailable and does not publish smoking frames
+or generate smoking alerts. No model was fabricated/trained and smoking
+inference has **not** been restored. Dead inference/loader code was removed;
+training scripts remain. Restoring inference requires a trusted artifact,
+validated preprocessing/class mapping/thresholds and an end-to-end test before
+enabling the existing frontend debounce/cooldown flow.
+
 ## Offline tests
 
 From `DiQuaMuaHaa/backend`, in a virtual environment with backend dependencies:

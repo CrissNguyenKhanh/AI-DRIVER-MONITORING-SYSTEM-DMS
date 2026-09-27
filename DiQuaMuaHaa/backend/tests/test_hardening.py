@@ -74,5 +74,34 @@ class ErrorAndHealthTests(unittest.TestCase):
                 client.disconnect()
 
 
+class SmokingUnavailableTests(unittest.TestCase):
+    def test_rest_and_socket_never_fake_negative_or_load_other_models(self):
+        with patch.object(api, "_ensure_models_loaded") as loader, patch.object(api, "SMOKING_MODEL_PATH") as path:
+            path.is_file.return_value = False
+            response = api.app.test_client().post("/api/smoking/predict_from_frame", json={"image": "invalid"})
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(response.json["label"], "unavailable")
+            self.assertEqual(response.json["reason"], "model_missing")
+            self.assertIsNone(response.json["prob"])
+            client = api.socketio.test_client(api.app)
+            try:
+                client.emit("smoking_frame", None)
+                events = client.get_received()
+                self.assertEqual(events[0]["name"], "smoking_result")
+                self.assertEqual(events[0]["args"][0], response.json)
+            finally:
+                client.disconnect()
+            loader.assert_not_called()
+
+    def test_unvalidated_artifact_is_not_automatically_enabled(self):
+        with patch.object(api, "SMOKING_MODEL_PATH") as path, patch.object(api, "_database_available", return_value=True):
+            path.is_file.return_value = True
+            response = api.app.test_client().get("/health")
+            status = response.json["models"]["smoking"]
+            self.assertFalse(status["enabled"])
+            self.assertFalse(status["loaded"])
+            self.assertEqual(status["reason"], "validation_required")
+
+
 if __name__ == "__main__":
     unittest.main()
