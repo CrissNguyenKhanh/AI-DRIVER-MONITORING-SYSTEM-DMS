@@ -452,7 +452,8 @@ def register():
             201,
         )
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -500,7 +501,8 @@ def login():
         )
 
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/auth/me", methods=["GET"])
@@ -603,7 +605,8 @@ def create_record():
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/records", methods=["GET"])
@@ -630,7 +633,8 @@ def get_records():
         )
 
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/records/<int:record_id>", methods=["GET"])
@@ -645,7 +649,8 @@ def get_record(record_id):
         return jsonify({"success": True, "record": record.to_dict()})
 
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/ai/predict", methods=["POST"])
@@ -671,7 +676,8 @@ def predict_only():
         )
 
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/ai/symptoms", methods=["GET"])
@@ -688,7 +694,8 @@ def get_symptoms():
         return jsonify({"success": True, "symptoms": sorted(list(all_symptoms))})
 
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/statistics", methods=["GET"])
@@ -806,7 +813,8 @@ def get_statistics():
 
     except Exception as e:
         print(f"Error in statistics: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/users", methods=["GET"])
@@ -831,7 +839,8 @@ def get_users():
             }
         )
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/users", methods=["POST"])
@@ -864,7 +873,8 @@ def create_user():
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 
@@ -999,7 +1009,8 @@ def predict_image():
 
     except Exception as e:
         print(f"Lỗi: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 if __name__ == "__main__":

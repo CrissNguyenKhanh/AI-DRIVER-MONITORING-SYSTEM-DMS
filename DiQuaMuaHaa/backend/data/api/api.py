@@ -28,6 +28,7 @@ from datetime import datetime, timedelta
 from urllib import parse, request as urlrequest
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from werkzeug.exceptions import HTTPException
 
 try:
     from ultralytics import YOLO  # type: ignore
@@ -46,6 +47,18 @@ CORS(app, origins=CORS_ORIGINS, supports_credentials=True)
 # Tránh lỗi server khi client gửi base64 ảnh quá lớn
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25MB
 
+
+
+def _api_error(status=500):
+    app.logger.exception("Request failed: %s", request.path)
+    return jsonify({"error": "Service unavailable" if status == 503 else "Internal server error"}), status
+
+
+@app.errorhandler(Exception)
+def unexpected_error(error):
+    if isinstance(error, HTTPException):
+        return jsonify({"error": error.name}), error.code
+    return _api_error()
 
 
 @app.errorhandler(413)
@@ -305,12 +318,15 @@ def _telegram_call(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     body = parse.urlencode(payload).encode("utf-8")
     req = urlrequest.Request(api_url, data=body, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    with urlrequest.urlopen(req, timeout=10) as resp:
-        raw = resp.read().decode("utf-8")
-        data = json.loads(raw)
-        if not data.get("ok"):
-            raise RuntimeError(f"Telegram API error: {data}")
-        return data
+    try:
+        with urlrequest.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if not data.get("ok"):
+                raise RuntimeError("Telegram rejected the request")
+            return data
+    except Exception:
+        # URL includes the token: never propagate an HTTP exception's URL/body.
+        raise RuntimeError("Telegram request failed") from None
 
 
 def _telegram_send_decision_message(
@@ -1089,34 +1105,42 @@ def index() -> Any:
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
-@app.get("/api/ping-db")
-def ping_db() -> Any:
-    """Test database connection — hỗ trợ cả MySQL và PostgreSQL."""
-    debug = {
-        "DB_BACKEND": os.getenv("DB_BACKEND", "(not set)"),
-        "POSTGRES_ACTIVE": POSTGRES_ACTIVE,
-        "POSTGRES_AVAILABLE": POSTGRES_AVAILABLE,
-        "DATABASE_URL_set": bool(os.getenv("DATABASE_URL", "")),
-    }
+def _database_available():
+    conn = None
     try:
         conn = get_mysql_conn()
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
-        conn.close()
-        return jsonify({
-            "status": "ok",
-            "backend": "postgres" if POSTGRES_ACTIVE else "mysql",
-            "host": "postgres (internal)" if POSTGRES_ACTIVE else os.getenv("MYSQL_HOST", "N/A"),
-            "database": "diquamuasha" if POSTGRES_ACTIVE else os.getenv("MYSQL_DATABASE", "N/A"),
-            "debug": debug,
-        })
-    except Exception as exc:
-        return jsonify({
-            "status": "error",
-            "error": str(exc),
-            "backend": "postgres" if POSTGRES_ACTIVE else "mysql",
-            "debug": debug,
-        }), 500
+        return True
+    except Exception:
+        app.logger.exception("Database health probe failed")
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.get("/api/ping-db")
+def ping_db() -> Any:
+    available = _database_available()
+    return jsonify({"status": "ok" if available else "unavailable", "backend": DB_BACKEND}), 200 if available else 503
+
+
+@app.get("/health")
+def health() -> Any:
+    available = _database_available()
+    models = {}
+    for name, path, loaded, enabled in [
+        ("landmark", MODEL_PATH, model is not None, True),
+        ("hand", HAND_MODEL_PATH, hand_model is not None, not DISABLE_HAND_DETECT),
+        ("smoking", SMOKING_MODEL_PATH, smoking_model is not None, False),
+        ("phone", PHONE_YOLO_ONNX_PATH if PHONE_YOLO_ONNX_PATH.exists() else PHONE_YOLO_MODEL_PATH,
+         _yolo_available(), not DISABLE_PHONE_YOLO),
+    ]:
+        models[name] = {"artifact_present": path.is_file(), "loaded": loaded, "enabled": enabled}
+    return jsonify({"status": "ok" if available else "degraded",
+                    "database": {"available": available, "backend": DB_BACKEND},
+                    "models": models}), 200 if available else 503
 
 
 def _parse_landmarks(payload: Dict[str, Any]) -> List[float]:
@@ -1143,7 +1167,6 @@ def predict_landmark() -> Any:
             jsonify(
                 {
                     "error": "Model chưa được load. Hãy train model trước (train_landmarks.py).",
-                    "model_path": str(MODEL_PATH),
                 }
             ),
             500,
@@ -1166,7 +1189,7 @@ def predict_landmark() -> Any:
     try:
         vec = _parse_landmarks(payload)  # list[float], length 1434
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": "Invalid request data"}), 400
 
     x = np.asarray(vec, dtype=np.float32).reshape(1, -1)
 
@@ -1177,7 +1200,7 @@ def predict_landmark() -> Any:
         else:
             proba = None
     except Exception as exc:
-        return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
+        return _api_error()
 
     label = idx_to_label.get(pred_idx, str(pred_idx))
 
@@ -1205,23 +1228,14 @@ def predict_from_frame() -> Any:
     try:
         try:
             _ensure_models_loaded()
-        except Exception as exc:
-            return (
-                jsonify(
-                    {
-                        "error": f"Không load được model/MediaPipe: {exc}",
-                        "model_path": str(MODEL_PATH),
-                    }
-                ),
-                503,
-            )
+        except Exception:
+            return _api_error(503)
 
         if model is None or not idx_to_label:
             return (
                 jsonify(
                     {
                         "error": "Model chưa được load. Hãy train model trước (train_landmarks.py).",
-                        "model_path": str(MODEL_PATH),
                     }
                 ),
                 500,
@@ -1254,7 +1268,7 @@ def predict_from_frame() -> Any:
             try:
                 vec = _image_base64_to_landmarks_for_predict(image_b64, flip=flip_val)
             except ValueError as exc:
-                return jsonify({"error": str(exc)}), 400
+                return jsonify({"error": "Invalid request data"}), 400
             if vec is not None:
                 break
 
@@ -1276,7 +1290,7 @@ def predict_from_frame() -> Any:
             else:
                 proba = None
         except Exception as exc:
-            return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
+            return _api_error()
 
         label = idx_to_label.get(pred_idx, str(pred_idx))
         scores: Dict[str, float] = {}
@@ -1300,19 +1314,8 @@ def predict_from_frame() -> Any:
                 "scores": scores,
             }
         )
-    except Exception as exc:
-        import traceback
-
-        app.logger.exception("predict_from_frame: %s", exc)
-        return (
-            jsonify(
-                {
-                    "error": str(exc),
-                    "trace": traceback.format_exc()[-4000:],
-                }
-            ),
-            500,
-        )
+    except Exception:
+        return _api_error()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1334,7 +1337,6 @@ def smoking_predict_from_frame() -> Any:
             jsonify(
                 {
                     "error": "Smoking model chưa được load. Hãy train model trước (train_smoking.py).",
-                    "model_path": str(SMOKING_MODEL_PATH),
                 }
             ),
             500,
@@ -1364,7 +1366,7 @@ def smoking_predict_from_frame() -> Any:
     try:
         vec = _image_base64_to_landmarks(image_b64)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": "Invalid request data"}), 400
 
     if vec is None:
         return jsonify(
@@ -1384,7 +1386,7 @@ def smoking_predict_from_frame() -> Any:
         else:
             proba = None
     except Exception as exc:
-        return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
+        return _api_error()
 
     label = smoking_idx_to_label.get(pred_idx, str(pred_idx))
     scores: Dict[str, float] = {}
@@ -1432,7 +1434,6 @@ def phone_predict_from_frame() -> Any:
             jsonify(
                 {
                     "error": "Phone model chưa được load. Hãy train model trước (train_phone.py).",
-                    "model_path": str(PHONE_MODEL_PATH),
                 }
             ),
             500,
@@ -1484,7 +1485,7 @@ def phone_predict_from_frame() -> Any:
         else:
             proba = None
     except Exception as exc:
-        return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
+        return _api_error()
 
     label = phone_idx_to_label.get(pred_idx, str(pred_idx))
     scores: Dict[str, float] = {}
@@ -1535,7 +1536,6 @@ def phone_detect_from_frame() -> Any:
             jsonify(
                 {
                     "error": "YOLO phone model chưa được load. Cài onnxruntime và có phone_yolo.onnx, hoặc ultralytics + phone_yolo.pt.",
-                    "model_path": str(PHONE_YOLO_ONNX_PATH),
                 }
             ),
             500,
@@ -1579,7 +1579,7 @@ def phone_detect_from_frame() -> Any:
 
         results = phone_yolo_model(img, conf=0.4, iou=0.5, verbose=False)[0]  # type: ignore[attr-defined]
     except Exception as exc:
-        return jsonify({"error": f"Lỗi YOLO detect: {exc}"}), 500
+        return _api_error()
 
     boxes_out: List[Dict[str, Any]] = []
 
@@ -1643,7 +1643,6 @@ def predict_hand() -> Any:
             jsonify(
                 {
                     "error": "Hand model chưa được load. Hãy train model trước (train_hands.py).",
-                    "model_path": str(HAND_MODEL_PATH),
                 }
             ),
             500,
@@ -1666,7 +1665,7 @@ def predict_hand() -> Any:
     try:
         vec = _parse_hand_landmarks(payload)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": "Invalid request data"}), 400
 
     if len(vec) != hand_vec_len:
         return (
@@ -1690,7 +1689,7 @@ def predict_hand() -> Any:
         else:
             proba = None
     except Exception as exc:
-        return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
+        return _api_error()
 
     label = hand_idx_to_label.get(pred_idx, str(pred_idx))
 
@@ -1737,23 +1736,14 @@ def hand_predict_from_frame() -> Any:
     try:
         try:
             _ensure_models_loaded()
-        except Exception as exc:
-            return (
-                jsonify(
-                    {
-                        "error": f"Không load được model/MediaPipe: {exc}",
-                        "model_path": str(HAND_MODEL_PATH),
-                    }
-                ),
-                503,
-            )
+        except Exception:
+            return _api_error(503)
 
         if hand_model is None or not hand_idx_to_label:
             return (
                 jsonify(
                     {
                         "error": "Hand model chưa được load. Hãy train model trước (train_hands.py).",
-                        "model_path": str(HAND_MODEL_PATH),
                     }
                 ),
                 500,
@@ -1783,7 +1773,7 @@ def hand_predict_from_frame() -> Any:
         try:
             vec = _image_base64_to_hand_landmarks(image_b64)
         except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
+            return jsonify({"error": "Invalid request data"}), 400
 
         if vec is None:
             return _json_hand_no_hand_in_frame()
@@ -1797,7 +1787,7 @@ def hand_predict_from_frame() -> Any:
             else:
                 proba = None
         except Exception as exc:
-            return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
+            return _api_error()
 
         label = hand_idx_to_label.get(pred_idx, str(pred_idx))
         scores: Dict[str, float] = {}
@@ -1812,19 +1802,8 @@ def hand_predict_from_frame() -> Any:
                 "scores": scores,
             }
         )
-    except Exception as exc:
-        import traceback
-
-        app.logger.exception("hand_predict_from_frame: %s", exc)
-        return (
-            jsonify(
-                {
-                    "error": str(exc),
-                    "trace": traceback.format_exc()[-4000:],
-                }
-            ),
-            500,
-        )
+    except Exception:
+        return _api_error()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1863,7 +1842,7 @@ def identity_register() -> Any:
     try:
         embeddings = _collect_face_embeddings(images)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": "Invalid request data"}), 400
 
     if len(embeddings) < IDENTITY_MIN_REGISTER_SAMPLES:
         return (
@@ -1944,7 +1923,7 @@ def identity_verify() -> Any:
     try:
         current_embeddings = _collect_face_embeddings(images)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": "Invalid request data"}), 400
 
     if len(current_embeddings) < IDENTITY_MIN_VERIFY_SAMPLES:
         return (
@@ -2255,10 +2234,10 @@ def request_identity_decision() -> Any:
                     SET status = 'expired', decided_at = %s, reason = %s
                     WHERE request_id = %s
                     """,
-                    (now, f"telegram_error:{exc}", request_id),
+                    (now, "telegram_error", request_id),
                 )
                 conn.commit()
-                return jsonify({"error": f"Không gửi được Telegram: {exc}"}), 500
+                return _api_error()
 
             cur.execute(
                 """
@@ -2500,7 +2479,7 @@ def driving_session_start() -> Any:
             sid = cur.fetchone()[0]
         conn.commit()
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _api_error()
     finally:
         conn.close()
 
@@ -2533,7 +2512,7 @@ def driving_session_end() -> Any:
             n = cur.rowcount
         conn.commit()
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _api_error()
     finally:
         conn.close()
 
@@ -2598,7 +2577,7 @@ def driving_session_alert() -> Any:
             total = int(row["count"]) if row else delta
         conn.commit()
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _api_error()
     finally:
         conn.close()
 
@@ -2664,7 +2643,7 @@ def driving_sessions_list() -> Any:
                     }
                 )
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _api_error()
     finally:
         conn.close()
 
@@ -2704,7 +2683,7 @@ def driving_session_detail(session_id: int) -> Any:
             )
             alerts = {str(r["alert_type"]): int(r["count"]) for r in (cur.fetchall() or [])}
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _api_error()
     finally:
         conn.close()
 
@@ -2729,6 +2708,16 @@ except Exception:
     _async_mode = "threading"
 
 socketio = SocketIO(app, cors_allowed_origins=CORS_ORIGINS, async_mode=_async_mode)
+
+
+@socketio.on_error_default
+def socket_error(_error):
+    app.logger.exception("Socket request failed")
+    event = getattr(request, "event", {}).get("message")
+    if event == "phone_frame":
+        emit("phone_result", {"boxes": [], "error": "Inference unavailable"})
+    elif event == "smoking_frame":
+        emit("smoking_result", {"label": "unavailable", "prob": None, "error": "Inference unavailable"})
 
 
 # phone pro
@@ -2785,7 +2774,8 @@ def handle_phone_frame(data):
                 })
         emit("phone_result", {"boxes": boxes_out})
     except Exception as exc:
-        emit("phone_result", {"boxes": [], "error": str(exc)})
+        app.logger.exception("Phone inference failed")
+        emit("phone_result", {"boxes": [], "error": "Inference unavailable"})
         return
 
     # Important: phone_frame should ONLY run phone inference.
@@ -2824,7 +2814,8 @@ def handle_smoking_frame(data):
     try:
         vec = _image_base64_to_landmarks(image_b64)
     except Exception as exc:
-        emit("smoking_result", {"label": "error", "prob": 0, "raw_label": str(exc)})
+        app.logger.exception("Smoking inference failed")
+        emit("smoking_result", {"label": "error", "prob": 0, "raw_label": "inference_error"})
         return
 
     if vec is None:
@@ -2842,7 +2833,8 @@ def handle_smoking_frame(data):
         else:
             proba = None
     except Exception as exc:
-        emit("smoking_result", {"label": "error", "prob": 0, "raw_label": str(exc)})
+        app.logger.exception("Smoking inference failed")
+        emit("smoking_result", {"label": "error", "prob": 0, "raw_label": "inference_error"})
         return
 
     scores: Dict[str, float] = {}
