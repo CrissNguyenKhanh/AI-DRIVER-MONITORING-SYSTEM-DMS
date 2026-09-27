@@ -40,6 +40,7 @@ except Exception:  # ImportError, RuntimeError, ...
 
 app = Flask(__name__)
 from data.security import cors_origins
+from data.db_sql import upsert_row, insert_id
 
 CORS_ORIGINS = cors_origins()
 CORS(app, origins=CORS_ORIGINS, supports_credentials=True)
@@ -83,7 +84,10 @@ MYSQL_CONFIG = {
     "password": os.getenv("MYSQL_PASSWORD", ""),
     "database": os.getenv("MYSQL_DATABASE", "diquamuaha"),
     "charset": "utf8mb4",
-    "cursorclass": pymysql.cursors.DictCursor,
+    "cursorclass": pymysql.cursors.DictCursor if MYSQL_AVAILABLE else None,
+    "connect_timeout": 5,
+    "read_timeout": 10,
+    "write_timeout": 10,
 }
 
 # Model landmark 2-class (safe/drowsy): nếu top1 - top2 < margin hoặc top1 < confidence → "safe"
@@ -131,7 +135,9 @@ phone_yolo_onnx  = None          # onnxruntime InferenceSession (ưu tiên, nh�
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")  # Render PostgreSQL internal URL
 DB_BACKEND = os.getenv("DB_BACKEND", "mysql").strip().lower()
-POSTGRES_ACTIVE = DB_BACKEND == "postgres" and bool(DATABASE_URL and POSTGRES_AVAILABLE)
+if DB_BACKEND not in ("mysql", "postgres"):
+    raise ValueError("DB_BACKEND must be mysql or postgres")
+POSTGRES_ACTIVE = DB_BACKEND == "postgres"
 
 
 def get_mysql_conn():
@@ -140,7 +146,10 @@ def get_mysql_conn():
     - Local: mặc định DB_BACKEND=mysql để dùng MariaDB/MySQL
     """
     if POSTGRES_ACTIVE:
-        conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor)
+        if not DATABASE_URL or not POSTGRES_AVAILABLE:
+            raise RuntimeError("PostgreSQL requires DATABASE_URL and psycopg2")
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor,
+                                connect_timeout=5, options="-c statement_timeout=10000")
         return conn
     if not MYSQL_AVAILABLE:
         raise RuntimeError(
@@ -207,8 +216,8 @@ def _ensure_identity_tables(cur) -> None:
             CREATE TABLE IF NOT EXISTS driver_identity (
                 driver_id      VARCHAR(64) PRIMARY KEY,
                 name           VARCHAR(255),
-                embedding_json TEXT NOT NULL,
-                image_base64   TEXT,
+                embedding_json LONGTEXT NOT NULL,
+                image_base64   LONGTEXT,
                 created_at     DATETIME NOT NULL
             ) ENGINE=InnoDB
             """
@@ -245,6 +254,9 @@ def _ensure_identity_tables(cur) -> None:
             ) ENGINE=InnoDB
             """
         )
+
+    # Persist lazy schema creation also on read-only/early-return requests.
+    cur.connection.commit()
 
 
 def _ensure_driving_session_tables(cur) -> None:
@@ -304,6 +316,8 @@ def _ensure_driving_session_tables(cur) -> None:
             ) ENGINE=InnoDB
             """
         )
+
+    cur.connection.commit()
 
 
 DRIVING_ALERT_TYPES = frozenset(
@@ -1867,17 +1881,12 @@ def identity_register() -> Any:
     try:
         with conn.cursor() as cur:
             _ensure_identity_tables(cur)
-            cur.execute(
-                """
-                INSERT INTO driver_identity (driver_id, name, embedding_json, image_base64, created_at)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (driver_id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    embedding_json = EXCLUDED.embedding_json,
-                    image_base64 = EXCLUDED.image_base64,
-                    created_at = EXCLUDED.created_at
-                """,
+            upsert_row(
+                cur, "driver_identity",
+                ("driver_id", "name", "embedding_json", "image_base64", "created_at"),
                 (driver_id, name, embedding_json, image_b64, created_at),
+                ("driver_id",), ("name", "embedding_json", "image_base64", "created_at"),
+                postgres=POSTGRES_ACTIVE,
             )
         conn.commit()
     finally:
@@ -2080,17 +2089,12 @@ def bind_driver_telegram_owner() -> Any:
     try:
         with conn.cursor() as cur:
             _ensure_identity_tables(cur)
-            cur.execute(
-                """
-                INSERT INTO driver_telegram_owner
-                    (driver_id, telegram_chat_id, telegram_user_id, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (driver_id) DO UPDATE SET
-                    telegram_chat_id = EXCLUDED.telegram_chat_id,
-                    telegram_user_id = EXCLUDED.telegram_user_id,
-                    updated_at = EXCLUDED.updated_at
-                """,
+            upsert_row(
+                cur, "driver_telegram_owner",
+                ("driver_id", "telegram_chat_id", "telegram_user_id", "created_at", "updated_at"),
                 (driver_id, chat_id, user_id, now, now),
+                ("driver_id",), ("telegram_chat_id", "telegram_user_id", "updated_at"),
+                postgres=POSTGRES_ACTIVE,
             )
         conn.commit()
     finally:
@@ -2207,16 +2211,14 @@ def request_identity_decision() -> Any:
                 return jsonify({"error": "Chưa bind Telegram chat_id cho driver_id này."}), 400
 
             chat_id = int(owner_row["telegram_chat_id"])
-            cur.execute(
-                """
-                INSERT INTO identity_decision_requests
-                    (driver_id, status, reason, similarity, threshold, requested_at, expires_at, telegram_chat_id)
-                VALUES (%s, 'pending', %s, %s, %s, %s, %s, %s)
-                RETURNING request_id
-                """,
+            request_id = insert_id(
+                cur,
+                "INSERT INTO identity_decision_requests "
+                "(driver_id, status, reason, similarity, threshold, requested_at, expires_at, telegram_chat_id) "
+                "VALUES (%s, 'pending', %s, %s, %s, %s, %s, %s)",
                 (driver_id, reason, similarity_val, threshold_val, now, expires, chat_id),
+                "request_id", postgres=POSTGRES_ACTIVE,
             )
-            request_id = int(cur.fetchone()[0])
 
             try:
                 msg_id = _telegram_send_decision_message(
@@ -2431,17 +2433,12 @@ def telegram_webhook() -> Any:
             try:
                 with conn.cursor() as cur:
                     _ensure_identity_tables(cur)
-                    cur.execute(
-                        """
-                        INSERT INTO driver_telegram_owner
-                            (driver_id, telegram_chat_id, telegram_user_id, created_at, updated_at)
-                        VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (driver_id) DO UPDATE SET
-                            telegram_chat_id = EXCLUDED.telegram_chat_id,
-                            telegram_user_id = EXCLUDED.telegram_user_id,
-                            updated_at = EXCLUDED.updated_at
-                        """,
+                    upsert_row(
+                        cur, "driver_telegram_owner",
+                        ("driver_id", "telegram_chat_id", "telegram_user_id", "created_at", "updated_at"),
                         (driver_id, chat_id, user_id, now, now),
+                        ("driver_id",), ("telegram_chat_id", "telegram_user_id", "updated_at"),
+                        postgres=POSTGRES_ACTIVE,
                     )
                 conn.commit()
             finally:
@@ -2468,15 +2465,11 @@ def driving_session_start() -> Any:
     try:
         with conn.cursor() as cur:
             _ensure_driving_session_tables(cur)
-            cur.execute(
-                """
-                INSERT INTO driving_sessions (driver_id, label, started_at, ended_at)
-                VALUES (%s, %s, %s, NULL)
-                RETURNING id
-                """,
-                (driver_id, label, now),
+            sid = insert_id(
+                cur,
+                "INSERT INTO driving_sessions (driver_id, label, started_at, ended_at) VALUES (%s, %s, %s, NULL)",
+                (driver_id, label, now), "id", postgres=POSTGRES_ACTIVE,
             )
-            sid = cur.fetchone()[0]
         conn.commit()
     except Exception as exc:
         return _api_error()
@@ -2558,13 +2551,10 @@ def driving_session_alert() -> Any:
             )
             if not cur.fetchone():
                 return jsonify({"error": "session_id không tồn tại."}), 404
-            cur.execute(
-                """
-                INSERT INTO driving_session_alerts (session_id, alert_type, count)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (session_id, alert_type) DO UPDATE SET count = driving_session_alerts.count + EXCLUDED.count
-                """,
-                (session_id, alert_type, delta),
+            upsert_row(
+                cur, "driving_session_alerts", ("session_id", "alert_type", "count"),
+                (session_id, alert_type, delta), ("session_id", "alert_type"), ("count",),
+                postgres=POSTGRES_ACTIVE, increments=("count",),
             )
             cur.execute(
                 """
