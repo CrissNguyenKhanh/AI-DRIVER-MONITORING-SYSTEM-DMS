@@ -41,6 +41,29 @@ large registration images can exceed their capacity: inspect schema and plan
 an independently approved migration after backup. No migration/data deletion
 has been run by this stabilization work.
 
+## Frontend endpoints
+
+Production builds require `VITE_API_BASE`: an actual HTTPS backend origin
+(no /api suffix), or `/` when your deployment explicitly reverse-proxies
+`/api` and `/socket.io` to DMS. REST and Socket.IO use the same resolver.
+Production will never guess a port on the frontend host. HTTP backend URLs,
+credentials, query/fragment and DMS URL paths are rejected.
+For a local build-only check in PowerShell:
+
+```powershell
+$env:VITE_API_BASE = "/"
+npm run build
+node --test tests/*.test.js
+```
+
+This checks compilation; it does not create a production reverse proxy.
+Missing config deliberately fails `npm run build` early.
+Vite dev uses same-origin proxies (HTTPS camera support included).
+The optional medical pages need `VITE_MEDICAL_API_BASE` in production;
+missing config prevents their requests rather than guessing port 5000.
+Set the actual deployment origins before building and allow the frontend
+origin in the backend CORS settings. Rebuild when changing Vite variables.
+
 ## Smoking availability
 
 No smoking model artifact exists in this checkout. The old socket returned a
