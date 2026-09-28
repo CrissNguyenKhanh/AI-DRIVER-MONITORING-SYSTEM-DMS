@@ -77,6 +77,21 @@ training scripts remain. Restoring inference requires a trusted artifact,
 validated preprocessing/class mapping/thresholds and an end-to-end test before
 enabling the existing frontend debounce/cooldown flow.
 
+## Camera lifecycle
+
+The standalone hand page now keeps one webcam `<video>` mounted while gesture
+overlays/styles change. Both that page and the main DMS dashboard use one
+camera-session owner: duplicate starts share a pending permission request,
+tracks returned after stop/unmount are immediately released, and active REST
+requests are aborted during cleanup. The dashboard also closes FaceMesh/Hands
+resources and waits correctly when React StrictMode sees an already-loading
+MediaPipe script.
+
+Browser/hardware behavior still requires a manual HTTPS camera test: allow and
+deny permission, retry after denial, toggle webcam repeatedly, change hand
+gestures (including Sukuna), navigate away while permission/API calls are
+pending, and confirm the browser camera indicator turns off.
+
 ## Offline tests
 
 From `DiQuaMuaHaa/backend`, in a virtual environment with backend dependencies:
@@ -103,4 +118,22 @@ production dependency versions.
 
 Frontend lint baseline before changes: 40 errors and 20 warnings. These existing
 issues are not silently treated as a passing lint result. Baseline production
-bundle also exceeds Vite's 500 kB chunk advisory.
+bundle also exceeds Vite's 500 kB chunk advisory. The stabilized branch reports
+39 errors and 17 warnings; modified camera utility/test/standalone hand files
+have no lint findings, while the main legacy dashboard retains 17 errors and
+11 warnings.
+
+## Environment and security follow-up
+
+The supported backend environment is Python 3.11.9 from
+`DiQuaMuaHaa/backend/.python-version`. Install the exact pinned requirements;
+do not use Python 3.14 or silently upgrade NumPy/scikit-learn to make a pickle
+load. The repository-root `.venv` is ignored and must never be committed.
+
+This branch intentionally does not redesign authentication. Confirmed follow-up
+risks remain: `/admin` and related medical APIs lack complete role enforcement;
+DMS identity registration can replace an existing owner by known `driver_id`;
+Telegram binding can be replaced without a separate authorization proof; the
+frontend/legacy medical login contracts are inconsistent; and face identity
+has no liveness/anti-spoofing protection. Address these in dedicated security
+branches with migration/compatibility plans, not opportunistically here.
