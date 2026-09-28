@@ -111,12 +111,35 @@ class ModelCompatibilityTests(unittest.TestCase):
         ]:
             with self.subTest(loader=loader.__name__), \
                     patch.object(api, "_compat_joblib_load", side_effect=ValueError("incompatible")), \
-                    patch.object(api.app.logger, "exception") as logged, \
-                    patch.object(api.threading, "Thread") as thread:
+                    patch.object(api.app.logger, "exception") as logged:
                 loader()
                 self.assertIsNone(getattr(api, model_name))
                 logged.assert_called_once()
-                thread.assert_not_called()
+
+    def test_failed_models_are_not_reloaded_for_every_request(self):
+        with patch.object(api, "_models_load_attempted", False), \
+                patch.object(api, "_models_loaded", False), \
+                patch.object(api, "model", None), \
+                patch.object(api, "hand_model", None), \
+                patch.object(api, "hand_idx_to_label", {}), \
+                patch.object(api, "_ensure_face_mesh_loaded") as face, \
+                patch.object(api, "load_model") as landmark, \
+                patch.object(api, "load_hand_model") as hand:
+            api._ensure_models_loaded()
+            api._ensure_models_loaded()
+            self.assertEqual(face.call_count, 2)
+            landmark.assert_called_once()
+            hand.assert_called_once()
+
+    def test_unavailable_hand_model_returns_service_unavailable(self):
+        with patch.object(api, "_ensure_models_loaded"), \
+                patch.object(api, "hand_model", None), \
+                patch.object(api, "hand_idx_to_label", {}):
+            client = api.app.test_client()
+            for endpoint in ["/api/hand/predict", "/api/hand/predict_from_frame"]:
+                response = client.post(endpoint, json={})
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json, {"error": "Hand inference unavailable"})
 
 
 if __name__ == "__main__":

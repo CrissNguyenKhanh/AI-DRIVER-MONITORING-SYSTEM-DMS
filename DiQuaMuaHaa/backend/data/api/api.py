@@ -2,7 +2,6 @@ from __future__ import annotations
 from flask_socketio import SocketIO, emit
 import base64
 import os
-import threading
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -602,6 +601,7 @@ def _yolo_onnx_detect(session, img_bgr, conf_thres: float = 0.4, iou_thres: floa
 
 # Lazy loading — chỉ load khi có request đầu tiên, tránh OOM lúc startup (Render 512MB)
 _models_loaded = False
+_models_load_attempted = False
 _face_mesh = None
 _hands = None
 
@@ -633,11 +633,11 @@ def _ensure_models_loaded() -> None:
     """Load sklearn .pkl + MediaPipe Hands; FaceMesh dùng chung qua _ensure_face_mesh_loaded().
     Nếu DISABLE_HAND_DETECT=1 thì bỏ qua MediaPipe Hands + hand_model (~80MB tiết kiệm RAM).
     """
-    global _models_loaded, _hands, joblib
+    global _models_loaded, _models_load_attempted, _hands, joblib
 
     _ensure_face_mesh_loaded()
 
-    if _models_loaded:
+    if _models_load_attempted:
         return
 
     import joblib as _joblib  # noqa: PLC0415
@@ -648,8 +648,8 @@ def _ensure_models_loaded() -> None:
 
     if not DISABLE_HAND_DETECT:
         load_hand_model()
-        import mediapipe as mp  # noqa: PLC0415
-        if _hands is None:
+        if hand_model is not None and hand_idx_to_label and _hands is None:
+            import mediapipe as mp  # noqa: PLC0415
             _hands = mp.solutions.hands.Hands(
                 static_image_mode=True,
                 max_num_hands=2,
@@ -666,6 +666,7 @@ def _ensure_models_loaded() -> None:
             and hand_model is not None
             and bool(hand_idx_to_label)
         )
+    _models_load_attempted = True
 
 
 # YOLO load riêng — lazy, chỉ chạy khi endpoint phone/detect được gọi lần đầu
@@ -1477,14 +1478,7 @@ def predict_hand() -> Any:
     """
     _ensure_models_loaded()
     if hand_model is None or not hand_idx_to_label:
-        return (
-            jsonify(
-                {
-                    "error": "Hand model chưa được load. Hãy train model trước (train_hands.py).",
-                }
-            ),
-            500,
-        )
+        return jsonify({"error": "Hand inference unavailable"}), 503
 
     try:
         payload = request.get_json(force=True, silent=False)
@@ -1578,14 +1572,7 @@ def hand_predict_from_frame() -> Any:
             return _api_error(503)
 
         if hand_model is None or not hand_idx_to_label:
-            return (
-                jsonify(
-                    {
-                        "error": "Hand model chưa được load. Hãy train model trước (train_hands.py).",
-                    }
-                ),
-                500,
-            )
+            return jsonify({"error": "Hand inference unavailable"}), 503
 
         try:
             payload = request.get_json(force=True, silent=False)

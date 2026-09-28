@@ -93,12 +93,13 @@ request, start/end a session, increment alert counts, list/detail sessions.
 Test real Telegram only with rotated credentials and the webhook secret header.
 No real Telegram message or database write is needed by the offline suite.
 
-The tracked landmark and hand pickle artifacts currently fail to load with the
-project-pinned NumPy 1.26.4 / scikit-learn 1.7.2 environment (NumPy MT19937
-state incompatibility). Requests therefore degrade safely; the server logs the
-load failure and does not train, overwrite, or claim the model is loaded.
-Regenerate and validate those artifacts in a controlled model-pipeline change;
-do not solve this by silently changing production dependency versions.
+The tracked landmark artifact loads with the project-pinned NumPy 1.26.4 /
+scikit-learn 1.7.2 environment. The tracked hand artifact does not (NumPy
+MT19937 state incompatibility). Hand requests therefore return HTTP 503; the
+server logs one load failure per process and does not train, overwrite, or
+claim that model is loaded. Regenerate and validate the hand artifact in a
+controlled model-pipeline change; do not solve this by silently changing
+production dependency versions.
 
 Frontend lint baseline before changes: 40 errors and 20 warnings. These existing
 issues are not silently treated as a passing lint result. Baseline production
