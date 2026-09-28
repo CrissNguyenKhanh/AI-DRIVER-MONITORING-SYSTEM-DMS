@@ -103,5 +103,21 @@ class SmokingUnavailableTests(unittest.TestCase):
             self.assertEqual(status["reason"], "validation_required")
 
 
+class ModelCompatibilityTests(unittest.TestCase):
+    def test_invalid_artifacts_do_not_train_or_overwrite_files(self):
+        for loader, model_name in [
+            (api.load_model, "model"),
+            (api.load_hand_model, "hand_model"),
+        ]:
+            with self.subTest(loader=loader.__name__), \
+                    patch.object(api, "_compat_joblib_load", side_effect=ValueError("incompatible")), \
+                    patch.object(api.app.logger, "exception") as logged, \
+                    patch.object(api.threading, "Thread") as thread:
+                loader()
+                self.assertIsNone(getattr(api, model_name))
+                logged.assert_called_once()
+                thread.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

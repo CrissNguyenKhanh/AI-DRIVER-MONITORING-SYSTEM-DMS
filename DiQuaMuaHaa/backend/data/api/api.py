@@ -392,30 +392,12 @@ def _telegram_send_text(chat_id: int, text: str) -> None:
 
 
 def _compat_joblib_load(path: Path) -> Any:
-    """
-    Load a joblib/pickle file.
-
-    Note: trước đây mình có thử "patch" NumPy BitGenerator để tương thích pickle
-    giữa các môi trường, nhưng việc patch sai có thể làm unpickle tạo lỗi mới
-    (do hàm patch nằm trong scope local và không thể picklable).
-
-    Chiến lược hiện tại: nếu joblib.load fail thì các hàm `load_model()` /
-    `load_hand_model()` sẽ kích hoạt "train fallback" (train lại từ CSV trong repo)
-    để tạo file pkl tương thích đúng với môi trường Render.
-    """
+    """Load a trusted local artifact without training or rewriting it."""
     return joblib.load(path)
-
-
-_model_train_lock = threading.Lock()
-_trained_fallback_landmark = False
-_trained_fallback_hand = False
-_training_landmark_in_progress = False
-_training_hand_in_progress = False
 
 
 def load_model() -> None:
     global artifact, model, idx_to_label
-    # default state (used when joblib.load fails and we start training fallback)
     artifact = None
     model = None
     idx_to_label = {}
@@ -425,40 +407,8 @@ def load_model() -> None:
 
     try:
         artifact = _compat_joblib_load(MODEL_PATH)
-    except Exception as exc:
-        # If pickle is incompatible across environments, train from CSV.
-        # IMPORTANT: train in background to avoid gunicorn worker timeout on Render.
-        app.logger.warning("load_model failed (%s). Start landmark fallback training in background...", exc)
-
-        def _train_landmark_bg() -> None:
-            global _trained_fallback_landmark, _training_landmark_in_progress
-            try:
-                # Train fallback should be fast (skip CV/report) to fit worker limits.
-                os.environ.setdefault("FAST_MODE", "1")
-                os.environ.setdefault("SKIP_CV", "1")
-
-                from driver_training.train.train_landmarks import train_landmark_model
-
-                csv_path = BASE_DIR / "driver_training" / "collect" / "data" / "landmarks.csv"
-                train_landmark_model(
-                    csv_path=csv_path,
-                    model_path=MODEL_PATH,
-                    test_size=float(os.getenv("LANDMARK_TEST_SIZE", "0.2")),
-                    random_state=int(os.getenv("LANDMARK_RANDOM_STATE", "42")),
-                )
-                with _model_train_lock:
-                    _trained_fallback_landmark = True
-            except Exception:
-                app.logger.exception("landmark fallback training failed")
-            finally:
-                with _model_train_lock:
-                    _training_landmark_in_progress = False
-
-        with _model_train_lock:
-            global _training_landmark_in_progress
-            if not _trained_fallback_landmark and not _training_landmark_in_progress:
-                _training_landmark_in_progress = True
-                threading.Thread(target=_train_landmark_bg, daemon=True).start()
+    except Exception:
+        app.logger.exception("Landmark model artifact is incompatible or invalid")
         return
 
     if artifact is None:
@@ -471,7 +421,6 @@ def load_model() -> None:
 
 def load_hand_model() -> None:
     global hand_artifact, hand_model, hand_idx_to_label, hand_vec_len
-    # default state (used when joblib.load fails and we start training fallback)
     hand_artifact = None
     hand_model = None
     hand_idx_to_label = {}
@@ -482,39 +431,8 @@ def load_hand_model() -> None:
 
     try:
         hand_artifact = _compat_joblib_load(HAND_MODEL_PATH)
-    except Exception as exc:
-        # If pickle is incompatible across environments, train from CSV.
-        # IMPORTANT: train in background to avoid gunicorn worker timeout on Render.
-        app.logger.warning("load_hand_model failed (%s). Start hand fallback training in background...", exc)
-
-        def _train_hand_bg() -> None:
-            global _trained_fallback_hand, _training_hand_in_progress
-            try:
-                os.environ.setdefault("FAST_MODE", "1")
-                os.environ.setdefault("SKIP_CV", "1")
-
-                from driver_training.train.train_hands import train_hand_model
-
-                csv_path = BASE_DIR / "driver_training" / "collect" / "hand_dataset.csv"
-                train_hand_model(
-                    csv_path=csv_path,
-                    model_path=HAND_MODEL_PATH,
-                    test_size=float(os.getenv("HAND_TEST_SIZE", "0.15")),
-                    random_state=int(os.getenv("HAND_RANDOM_STATE", "42")),
-                )
-                with _model_train_lock:
-                    _trained_fallback_hand = True
-            except Exception:
-                app.logger.exception("hand fallback training failed")
-            finally:
-                with _model_train_lock:
-                    _training_hand_in_progress = False
-
-        with _model_train_lock:
-            global _training_hand_in_progress
-            if not _trained_fallback_hand and not _training_hand_in_progress:
-                _training_hand_in_progress = True
-                threading.Thread(target=_train_hand_bg, daemon=True).start()
+    except Exception:
+        app.logger.exception("Hand model artifact is incompatible or invalid")
         return
 
     if hand_artifact is None:
