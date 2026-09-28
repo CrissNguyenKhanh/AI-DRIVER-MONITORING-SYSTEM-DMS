@@ -76,7 +76,7 @@ const EnhancedPatientStatistics = () => {
 
   useEffect(() => {
     // Chỉ gọi 1 API duy nhất đã có bên Backend
-    fetch(`${getMedicalApiBase()}/api/statistics`)
+    Promise.resolve().then(() => fetch(`${getMedicalApiBase()}/api/statistics`))
       .then((response) => {
         if (!response.ok) {
           throw new Error("Lỗi kết nối đến server");

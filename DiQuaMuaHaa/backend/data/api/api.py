@@ -2,7 +2,6 @@ from __future__ import annotations
 from flask_socketio import SocketIO, emit
 import base64
 import os
-import threading
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -28,6 +27,7 @@ from datetime import datetime, timedelta
 from urllib import parse, request as urlrequest
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from werkzeug.exceptions import HTTPException
 
 try:
     from ultralytics import YOLO  # type: ignore
@@ -38,24 +38,27 @@ except Exception:  # ImportError, RuntimeError, ...
 
 
 app = Flask(__name__)
-CORS(app, origins="*", supports_credentials=True)
+from data.security import cors_origins
+from data.db_sql import upsert_row, insert_id
+
+CORS_ORIGINS = cors_origins()
+CORS(app, origins=CORS_ORIGINS, supports_credentials=True)
 
 # Tránh lỗi server khi client gửi base64 ảnh quá lớn
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25MB
 
-# Khi worker crash / exception ngoài view, vẫn gửi CORS để browser không báo sai "CORS"
-@app.after_request
-def _cors_all_responses(response: Any):
-    response.headers.setdefault("Access-Control-Allow-Origin", "*")
-    response.headers.setdefault(
-        "Access-Control-Allow-Headers",
-        "Content-Type, Authorization, X-Requested-With",
-    )
-    response.headers.setdefault(
-        "Access-Control-Allow-Methods",
-        "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    )
-    return response
+
+
+def _api_error(status=500):
+    app.logger.exception("Request failed: %s", request.path)
+    return jsonify({"error": "Service unavailable" if status == 503 else "Internal server error"}), status
+
+
+@app.errorhandler(Exception)
+def unexpected_error(error):
+    if isinstance(error, HTTPException):
+        return jsonify({"error": error.name}), error.code
+    return _api_error()
 
 
 @app.errorhandler(413)
@@ -80,7 +83,10 @@ MYSQL_CONFIG = {
     "password": os.getenv("MYSQL_PASSWORD", ""),
     "database": os.getenv("MYSQL_DATABASE", "diquamuaha"),
     "charset": "utf8mb4",
-    "cursorclass": pymysql.cursors.DictCursor,
+    "cursorclass": pymysql.cursors.DictCursor if MYSQL_AVAILABLE else None,
+    "connect_timeout": 5,
+    "read_timeout": 10,
+    "write_timeout": 10,
 }
 
 # Model landmark 2-class (safe/drowsy): nếu top1 - top2 < margin hoặc top1 < confidence → "safe"
@@ -100,8 +106,8 @@ IDENTITY_SIM_THRESHOLD = float(os.getenv("IDENTITY_SIM_THRESHOLD", "0.975"))
 IDENTITY_MIN_REGISTER_SAMPLES = int(os.getenv("IDENTITY_MIN_REGISTER_SAMPLES", "3"))
 IDENTITY_MIN_VERIFY_SAMPLES = int(os.getenv("IDENTITY_MIN_VERIFY_SAMPLES", "2"))
 IDENTITY_DECISION_TIMEOUT_SEC = int(os.getenv("IDENTITY_DECISION_TIMEOUT_SEC", "30"))
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8778925999:AAEvtjjjwulzUvGTC8ThTfvwOkJ7ALGuyoQ").strip()
-TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "Khanhdz123").strip()
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
 
 
 artifact: Dict[str, Any] | None = None
@@ -112,10 +118,6 @@ hand_artifact: Dict[str, Any] | None = None
 hand_model = None
 hand_idx_to_label: Dict[int, str] = {}
 hand_vec_len: int = 126  # khớp artifact vec_len (63 = collect_hands normalize + dominant hand)
-
-smoking_artifact: Dict[str, Any] | None = None
-smoking_model = None
-smoking_idx_to_label: Dict[int, str] = {}
 
 phone_artifact: Dict[str, Any] | None = None
 phone_model = None
@@ -128,7 +130,9 @@ phone_yolo_onnx  = None          # onnxruntime InferenceSession (ưu tiên, nh�
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")  # Render PostgreSQL internal URL
 DB_BACKEND = os.getenv("DB_BACKEND", "mysql").strip().lower()
-POSTGRES_ACTIVE = DB_BACKEND == "postgres" and bool(DATABASE_URL and POSTGRES_AVAILABLE)
+if DB_BACKEND not in ("mysql", "postgres"):
+    raise ValueError("DB_BACKEND must be mysql or postgres")
+POSTGRES_ACTIVE = DB_BACKEND == "postgres"
 
 
 def get_mysql_conn():
@@ -137,7 +141,10 @@ def get_mysql_conn():
     - Local: mặc định DB_BACKEND=mysql để dùng MariaDB/MySQL
     """
     if POSTGRES_ACTIVE:
-        conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor)
+        if not DATABASE_URL or not POSTGRES_AVAILABLE:
+            raise RuntimeError("PostgreSQL requires DATABASE_URL and psycopg2")
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor,
+                                connect_timeout=5, options="-c statement_timeout=10000")
         return conn
     if not MYSQL_AVAILABLE:
         raise RuntimeError(
@@ -204,8 +211,8 @@ def _ensure_identity_tables(cur) -> None:
             CREATE TABLE IF NOT EXISTS driver_identity (
                 driver_id      VARCHAR(64) PRIMARY KEY,
                 name           VARCHAR(255),
-                embedding_json TEXT NOT NULL,
-                image_base64   TEXT,
+                embedding_json LONGTEXT NOT NULL,
+                image_base64   LONGTEXT,
                 created_at     DATETIME NOT NULL
             ) ENGINE=InnoDB
             """
@@ -242,6 +249,9 @@ def _ensure_identity_tables(cur) -> None:
             ) ENGINE=InnoDB
             """
         )
+
+    # Persist lazy schema creation also on read-only/early-return requests.
+    cur.connection.commit()
 
 
 def _ensure_driving_session_tables(cur) -> None:
@@ -302,6 +312,8 @@ def _ensure_driving_session_tables(cur) -> None:
             """
         )
 
+    cur.connection.commit()
+
 
 DRIVING_ALERT_TYPES = frozenset(
     {"phone", "smoking", "drowsy", "identity_lock", "landmark_risk", "other"}
@@ -315,12 +327,21 @@ def _telegram_call(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     body = parse.urlencode(payload).encode("utf-8")
     req = urlrequest.Request(api_url, data=body, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    with urlrequest.urlopen(req, timeout=10) as resp:
-        raw = resp.read().decode("utf-8")
-        data = json.loads(raw)
-        if not data.get("ok"):
-            raise RuntimeError(f"Telegram API error: {data}")
-        return data
+    try:
+        with urlrequest.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if not data.get("ok"):
+                raise RuntimeError("Telegram rejected the request")
+            return data
+    except Exception as error:
+        # URL includes the token: never propagate an HTTP exception's URL/body.
+        app.logger.error(
+            "Telegram request failed method=%s type=%s status=%s",
+            method,
+            type(error).__name__,
+            getattr(error, "code", None),
+        )
+        raise RuntimeError("Telegram request failed") from None
 
 
 def _telegram_send_decision_message(
@@ -376,30 +397,12 @@ def _telegram_send_text(chat_id: int, text: str) -> None:
 
 
 def _compat_joblib_load(path: Path) -> Any:
-    """
-    Load a joblib/pickle file.
-
-    Note: trước đây mình có thử "patch" NumPy BitGenerator để tương thích pickle
-    giữa các môi trường, nhưng việc patch sai có thể làm unpickle tạo lỗi mới
-    (do hàm patch nằm trong scope local và không thể picklable).
-
-    Chiến lược hiện tại: nếu joblib.load fail thì các hàm `load_model()` /
-    `load_hand_model()` sẽ kích hoạt "train fallback" (train lại từ CSV trong repo)
-    để tạo file pkl tương thích đúng với môi trường Render.
-    """
+    """Load a trusted local artifact without training or rewriting it."""
     return joblib.load(path)
-
-
-_model_train_lock = threading.Lock()
-_trained_fallback_landmark = False
-_trained_fallback_hand = False
-_training_landmark_in_progress = False
-_training_hand_in_progress = False
 
 
 def load_model() -> None:
     global artifact, model, idx_to_label
-    # default state (used when joblib.load fails and we start training fallback)
     artifact = None
     model = None
     idx_to_label = {}
@@ -409,40 +412,8 @@ def load_model() -> None:
 
     try:
         artifact = _compat_joblib_load(MODEL_PATH)
-    except Exception as exc:
-        # If pickle is incompatible across environments, train from CSV.
-        # IMPORTANT: train in background to avoid gunicorn worker timeout on Render.
-        app.logger.warning("load_model failed (%s). Start landmark fallback training in background...", exc)
-
-        def _train_landmark_bg() -> None:
-            global _trained_fallback_landmark, _training_landmark_in_progress
-            try:
-                # Train fallback should be fast (skip CV/report) to fit worker limits.
-                os.environ.setdefault("FAST_MODE", "1")
-                os.environ.setdefault("SKIP_CV", "1")
-
-                from driver_training.train.train_landmarks import train_landmark_model
-
-                csv_path = BASE_DIR / "driver_training" / "collect" / "data" / "landmarks.csv"
-                train_landmark_model(
-                    csv_path=csv_path,
-                    model_path=MODEL_PATH,
-                    test_size=float(os.getenv("LANDMARK_TEST_SIZE", "0.2")),
-                    random_state=int(os.getenv("LANDMARK_RANDOM_STATE", "42")),
-                )
-                with _model_train_lock:
-                    _trained_fallback_landmark = True
-            except Exception:
-                app.logger.exception("landmark fallback training failed")
-            finally:
-                with _model_train_lock:
-                    _training_landmark_in_progress = False
-
-        with _model_train_lock:
-            global _training_landmark_in_progress
-            if not _trained_fallback_landmark and not _training_landmark_in_progress:
-                _training_landmark_in_progress = True
-                threading.Thread(target=_train_landmark_bg, daemon=True).start()
+    except Exception:
+        app.logger.exception("Landmark model artifact is incompatible or invalid")
         return
 
     if artifact is None:
@@ -455,7 +426,6 @@ def load_model() -> None:
 
 def load_hand_model() -> None:
     global hand_artifact, hand_model, hand_idx_to_label, hand_vec_len
-    # default state (used when joblib.load fails and we start training fallback)
     hand_artifact = None
     hand_model = None
     hand_idx_to_label = {}
@@ -466,39 +436,8 @@ def load_hand_model() -> None:
 
     try:
         hand_artifact = _compat_joblib_load(HAND_MODEL_PATH)
-    except Exception as exc:
-        # If pickle is incompatible across environments, train from CSV.
-        # IMPORTANT: train in background to avoid gunicorn worker timeout on Render.
-        app.logger.warning("load_hand_model failed (%s). Start hand fallback training in background...", exc)
-
-        def _train_hand_bg() -> None:
-            global _trained_fallback_hand, _training_hand_in_progress
-            try:
-                os.environ.setdefault("FAST_MODE", "1")
-                os.environ.setdefault("SKIP_CV", "1")
-
-                from driver_training.train.train_hands import train_hand_model
-
-                csv_path = BASE_DIR / "driver_training" / "collect" / "hand_dataset.csv"
-                train_hand_model(
-                    csv_path=csv_path,
-                    model_path=HAND_MODEL_PATH,
-                    test_size=float(os.getenv("HAND_TEST_SIZE", "0.15")),
-                    random_state=int(os.getenv("HAND_RANDOM_STATE", "42")),
-                )
-                with _model_train_lock:
-                    _trained_fallback_hand = True
-            except Exception:
-                app.logger.exception("hand fallback training failed")
-            finally:
-                with _model_train_lock:
-                    _training_hand_in_progress = False
-
-        with _model_train_lock:
-            global _training_hand_in_progress
-            if not _trained_fallback_hand and not _training_hand_in_progress:
-                _training_hand_in_progress = True
-                threading.Thread(target=_train_hand_bg, daemon=True).start()
+    except Exception:
+        app.logger.exception("Hand model artifact is incompatible or invalid")
         return
 
     if hand_artifact is None:
@@ -511,20 +450,6 @@ def load_hand_model() -> None:
         hand_vec_len = int(hand_artifact.get("vec_len", 126))
     except (TypeError, ValueError):
         hand_vec_len = 126
-
-
-def load_smoking_model() -> None:
-    global smoking_artifact, smoking_model, smoking_idx_to_label
-    if not SMOKING_MODEL_PATH.exists():
-        smoking_artifact = None
-        smoking_model = None
-        smoking_idx_to_label = {}
-        return
-
-    smoking_artifact = _compat_joblib_load(SMOKING_MODEL_PATH)
-    smoking_model = smoking_artifact.get("model")
-    label_to_idx = smoking_artifact.get("label_to_idx", {})
-    smoking_idx_to_label = {v: k for k, v in label_to_idx.items()}
 
 
 def load_phone_model() -> None:
@@ -682,6 +607,7 @@ def _yolo_onnx_detect(session, img_bgr, conf_thres: float = 0.4, iou_thres: floa
 
 # Lazy loading — chỉ load khi có request đầu tiên, tránh OOM lúc startup (Render 512MB)
 _models_loaded = False
+_models_load_attempted = False
 _face_mesh = None
 _hands = None
 
@@ -713,11 +639,11 @@ def _ensure_models_loaded() -> None:
     """Load sklearn .pkl + MediaPipe Hands; FaceMesh dùng chung qua _ensure_face_mesh_loaded().
     Nếu DISABLE_HAND_DETECT=1 thì bỏ qua MediaPipe Hands + hand_model (~80MB tiết kiệm RAM).
     """
-    global _models_loaded, _hands, joblib
+    global _models_loaded, _models_load_attempted, _hands, joblib
 
     _ensure_face_mesh_loaded()
 
-    if _models_loaded:
+    if _models_load_attempted:
         return
 
     import joblib as _joblib  # noqa: PLC0415
@@ -728,8 +654,8 @@ def _ensure_models_loaded() -> None:
 
     if not DISABLE_HAND_DETECT:
         load_hand_model()
-        import mediapipe as mp  # noqa: PLC0415
-        if _hands is None:
+        if hand_model is not None and hand_idx_to_label and _hands is None:
+            import mediapipe as mp  # noqa: PLC0415
             _hands = mp.solutions.hands.Hands(
                 static_image_mode=True,
                 max_num_hands=2,
@@ -746,6 +672,7 @@ def _ensure_models_loaded() -> None:
             and hand_model is not None
             and bool(hand_idx_to_label)
         )
+    _models_load_attempted = True
 
 
 # YOLO load riêng — lazy, chỉ chạy khi endpoint phone/detect được gọi lần đầu
@@ -1099,34 +1026,43 @@ def index() -> Any:
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
-@app.get("/api/ping-db")
-def ping_db() -> Any:
-    """Test database connection — hỗ trợ cả MySQL và PostgreSQL."""
-    debug = {
-        "DB_BACKEND": os.getenv("DB_BACKEND", "(not set)"),
-        "POSTGRES_ACTIVE": POSTGRES_ACTIVE,
-        "POSTGRES_AVAILABLE": POSTGRES_AVAILABLE,
-        "DATABASE_URL_set": bool(os.getenv("DATABASE_URL", "")),
-    }
+def _database_available():
+    conn = None
     try:
         conn = get_mysql_conn()
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
-        conn.close()
-        return jsonify({
-            "status": "ok",
-            "backend": "postgres" if POSTGRES_ACTIVE else "mysql",
-            "host": "postgres (internal)" if POSTGRES_ACTIVE else os.getenv("MYSQL_HOST", "N/A"),
-            "database": "diquamuasha" if POSTGRES_ACTIVE else os.getenv("MYSQL_DATABASE", "N/A"),
-            "debug": debug,
-        })
-    except Exception as exc:
-        return jsonify({
-            "status": "error",
-            "error": str(exc),
-            "backend": "postgres" if POSTGRES_ACTIVE else "mysql",
-            "debug": debug,
-        }), 500
+        return True
+    except Exception:
+        app.logger.exception("Database health probe failed")
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.get("/api/ping-db")
+def ping_db() -> Any:
+    available = _database_available()
+    return jsonify({"status": "ok" if available else "unavailable", "backend": DB_BACKEND}), 200 if available else 503
+
+
+@app.get("/health")
+def health() -> Any:
+    available = _database_available()
+    models = {}
+    for name, path, loaded, enabled in [
+        ("landmark", MODEL_PATH, model is not None, True),
+        ("hand", HAND_MODEL_PATH, hand_model is not None, not DISABLE_HAND_DETECT),
+        ("smoking", SMOKING_MODEL_PATH, False, False),
+        ("phone", PHONE_YOLO_ONNX_PATH if PHONE_YOLO_ONNX_PATH.exists() else PHONE_YOLO_MODEL_PATH,
+         _yolo_available(), not DISABLE_PHONE_YOLO),
+    ]:
+        models[name] = {"artifact_present": path.is_file(), "loaded": loaded, "enabled": enabled}
+    models["smoking"]["reason"] = _smoking_unavailable()["reason"]
+    return jsonify({"status": "ok" if available else "degraded",
+                    "database": {"available": available, "backend": DB_BACKEND},
+                    "models": models}), 200 if available else 503
 
 
 def _parse_landmarks(payload: Dict[str, Any]) -> List[float]:
@@ -1153,7 +1089,6 @@ def predict_landmark() -> Any:
             jsonify(
                 {
                     "error": "Model chưa được load. Hãy train model trước (train_landmarks.py).",
-                    "model_path": str(MODEL_PATH),
                 }
             ),
             500,
@@ -1176,7 +1111,7 @@ def predict_landmark() -> Any:
     try:
         vec = _parse_landmarks(payload)  # list[float], length 1434
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": "Invalid request data"}), 400
 
     x = np.asarray(vec, dtype=np.float32).reshape(1, -1)
 
@@ -1187,7 +1122,7 @@ def predict_landmark() -> Any:
         else:
             proba = None
     except Exception as exc:
-        return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
+        return _api_error()
 
     label = idx_to_label.get(pred_idx, str(pred_idx))
 
@@ -1215,23 +1150,14 @@ def predict_from_frame() -> Any:
     try:
         try:
             _ensure_models_loaded()
-        except Exception as exc:
-            return (
-                jsonify(
-                    {
-                        "error": f"Không load được model/MediaPipe: {exc}",
-                        "model_path": str(MODEL_PATH),
-                    }
-                ),
-                503,
-            )
+        except Exception:
+            return _api_error(503)
 
         if model is None or not idx_to_label:
             return (
                 jsonify(
                     {
                         "error": "Model chưa được load. Hãy train model trước (train_landmarks.py).",
-                        "model_path": str(MODEL_PATH),
                     }
                 ),
                 500,
@@ -1264,7 +1190,7 @@ def predict_from_frame() -> Any:
             try:
                 vec = _image_base64_to_landmarks_for_predict(image_b64, flip=flip_val)
             except ValueError as exc:
-                return jsonify({"error": str(exc)}), 400
+                return jsonify({"error": "Invalid request data"}), 400
             if vec is not None:
                 break
 
@@ -1286,7 +1212,7 @@ def predict_from_frame() -> Any:
             else:
                 proba = None
         except Exception as exc:
-            return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
+            return _api_error()
 
         label = idx_to_label.get(pred_idx, str(pred_idx))
         scores: Dict[str, float] = {}
@@ -1310,19 +1236,8 @@ def predict_from_frame() -> Any:
                 "scores": scores,
             }
         )
-    except Exception as exc:
-        import traceback
-
-        app.logger.exception("predict_from_frame: %s", exc)
-        return (
-            jsonify(
-                {
-                    "error": str(exc),
-                    "trace": traceback.format_exc()[-4000:],
-                }
-            ),
-            500,
-        )
+    except Exception:
+        return _api_error()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1330,95 +1245,17 @@ def predict_from_frame() -> Any:
 # ═══════════════════════════════════════════════════════════════
 
 
+def _smoking_unavailable():
+    # Artifact is absent in this checkout. Presence alone must not enable an
+    # unvalidated pipeline or fabricate a negative safety classification.
+    return {"label": "unavailable", "prob": None, "available": False,
+            "reason": "model_missing" if not SMOKING_MODEL_PATH.is_file() else "validation_required",
+            "error": "Smoking detection unavailable"}
+
+
 @app.post("/api/smoking/predict_from_frame")
 def smoking_predict_from_frame() -> Any:
-    """
-    Nhận ảnh base64 (từ webcam), chạy MediaPipe Face Mesh để trích landmark,
-    rồi dùng smoking model để dự đoán label.
-
-    Body JSON: { "image": "data:image/jpeg;base64,..." hoặc "base64_string" }
-    """
-    _ensure_models_loaded()
-    if smoking_model is None or not smoking_idx_to_label:
-        return (
-            jsonify(
-                {
-                    "error": "Smoking model chưa được load. Hãy train model trước (train_smoking.py).",
-                    "model_path": str(SMOKING_MODEL_PATH),
-                }
-            ),
-            500,
-        )
-
-    try:
-        payload = request.get_json(force=True, silent=False)
-        if payload is None:
-            raise ValueError("Body phải là JSON hợp lệ.")
-    except Exception:
-        return (
-            jsonify(
-                {
-                    "error": "Không đọc được JSON body. Hãy gửi Content-Type: application/json.",
-                }
-            ),
-            400,
-        )
-
-    image_b64 = payload.get("image")
-    if not image_b64 or not isinstance(image_b64, str):
-        return jsonify({"error": "Thiếu trường 'image' (base64) trong JSON body."}), 400
-
-    if image_b64.startswith("data:"):
-        image_b64 = image_b64.split(",", 1)[-1]
-
-    try:
-        vec = _image_base64_to_landmarks(image_b64)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-
-    if vec is None:
-        return jsonify(
-            {
-                "label": "no_face",
-                "prob": None,
-                "scores": {},
-            }
-        )
-
-    x = np.asarray(vec, dtype=np.float32).reshape(1, -1)
-
-    try:
-        pred_idx = int(smoking_model.predict(x)[0])
-        if hasattr(smoking_model, "predict_proba"):
-            proba = smoking_model.predict_proba(x)[0]
-        else:
-            proba = None
-    except Exception as exc:
-        return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
-
-    label = smoking_idx_to_label.get(pred_idx, str(pred_idx))
-    scores: Dict[str, float] = {}
-    if proba is not None:
-        for i, p in enumerate(proba):
-            scores[smoking_idx_to_label.get(i, str(i))] = float(p)
-
-    best_prob = float(max(scores.values())) if scores else None
-
-    # Hysteresis: chỉ coi là "smoking" nếu xác suất đủ cao,
-    # ngược lại coi là "no_smoking" để giảm false positive.
-    SMOKING_HARD_THRESHOLD = 0.90  # yêu cầu prob >= 90% mới trả về smoking
-    if label == "smoking" and (best_prob is None or best_prob < SMOKING_HARD_THRESHOLD):
-        label = "no_smoking"
-
-    return jsonify(
-        {
-            "label": label,
-            "prob": best_prob,
-            "scores": scores,
-            # FIX: thêm raw_label để frontend biết model predict gì trước khi filter
-            "raw_label": smoking_idx_to_label.get(pred_idx, str(pred_idx)),
-        }
-    )
+    return jsonify(_smoking_unavailable()), 503
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1442,7 +1279,6 @@ def phone_predict_from_frame() -> Any:
             jsonify(
                 {
                     "error": "Phone model chưa được load. Hãy train model trước (train_phone.py).",
-                    "model_path": str(PHONE_MODEL_PATH),
                 }
             ),
             500,
@@ -1494,7 +1330,7 @@ def phone_predict_from_frame() -> Any:
         else:
             proba = None
     except Exception as exc:
-        return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
+        return _api_error()
 
     label = phone_idx_to_label.get(pred_idx, str(pred_idx))
     scores: Dict[str, float] = {}
@@ -1545,7 +1381,6 @@ def phone_detect_from_frame() -> Any:
             jsonify(
                 {
                     "error": "YOLO phone model chưa được load. Cài onnxruntime và có phone_yolo.onnx, hoặc ultralytics + phone_yolo.pt.",
-                    "model_path": str(PHONE_YOLO_ONNX_PATH),
                 }
             ),
             500,
@@ -1589,7 +1424,7 @@ def phone_detect_from_frame() -> Any:
 
         results = phone_yolo_model(img, conf=0.4, iou=0.5, verbose=False)[0]  # type: ignore[attr-defined]
     except Exception as exc:
-        return jsonify({"error": f"Lỗi YOLO detect: {exc}"}), 500
+        return _api_error()
 
     boxes_out: List[Dict[str, Any]] = []
 
@@ -1649,15 +1484,7 @@ def predict_hand() -> Any:
     """
     _ensure_models_loaded()
     if hand_model is None or not hand_idx_to_label:
-        return (
-            jsonify(
-                {
-                    "error": "Hand model chưa được load. Hãy train model trước (train_hands.py).",
-                    "model_path": str(HAND_MODEL_PATH),
-                }
-            ),
-            500,
-        )
+        return jsonify({"error": "Hand inference unavailable"}), 503
 
     try:
         payload = request.get_json(force=True, silent=False)
@@ -1676,7 +1503,7 @@ def predict_hand() -> Any:
     try:
         vec = _parse_hand_landmarks(payload)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": "Invalid request data"}), 400
 
     if len(vec) != hand_vec_len:
         return (
@@ -1700,7 +1527,7 @@ def predict_hand() -> Any:
         else:
             proba = None
     except Exception as exc:
-        return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
+        return _api_error()
 
     label = hand_idx_to_label.get(pred_idx, str(pred_idx))
 
@@ -1747,27 +1574,11 @@ def hand_predict_from_frame() -> Any:
     try:
         try:
             _ensure_models_loaded()
-        except Exception as exc:
-            return (
-                jsonify(
-                    {
-                        "error": f"Không load được model/MediaPipe: {exc}",
-                        "model_path": str(HAND_MODEL_PATH),
-                    }
-                ),
-                503,
-            )
+        except Exception:
+            return _api_error(503)
 
         if hand_model is None or not hand_idx_to_label:
-            return (
-                jsonify(
-                    {
-                        "error": "Hand model chưa được load. Hãy train model trước (train_hands.py).",
-                        "model_path": str(HAND_MODEL_PATH),
-                    }
-                ),
-                500,
-            )
+            return jsonify({"error": "Hand inference unavailable"}), 503
 
         try:
             payload = request.get_json(force=True, silent=False)
@@ -1793,7 +1604,7 @@ def hand_predict_from_frame() -> Any:
         try:
             vec = _image_base64_to_hand_landmarks(image_b64)
         except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
+            return jsonify({"error": "Invalid request data"}), 400
 
         if vec is None:
             return _json_hand_no_hand_in_frame()
@@ -1807,7 +1618,7 @@ def hand_predict_from_frame() -> Any:
             else:
                 proba = None
         except Exception as exc:
-            return jsonify({"error": f"Lỗi khi dự đoán: {exc}"}), 500
+            return _api_error()
 
         label = hand_idx_to_label.get(pred_idx, str(pred_idx))
         scores: Dict[str, float] = {}
@@ -1822,19 +1633,8 @@ def hand_predict_from_frame() -> Any:
                 "scores": scores,
             }
         )
-    except Exception as exc:
-        import traceback
-
-        app.logger.exception("hand_predict_from_frame: %s", exc)
-        return (
-            jsonify(
-                {
-                    "error": str(exc),
-                    "trace": traceback.format_exc()[-4000:],
-                }
-            ),
-            500,
-        )
+    except Exception:
+        return _api_error()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1873,7 +1673,7 @@ def identity_register() -> Any:
     try:
         embeddings = _collect_face_embeddings(images)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": "Invalid request data"}), 400
 
     if len(embeddings) < IDENTITY_MIN_REGISTER_SAMPLES:
         return (
@@ -1898,17 +1698,12 @@ def identity_register() -> Any:
     try:
         with conn.cursor() as cur:
             _ensure_identity_tables(cur)
-            cur.execute(
-                """
-                INSERT INTO driver_identity (driver_id, name, embedding_json, image_base64, created_at)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (driver_id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    embedding_json = EXCLUDED.embedding_json,
-                    image_base64 = EXCLUDED.image_base64,
-                    created_at = EXCLUDED.created_at
-                """,
+            upsert_row(
+                cur, "driver_identity",
+                ("driver_id", "name", "embedding_json", "image_base64", "created_at"),
                 (driver_id, name, embedding_json, image_b64, created_at),
+                ("driver_id",), ("name", "embedding_json", "image_base64", "created_at"),
+                postgres=POSTGRES_ACTIVE,
             )
         conn.commit()
     finally:
@@ -1954,7 +1749,7 @@ def identity_verify() -> Any:
     try:
         current_embeddings = _collect_face_embeddings(images)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": "Invalid request data"}), 400
 
     if len(current_embeddings) < IDENTITY_MIN_VERIFY_SAMPLES:
         return (
@@ -2111,17 +1906,12 @@ def bind_driver_telegram_owner() -> Any:
     try:
         with conn.cursor() as cur:
             _ensure_identity_tables(cur)
-            cur.execute(
-                """
-                INSERT INTO driver_telegram_owner
-                    (driver_id, telegram_chat_id, telegram_user_id, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (driver_id) DO UPDATE SET
-                    telegram_chat_id = EXCLUDED.telegram_chat_id,
-                    telegram_user_id = EXCLUDED.telegram_user_id,
-                    updated_at = EXCLUDED.updated_at
-                """,
+            upsert_row(
+                cur, "driver_telegram_owner",
+                ("driver_id", "telegram_chat_id", "telegram_user_id", "created_at", "updated_at"),
                 (driver_id, chat_id, user_id, now, now),
+                ("driver_id",), ("telegram_chat_id", "telegram_user_id", "updated_at"),
+                postgres=POSTGRES_ACTIVE,
             )
         conn.commit()
     finally:
@@ -2238,16 +2028,14 @@ def request_identity_decision() -> Any:
                 return jsonify({"error": "Chưa bind Telegram chat_id cho driver_id này."}), 400
 
             chat_id = int(owner_row["telegram_chat_id"])
-            cur.execute(
-                """
-                INSERT INTO identity_decision_requests
-                    (driver_id, status, reason, similarity, threshold, requested_at, expires_at, telegram_chat_id)
-                VALUES (%s, 'pending', %s, %s, %s, %s, %s, %s)
-                RETURNING request_id
-                """,
+            request_id = insert_id(
+                cur,
+                "INSERT INTO identity_decision_requests "
+                "(driver_id, status, reason, similarity, threshold, requested_at, expires_at, telegram_chat_id) "
+                "VALUES (%s, 'pending', %s, %s, %s, %s, %s, %s)",
                 (driver_id, reason, similarity_val, threshold_val, now, expires, chat_id),
+                "request_id", postgres=POSTGRES_ACTIVE,
             )
-            request_id = int(cur.fetchone()[0])
 
             try:
                 msg_id = _telegram_send_decision_message(
@@ -2265,10 +2053,10 @@ def request_identity_decision() -> Any:
                     SET status = 'expired', decided_at = %s, reason = %s
                     WHERE request_id = %s
                     """,
-                    (now, f"telegram_error:{exc}", request_id),
+                    (now, "telegram_error", request_id),
                 )
                 conn.commit()
-                return jsonify({"error": f"Không gửi được Telegram: {exc}"}), 500
+                return _api_error()
 
             cur.execute(
                 """
@@ -2356,6 +2144,8 @@ def identity_decision_status() -> Any:
 
 @app.post("/api/telegram/webhook")
 def telegram_webhook() -> Any:
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_WEBHOOK_SECRET:
+        return jsonify({"ok": False, "error": "Telegram unavailable"}), 503
     if TELEGRAM_WEBHOOK_SECRET:
         got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
         if got != TELEGRAM_WEBHOOK_SECRET:
@@ -2460,17 +2250,12 @@ def telegram_webhook() -> Any:
             try:
                 with conn.cursor() as cur:
                     _ensure_identity_tables(cur)
-                    cur.execute(
-                        """
-                        INSERT INTO driver_telegram_owner
-                            (driver_id, telegram_chat_id, telegram_user_id, created_at, updated_at)
-                        VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (driver_id) DO UPDATE SET
-                            telegram_chat_id = EXCLUDED.telegram_chat_id,
-                            telegram_user_id = EXCLUDED.telegram_user_id,
-                            updated_at = EXCLUDED.updated_at
-                        """,
+                    upsert_row(
+                        cur, "driver_telegram_owner",
+                        ("driver_id", "telegram_chat_id", "telegram_user_id", "created_at", "updated_at"),
                         (driver_id, chat_id, user_id, now, now),
+                        ("driver_id",), ("telegram_chat_id", "telegram_user_id", "updated_at"),
+                        postgres=POSTGRES_ACTIVE,
                     )
                 conn.commit()
             finally:
@@ -2497,18 +2282,14 @@ def driving_session_start() -> Any:
     try:
         with conn.cursor() as cur:
             _ensure_driving_session_tables(cur)
-            cur.execute(
-                """
-                INSERT INTO driving_sessions (driver_id, label, started_at, ended_at)
-                VALUES (%s, %s, %s, NULL)
-                RETURNING id
-                """,
-                (driver_id, label, now),
+            sid = insert_id(
+                cur,
+                "INSERT INTO driving_sessions (driver_id, label, started_at, ended_at) VALUES (%s, %s, %s, NULL)",
+                (driver_id, label, now), "id", postgres=POSTGRES_ACTIVE,
             )
-            sid = cur.fetchone()[0]
         conn.commit()
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _api_error()
     finally:
         conn.close()
 
@@ -2541,7 +2322,7 @@ def driving_session_end() -> Any:
             n = cur.rowcount
         conn.commit()
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _api_error()
     finally:
         conn.close()
 
@@ -2587,13 +2368,10 @@ def driving_session_alert() -> Any:
             )
             if not cur.fetchone():
                 return jsonify({"error": "session_id không tồn tại."}), 404
-            cur.execute(
-                """
-                INSERT INTO driving_session_alerts (session_id, alert_type, count)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (session_id, alert_type) DO UPDATE SET count = driving_session_alerts.count + EXCLUDED.count
-                """,
-                (session_id, alert_type, delta),
+            upsert_row(
+                cur, "driving_session_alerts", ("session_id", "alert_type", "count"),
+                (session_id, alert_type, delta), ("session_id", "alert_type"), ("count",),
+                postgres=POSTGRES_ACTIVE, increments=("count",),
             )
             cur.execute(
                 """
@@ -2606,7 +2384,7 @@ def driving_session_alert() -> Any:
             total = int(row["count"]) if row else delta
         conn.commit()
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _api_error()
     finally:
         conn.close()
 
@@ -2672,7 +2450,7 @@ def driving_sessions_list() -> Any:
                     }
                 )
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _api_error()
     finally:
         conn.close()
 
@@ -2712,7 +2490,7 @@ def driving_session_detail(session_id: int) -> Any:
             )
             alerts = {str(r["alert_type"]): int(r["count"]) for r in (cur.fetchall() or [])}
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _api_error()
     finally:
         conn.close()
 
@@ -2736,7 +2514,17 @@ except Exception:
     # Local run / environment may not have eventlet or EngineIO may not accept it.
     _async_mode = "threading"
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode=_async_mode)
+socketio = SocketIO(app, cors_allowed_origins=CORS_ORIGINS, async_mode=_async_mode)
+
+
+@socketio.on_error_default
+def socket_error(_error):
+    app.logger.exception("Socket request failed")
+    event = getattr(request, "event", {}).get("message")
+    if event == "phone_frame":
+        emit("phone_result", {"boxes": [], "error": "Inference unavailable"})
+    elif event == "smoking_frame":
+        emit("smoking_result", {"label": "unavailable", "prob": None, "error": "Inference unavailable"})
 
 
 # phone pro
@@ -2793,7 +2581,8 @@ def handle_phone_frame(data):
                 })
         emit("phone_result", {"boxes": boxes_out})
     except Exception as exc:
-        emit("phone_result", {"boxes": [], "error": str(exc)})
+        app.logger.exception("Phone inference failed")
+        emit("phone_result", {"boxes": [], "error": "Inference unavailable"})
         return
 
     # Important: phone_frame should ONLY run phone inference.
@@ -2806,75 +2595,8 @@ def handle_phone_frame(data):
 
 
 @socketio.on("smoking_frame")
-def handle_smoking_frame(data):
-    """
-    Client gửi: { "image": "data:image/jpeg;base64,..." }
-    Server trả: { "label": "...", "prob": <float> } cho frontend smoking WS.
-    """
-    # Tạm tắt smoking để tập trung debug/tinh chỉnh phone detection.
-    emit("smoking_result", {"label": "no_smoking", "prob": 0, "raw_label": "no_smoking"})
-    return
-        
-    if smoking_model is None or not smoking_idx_to_label:
-        emit(
-            "smoking_result", {"label": "no_model", "prob": 0, "raw_label": "no_model"}
-        )
-        return
- 
-    image_b64 = data.get("image", "")
-    if image_b64.startswith("data:"):
-        image_b64 = image_b64.split(",", 1)[-1]
- 
-    if not image_b64:
-        emit("smoking_result", {"label": "no_face", "prob": 0, "raw_label": "no_face"})
-        return
- 
-    try:
-        vec = _image_base64_to_landmarks(image_b64)
-    except Exception as exc:
-        emit("smoking_result", {"label": "error", "prob": 0, "raw_label": str(exc)})
-        return
-
-    if vec is None:
-        emit("smoking_result", {"label": "no_face", "prob": 0, "raw_label": "no_face"})
-        return
-
-    x = np.asarray(vec, dtype=np.float32).reshape(1, -1)
-
-    try:
-        pred_idx = int(smoking_model.predict(x)[0])
-        raw_label = smoking_idx_to_label.get(pred_idx, str(pred_idx))
-
-        if hasattr(smoking_model, "predict_proba"):
-            proba = smoking_model.predict_proba(x)[0]
-        else:
-            proba = None
-    except Exception as exc:
-        emit("smoking_result", {"label": "error", "prob": 0, "raw_label": str(exc)})
-        return
-
-    scores: Dict[str, float] = {}
-    if proba is not None:
-        for i, p in enumerate(proba):
-            scores[smoking_idx_to_label.get(i, str(i))] = float(p)
-
-    best_prob = float(max(scores.values())) if scores else None
-
-    # Hysteresis/threshold giống REST để giảm false-positive.
-    SMOKING_HARD_THRESHOLD = 0.90
-    label = raw_label
-    if label == "smoking" and (best_prob is None or best_prob < SMOKING_HARD_THRESHOLD):
-        label = "no_smoking"
-
-    emit(
-        "smoking_result",
-        {
-            "label": label,
-            "prob": best_prob or 0,
-            "raw_label": raw_label,
-        },
-    )
-
+def handle_smoking_frame(_data):
+    emit("smoking_result", _smoking_unavailable())
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))

@@ -28,17 +28,18 @@ from sqlalchemy import text  # Dùng để sửa bảng database tự động
 
 
 app = Flask(__name__)
-CORS(app)
+from data.security import cors_origins
+CORS(app, origins=cors_origins())
 
 # MySQL Database configuration for XAMPP
-app.config["SQLALCHEMY_DATABASE_URI"] = (
-    "mysql+pymysql://root:@localhost:3306/medical_diagnosis"
-)
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ["MEDICAL_DATABASE_URL"]
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["SQLALCHEMY_ECHO"] = True
+app.config["SQLALCHEMY_ECHO"] = False
 
 # --- CẤU HÌNH JWT (TOKEN) ---
-app.config["JWT_SECRET_KEY"] = "chuoi-bi-mat-nay-nen-rat-dai-va-ngau-nhien"
+app.config["JWT_SECRET_KEY"] = os.environ["JWT_SECRET_KEY"]
+if not app.config["JWT_SECRET_KEY"].strip():
+    raise RuntimeError("JWT_SECRET_KEY must be configured for the medical API")
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=7)  # Token sống 7 ngày
 jwt = JWTManager(app)
 # ----------------------------
@@ -451,7 +452,8 @@ def register():
             201,
         )
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -499,7 +501,8 @@ def login():
         )
 
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/auth/me", methods=["GET"])
@@ -602,7 +605,8 @@ def create_record():
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/records", methods=["GET"])
@@ -629,7 +633,8 @@ def get_records():
         )
 
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/records/<int:record_id>", methods=["GET"])
@@ -644,7 +649,8 @@ def get_record(record_id):
         return jsonify({"success": True, "record": record.to_dict()})
 
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/ai/predict", methods=["POST"])
@@ -670,7 +676,8 @@ def predict_only():
         )
 
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/ai/symptoms", methods=["GET"])
@@ -687,7 +694,8 @@ def get_symptoms():
         return jsonify({"success": True, "symptoms": sorted(list(all_symptoms))})
 
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/statistics", methods=["GET"])
@@ -805,7 +813,8 @@ def get_statistics():
 
     except Exception as e:
         print(f"Error in statistics: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/users", methods=["GET"])
@@ -830,7 +839,8 @@ def get_users():
             }
         )
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/users", methods=["POST"])
@@ -863,7 +873,8 @@ def create_user():
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 
@@ -998,7 +1009,8 @@ def predict_image():
 
     except Exception as e:
         print(f"Lỗi: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception("Medical API request failed")
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 if __name__ == "__main__":

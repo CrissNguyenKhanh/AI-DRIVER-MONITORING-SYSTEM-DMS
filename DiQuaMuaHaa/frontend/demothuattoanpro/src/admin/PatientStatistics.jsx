@@ -54,7 +54,7 @@ const PatientStatistics = () => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch(`${getMedicalApiBase()}/api/statistics`)
+    Promise.resolve().then(() => fetch(`${getMedicalApiBase()}/api/statistics`))
       .then((response) => {
         if (!response.ok) {
           throw new Error("Lỗi kết nối đến server");

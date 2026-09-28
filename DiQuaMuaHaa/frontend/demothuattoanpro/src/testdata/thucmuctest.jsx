@@ -7,6 +7,7 @@ import TelegramOwnerRejectOverlay from "../systeamdetectface/TelegramOwnerReject
 import DriverAuthenticatedWelcome from "../systeamdetectface/DriverAuthenticatedWelcome";
 import { getDmsApiBase } from "../config/apiEndpoints";
 import { getWebcamSupportErrorMessage } from "../utils/cameraContext";
+import { createCameraSession } from "../utils/cameraSession.js";
 import {
   speakOwnerGreeting,
   warmSpeechVoices,
@@ -57,7 +58,7 @@ const SMOKING_OFF_FRAMES = 14;
 const SMOKING_WARN_MS = 4000;
 // ─────────────────────────────────────────────────────────────
 
-// Tạm tắt smoking trong test để tập trung fix phone detection
+// Unavailable: no validated smoking artifact is shipped. Do not just flip this flag.
 const SMOKING_ENABLED = false;
 
 // ── IDENTITY AUTH (vehicle UUID) ──────────────────────────────
@@ -1187,7 +1188,7 @@ function Head3D({ poseRef }) {
 export default function DriverMonitorDMS() {
   const navigate = useNavigate();
   const videoRef = useRef(null);
-  const streamRef = useRef(null);
+  const cameraRef = useRef(null);
   const faceMeshRef = useRef(null);
   const handsRef = useRef(null);
   const handLandmarksRef = useRef([]);
@@ -1791,16 +1792,32 @@ export default function DriverMonitorDMS() {
     return () => cancelAnimationFrame(rafId);
   }, [status]);
   useEffect(() => {
+    let cancelled = false;
+    let createdFaceMesh = null;
+    let createdHands = null;
+
     function loadScript(src) {
       return new Promise((res, rej) => {
-        if (document.querySelector('script[src="' + src + '"]')) {
-          res();
+        const existing = document.querySelector('script[src="' + src + '"]');
+        if (existing) {
+          if (existing.dataset.loaded === "true") res();
+          else if (existing.dataset.failed === "true") rej(new Error("Script load failed"));
+          else {
+            existing.addEventListener("load", res, { once: true });
+            existing.addEventListener("error", rej, { once: true });
+          }
           return;
         }
         const s = document.createElement("script");
         s.src = src;
-        s.onload = res;
-        s.onerror = rej;
+        s.onload = () => {
+          s.dataset.loaded = "true";
+          res();
+        };
+        s.onerror = (error) => {
+          s.dataset.failed = "true";
+          rej(error);
+        };
         document.head.appendChild(s);
       });
     }
@@ -1815,6 +1832,7 @@ export default function DriverMonitorDMS() {
           locateFile: (f) =>
             "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/" + f,
         });
+        createdFaceMesh = fm;
         fm.setOptions({
           maxNumFaces: 1,
           refineLandmarks: true,
@@ -1892,6 +1910,10 @@ export default function DriverMonitorDMS() {
             .slice(-(EAR_HISTORY - 1))
             .concat([earR]);
         });
+        if (cancelled) {
+          fm.close?.();
+          return;
+        }
         faceMeshRef.current = fm;
       } catch (e) {
         console.warn("MediaPipe FaceMesh init error", e);
@@ -1906,6 +1928,7 @@ export default function DriverMonitorDMS() {
           locateFile: (f) =>
             "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + f,
         });
+        createdHands = hands;
         hands.setOptions({
           maxNumHands: 2,
           modelComplexity: 0,
@@ -1924,6 +1947,9 @@ export default function DriverMonitorDMS() {
           );
         });
         await hands.initialize();
+        if (cancelled) {
+          return;
+        }
         handsRef.current = hands;
       } catch (e) {
         console.warn("MediaPipe Hands init error", e);
@@ -1994,7 +2020,14 @@ export default function DriverMonitorDMS() {
         if (alarmIntervalRef.current && !anyAlert) stopAlarm();
       }
     }, 250);
-    return () => clearInterval(dispId);
+    return () => {
+      cancelled = true;
+      clearInterval(dispId);
+      faceMeshRef.current = null;
+      handsRef.current = null;
+      createdFaceMesh?.close?.();
+      createdHands?.close?.();
+    };
   }, []);
 
   // ── Face mesh + Hands: một RAF, gửi tuần tự (hai graph WebGL song song hay làm mất kết quả tay)
@@ -2031,33 +2064,11 @@ export default function DriverMonitorDMS() {
     };
   }, [status]);
 
-  async function startWebcam() {
-    const supportErr = getWebcamSupportErrorMessage();
-    if (supportErr) {
-      setErrorMsg(supportErr);
-      setStatus("error");
-      return;
-    }
-    setStatus("loading");
-    setErrorMsg("");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: "user" },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
-      setStatus("auth");
-    } catch (err) {
-      setErrorMsg(err.message || "Cannot access webcam");
-      setStatus("error");
-    }
+  function startWebcam() {
+    return cameraRef.current?.start();
   }
   function stopWebcam() {
-    if (streamRef.current)
-      streamRef.current.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
-    if (videoRef.current) videoRef.current.srcObject = null;
+    cameraRef.current?.stop();
     landmarksRef.current = [];
     handLandmarksRef.current = [];
     setStatus("idle");
@@ -2093,8 +2104,26 @@ export default function DriverMonitorDMS() {
     setAppMenuOpen(false);
   }
   useEffect(() => {
-    startWebcam();
-    return () => stopWebcam();
+    const camera = createCameraSession({
+      getUserMedia: (constraints) =>
+        navigator.mediaDevices.getUserMedia(constraints),
+      getVideo: () => videoRef.current,
+      checkSupport: getWebcamSupportErrorMessage,
+      onStatus: setStatus,
+      onError: setErrorMsg,
+      constraints: {
+        video: { width: 640, height: 480, facingMode: "user" },
+        audio: false,
+      },
+      activeStatus: "auth",
+    });
+    cameraRef.current = camera;
+    camera.start();
+    return () => {
+      camera.dispose();
+      cameraRef.current = null;
+      stopAlarm();
+    };
   }, []);
 
   function sleep(ms) {
@@ -2138,6 +2167,7 @@ export default function DriverMonitorDMS() {
     if (status !== "active") return;
     let cancelled = false,
       tid;
+    const controller = new AbortController();
     async function loop() {
       if (cancelled) return;
       const vid = videoRef.current;
@@ -2157,11 +2187,13 @@ export default function DriverMonitorDMS() {
         // Chỉ gọi landmark REST — smoking đã chuyển sang WebSocket
         const res = await fetch(`${API_BASE}/api/landmark/predict_from_frame`, {
           method: "POST",
+          signal: controller.signal,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ image }),
         });
 
         const data = await res.json();
+        if (cancelled) return;
         if (!res.ok) throw new Error(data?.error || "API failed");
         setApiResult(data);
         setLastUpdated(new Date().toLocaleTimeString());
@@ -2181,15 +2213,16 @@ export default function DriverMonitorDMS() {
           return n.length > HISTORY_SIZE ? n.slice(n.length - HISTORY_SIZE) : n;
         });
       } catch (err) {
-        setApiError(err.message || "Cannot reach API");
+        if (!cancelled) setApiError(err.message || "Cannot reach API");
       } finally {
-        setApiLoading(false);
+        if (!cancelled) setApiLoading(false);
       }
       if (!cancelled) tid = setTimeout(loop, API_INTERVAL_MS);
     }
     loop();
     return () => {
       cancelled = true;
+      controller.abort();
       clearTimeout(tid);
     };
   }, [status]);
@@ -2202,6 +2235,7 @@ export default function DriverMonitorDMS() {
     }
     let cancelled = false,
       tid;
+    const controller = new AbortController();
     async function loop() {
       if (cancelled) return;
       const vid = videoRef.current;
@@ -2217,6 +2251,7 @@ export default function DriverMonitorDMS() {
         }
         const res = await fetch(`${API_BASE}/api/hand/predict_from_frame`, {
           method: "POST",
+          signal: controller.signal,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ image }),
         });
@@ -2231,6 +2266,7 @@ export default function DriverMonitorDMS() {
     loop();
     return () => {
       cancelled = true;
+      controller.abort();
       if (tid) clearTimeout(tid);
     };
   }, [status]);
@@ -3032,6 +3068,11 @@ export default function DriverMonitorDMS() {
                     : smokingResult
                       ? "NO"
                       : "..."}
+                </div>
+              )}
+              {!SMOKING_ENABLED && (
+                <div role="status" style={{ fontSize: 12, color: "#b8c3d6" }}>
+                  Smoking: unavailable (chưa có model được kiểm chứng)
                 </div>
               )}
               {SMOKING_ENABLED && smokingError && (

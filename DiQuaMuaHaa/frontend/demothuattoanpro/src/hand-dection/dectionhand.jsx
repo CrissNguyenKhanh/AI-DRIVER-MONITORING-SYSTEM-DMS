@@ -7,8 +7,8 @@ import HandQuickAppsMenu, {
   HAND_LABEL_CLOSES_MENU,
   HAND_LABEL_OPENS_MENU,
 } from "../systeamdetectface/HandQuickAppsMenu";
+import { createCameraSession } from "../utils/cameraSession.js";
 
-import sukunaVideo from "./video/khanhvideo.mp4";
 const API_INTERVAL_MS = 1000; // ms, tần suất gọi API khi webcam bật
 
 const HAND_LABEL_MAP = {
@@ -121,7 +121,7 @@ const HAND_LABEL_MAP = {
 
 function DectionHand() {
   const videoRef = useRef(null);
-  const streamRef = useRef(null);
+  const cameraRef = useRef(null);
   const prevLabelRef = useRef(null);
   const prevOpenMenuGestureRef = useRef("");
   const prevCloseMenuGestureRef = useRef("");
@@ -135,49 +135,32 @@ function DectionHand() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
 
-  const startWebcam = async () => {
-    const supportErr = getWebcamSupportErrorMessage();
-    if (supportErr) {
-      setErrorMsg(supportErr);
-      setStatus("error");
-      return;
-    }
-
-    setStatus("loading");
-    setErrorMsg("");
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 1280, height: 720, facingMode: "user" },
-        audio: false,
-      });
-      streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      setStatus("active");
-    } catch (err) {
-      setErrorMsg(err.message || "Không thể mở webcam");
-      setStatus("error");
-    }
-  };
-
-  const stopWebcam = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    setStatus("idle");
-  };
+  const startWebcam = () => cameraRef.current?.start();
+  const stopWebcam = () => cameraRef.current?.stop();
 
   useEffect(() => {
-    startWebcam();
-    return () => stopWebcam();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const camera = createCameraSession({
+      getUserMedia: (constraints) =>
+        navigator.mediaDevices.getUserMedia(constraints),
+      getVideo: () => videoRef.current,
+      checkSupport: getWebcamSupportErrorMessage,
+      onStatus: (nextStatus) => {
+        setStatus(nextStatus);
+        if (nextStatus !== "active") {
+          setApiLoading(false);
+          setApiResult(null);
+          setApiError("");
+          setLastUpdated(null);
+        }
+      },
+      onError: setErrorMsg,
+    });
+    cameraRef.current = camera;
+    camera.start();
+    return () => {
+      camera.dispose();
+      cameraRef.current = null;
+    };
   }, []);
 
   // Gọi API hand liên tục khi webcam đang bật
@@ -186,6 +169,7 @@ function DectionHand() {
 
     let cancelled = false;
     let timeoutId;
+    const controller = new AbortController();
 
     const loop = async () => {
       if (cancelled) return;
@@ -211,6 +195,7 @@ function DectionHand() {
           `${getDmsApiBase()}/api/hand/predict_from_frame`,
           {
             method: "POST",
+            signal: controller.signal,
             headers: {
               "Content-Type": "application/json",
             },
@@ -219,6 +204,7 @@ function DectionHand() {
         );
 
         const data = await res.json();
+        if (cancelled) return;
 
         if (!res.ok) {
           throw new Error(data?.error || "Gọi API hand thất bại");
@@ -227,9 +213,9 @@ function DectionHand() {
         setApiResult(data);
         setLastUpdated(new Date().toLocaleTimeString());
       } catch (err) {
-        setApiError(err.message || "Không gọi được API hand");
+        if (!cancelled) setApiError(err.message || "Không gọi được API hand");
       } finally {
-        setApiLoading(false);
+        if (!cancelled) setApiLoading(false);
       }
 
       if (cancelled) return;
@@ -240,6 +226,7 @@ function DectionHand() {
 
     return () => {
       cancelled = true;
+      controller.abort();
       if (timeoutId) clearTimeout(timeoutId);
     };
   }, [status]);
@@ -295,7 +282,7 @@ function DectionHand() {
     }
 
     prevLabelRef.current = label || null;
-  }, [currentLabel]);
+  }, [currentLabel, rawProb]);
 
   /** Quick Apps: open / no_sign; map / music / phonecall khi menu mo */
   useEffect(() => {
@@ -391,125 +378,79 @@ function DectionHand() {
 
         {/* Khối webcam */}
         <div className="bg-slate-800 rounded-xl overflow-hidden shadow-xl">
-          {currentLabel === "sukuna" ? (
-            <div className="relative aspect-video bg-black">
-              {/* Video nền Sukuna */}
-              <video
-                src={sukunaVideo}
-                autoPlay
-                loop
-                muted
-                className="absolute inset-0 w-full h-full object-cover"
-              />
-
-              {/* Vầng hào quang & overlay màu */}
-              <div className="pointer-events-none absolute inset-0">
-                {/* vòng tròn phát sáng */}
+          <div className="relative aspect-video bg-black">
+            {currentLabel === "sukuna" && (
+              <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-tr from-black via-fuchsia-950/80 to-black" />
                 <div className="absolute inset-0 bg-radial-at-center from-fuchsia-500/35 via-transparent to-transparent blur-3xl opacity-70" />
-                {/* lớp tối tạo chiều sâu */}
-                <div className="absolute inset-0 bg-gradient-to-tr from-black/85 via-black/40 to-fuchsia-900/60 mix-blend-multiply" />
-              </div>
-
-              {/* Webcam thu nhỏ nổi phía dưới bên phải */}
-              <div className="absolute bottom-4 right-4 w-60 h-36 rounded-2xl overflow-hidden border-2 border-fuchsia-400 shadow-[0_0_35px_rgba(232,121,249,0.95)]">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover"
-                  style={{ transform: "scaleX(-1)" }}
-                />
-                {/* viền trong animate */}
-                <div className="pointer-events-none absolute inset-0 border border-fuchsia-300/60 rounded-2xl animate-pulse" />
-              </div>
-
-              {/* Badge & mô tả chế độ Sukuna */}
-              <div className="absolute left-6 bottom-6 space-y-2">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-fuchsia-600/90 text-xs font-semibold uppercase tracking-[0.25em] text-fuchsia-50 shadow-[0_0_26px_rgba(232,121,249,1)]">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-fuchsia-200 animate-ping" />
-                  Sukuna mode
-                </div>
-                <p className="text-sm text-fuchsia-100/90 max-w-xs">
-                  Ký hiệu Sukuna được nhận diện. Hệ thống chuyển sang hiệu ứng đặc biệt với nền
-                  video và khung hình phát sáng.
-                </p>
-              </div>
-
-              {/* Chữ trang trí lớn ở nền */}
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <span className="text-6xl md:text-7xl font-black tracking-[0.3em] text-fuchsia-200/15">
-                  SUKUNA
-                </span>
-              </div>
-              {status === "active" && (
-                <HandQuickAppsMenu
-                  open={appMenuOpen}
-                  onRequestClose={() => setAppMenuOpen(false)}
-                />
-              )}
-            </div>
-          ) : (
-            <div className="relative aspect-video bg-black">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover"
-                style={{ transform: "scaleX(-1)" }}
-              />
-              {status === "loading" && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/70">
-                  <span className="text-white text-lg">
-                    Đang kết nối webcam...
-                  </span>
-                </div>
-              )}
-              {status === "error" && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 text-red-400 gap-4 px-4 text-center">
-                  <span className="text-lg">❌ {errorMsg}</span>
-                  <span className="text-xs text-red-200">
-                    Kiểm tra lại quyền truy cập camera trong trình duyệt
-                    (Settings → Privacy → Camera).
-                  </span>
-                  <button
-                    onClick={startWebcam}
-                    className="px-4 py-2 bg-amber-600 hover:bg-amber-500 rounded-lg text-white text-sm font-medium"
-                  >
-                    Thử lại
-                  </button>
-                </div>
-              )}
-              {status === "active" && (
-                <>
-                  <div className="absolute bottom-3 left-3 px-3 py-1 bg-green-600/90 rounded text-white text-sm font-medium flex items-center gap-2">
-                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-200 animate-pulse" />
-                    Webcam đang hoạt động
+                <div className="absolute left-6 bottom-6 space-y-2">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-fuchsia-600/90 text-xs font-semibold uppercase tracking-[0.25em] text-fuchsia-50 shadow-[0_0_26px_rgba(232,121,249,1)]">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-fuchsia-200 animate-ping" />
+                    Sukuna mode
                   </div>
-
-                  {currentLabel === "no_sign" && (
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <div className="bg-slate-900/70 border border-dashed border-slate-400 rounded-2xl px-6 py-4 text-center max-w-sm mx-auto">
-                        <p className="text-sm font-semibold text-slate-100 mb-1">
-                          Không phát hiện ký hiệu tay
-                        </p>
-                        <p className="text-xs text-slate-300">
-                          Đưa bàn tay vào khung hình và giữ ổn định 1–2 giây để
-                          hệ thống nhận diện ký hiệu.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                  <HandQuickAppsMenu
-                    open={appMenuOpen}
-                    onRequestClose={() => setAppMenuOpen(false)}
-                  />
-                </>
-              )}
-            </div>
-          )}
-
+                  <p className="text-sm text-fuchsia-100/90 max-w-xs">
+                    Ký hiệu Sukuna được nhận diện. Webcam vẫn dùng cùng một phần tử ổn định.
+                  </p>
+                </div>
+              </div>
+            )}
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className={
+                currentLabel === "sukuna"
+                  ? "absolute z-10 bottom-4 right-4 w-60 h-36 object-cover rounded-2xl border-2 border-fuchsia-400 shadow-[0_0_35px_rgba(232,121,249,0.95)]"
+                  : "relative w-full h-full object-cover"
+              }
+              style={{ transform: "scaleX(-1)" }}
+            />
+            {status === "loading" && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/70">
+                <span className="text-white text-lg">Đang kết nối webcam...</span>
+              </div>
+            )}
+            {status === "error" && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 text-red-400 gap-4 px-4 text-center">
+                <span className="text-lg">❌ {errorMsg}</span>
+                <span className="text-xs text-red-200">
+                  Kiểm tra lại quyền truy cập camera trong trình duyệt
+                  (Settings → Privacy → Camera).
+                </span>
+                <button
+                  onClick={startWebcam}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-500 rounded-lg text-white text-sm font-medium"
+                >
+                  Thử lại
+                </button>
+              </div>
+            )}
+            {status === "active" && currentLabel !== "sukuna" && (
+              <div className="absolute bottom-3 left-3 px-3 py-1 bg-green-600/90 rounded text-white text-sm font-medium flex items-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-200 animate-pulse" />
+                Webcam đang hoạt động
+              </div>
+            )}
+            {status === "active" && currentLabel === "no_sign" && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="bg-slate-900/70 border border-dashed border-slate-400 rounded-2xl px-6 py-4 text-center max-w-sm mx-auto">
+                  <p className="text-sm font-semibold text-slate-100 mb-1">
+                    Không phát hiện ký hiệu tay
+                  </p>
+                  <p className="text-xs text-slate-300">
+                    Đưa bàn tay vào khung hình và giữ ổn định 1–2 giây để hệ thống nhận diện ký hiệu.
+                  </p>
+                </div>
+              </div>
+            )}
+            {status === "active" && (
+              <HandQuickAppsMenu
+                open={appMenuOpen}
+                onRequestClose={() => setAppMenuOpen(false)}
+              />
+            )}
+          </div>
           <div className="p-4 flex items-center justify-between border-t border-slate-700">
             <span className="text-slate-400 text-sm">
               {status === "active"
