@@ -333,8 +333,14 @@ def _telegram_call(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             if not data.get("ok"):
                 raise RuntimeError("Telegram rejected the request")
             return data
-    except Exception:
+    except Exception as error:
         # URL includes the token: never propagate an HTTP exception's URL/body.
+        app.logger.error(
+            "Telegram request failed method=%s type=%s status=%s",
+            method,
+            type(error).__name__,
+            getattr(error, "code", None),
+        )
         raise RuntimeError("Telegram request failed") from None
 
 

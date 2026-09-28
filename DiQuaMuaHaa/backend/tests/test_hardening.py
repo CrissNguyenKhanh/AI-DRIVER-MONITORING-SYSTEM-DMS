@@ -28,6 +28,18 @@ class SecurityTests(unittest.TestCase):
             response = self.client.post("/api/telegram/webhook", json={})
         self.assertEqual(response.status_code, 503)
 
+    def test_telegram_failure_is_logged_without_token_or_remote_body(self):
+        token = "test-token-never-log"
+        with patch.object(api, "TELEGRAM_BOT_TOKEN", token), \
+                patch.object(api.urlrequest, "urlopen", side_effect=RuntimeError(token)), \
+                patch.object(api.app.logger, "error") as logged:
+            with self.assertRaisesRegex(RuntimeError, "Telegram request failed"):
+                api._telegram_call("sendMessage", {"chat_id": "1"})
+        rendered_log_call = str(logged.call_args)
+        self.assertNotIn(token, rendered_log_call)
+        self.assertNotIn("chat_id", rendered_log_call)
+        self.assertIn("sendMessage", rendered_log_call)
+
 
 class ErrorAndHealthTests(unittest.TestCase):
     def setUp(self):
