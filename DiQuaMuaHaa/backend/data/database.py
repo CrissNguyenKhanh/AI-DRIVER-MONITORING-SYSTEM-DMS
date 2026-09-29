@@ -1,8 +1,9 @@
 import mysql.connector
 from mysql.connector import Error
-import hashlib
 import json
+import os
 from datetime import datetime
+from werkzeug.security import generate_password_hash
 
 
 class Database:
@@ -109,31 +110,37 @@ class Database:
         connection.commit()
 
         # Tạo dữ liệu mặc định
-        self.create_default_admin()
+        self.create_configured_admin()
         self.create_sample_training_data()
 
         cursor.close()
         connection.close()
         print("✅ Các bảng đã được khởi tạo")
 
-    def create_default_admin(self):
-        """Tạo admin mặc định"""
+    def create_configured_admin(self):
+        """Optionally bootstrap an admin from deployment-provided credentials."""
+        username = os.getenv("LEGACY_MEDICAL_ADMIN_USERNAME", "").strip()
+        password = os.getenv("LEGACY_MEDICAL_ADMIN_PASSWORD", "")
+        email = os.getenv("LEGACY_MEDICAL_ADMIN_EMAIL", "").strip() or None
+        if not username or not password:
+            return
+
         connection = self.get_connection()
         if not connection:
             return
 
         cursor = connection.cursor()
         try:
-            hashed_pw = hashlib.sha256("admin123".encode()).hexdigest()
+            hashed_pw = generate_password_hash(password)
             cursor.execute(
                 """
                 INSERT INTO users (username, password, full_name, email, role)
                 VALUES (%s, %s, %s, %s, %s)
             """,
-                ("admin", hashed_pw, "Administrator", "admin@medical.ai", "admin"),
+                (username, hashed_pw, "Administrator", email, "admin"),
             )
             connection.commit()
-            print("✅ Tạo admin thành công (username: admin, password: admin123)")
+            print("✅ Đã tạo tài khoản admin được cấu hình")
         except Error:
             pass  # Admin đã tồn tại
 

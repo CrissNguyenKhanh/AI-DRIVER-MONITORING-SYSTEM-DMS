@@ -8,6 +8,7 @@ from sklearn.feature_extraction.text import CountVectorizer
 import pickle
 import os
 import joblib
+from functools import wraps
 from PIL import Image
 import numpy as np
 
@@ -50,9 +51,6 @@ db = SQLAlchemy(app)
 # --- CẤU HÌNH AI CHAT (GEMINI) ---
 # Bạn hãy lấy Key miễn phí tại: https://aistudio.google.com/app/apikey
 # --- CẤU HÌNH AI CHAT (GEMINI) ---
-
-
-print("Danh sách model bạn được dùng:")
 
 
 # Thử fallback: Nếu 1.5 flash lỗi thì dùng gemini-pro
@@ -169,43 +167,36 @@ def init_database():
                                 "ALTER TABLE users ADD COLUMN password_hash VARCHAR(255)"
                             )
                         )
+                    if "role" not in columns:
                         conn.execute(
-                            text(
-                                "ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user'"
-                            )
+                            text("ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user'")
                         )
+                    if "password_hash" not in columns or "role" not in columns:
                         conn.commit()
                         print("✓ Đã cập nhật bảng Users thành công")
             except Exception as e:
                 print(f"⚠️ Không cần cập nhật bảng hoặc lỗi nhẹ: {e}")
 
-            # 3. Tạo Admin mặc định (nếu chưa có)
-            if User.query.filter_by(email="admin@example.com").count() == 0:
+            # 3. Optional one-time admin bootstrap from deployment secrets.
+            admin_email = os.getenv("MEDICAL_ADMIN_EMAIL", "").strip().lower()
+            admin_password = os.getenv("MEDICAL_ADMIN_PASSWORD", "")
+            if admin_email and admin_password and User.query.filter_by(email=admin_email).count() == 0:
                 admin = User(
                     name="Admin System",
-                    email="admin@example.com",
-                    phone="0999999999",
+                    email=admin_email,
+                    phone=None,
                     role="admin",
                 )
-                admin.set_password("admin123")  # Pass mặc định
+                admin.set_password(admin_password)
                 db.session.add(admin)
                 db.session.commit()
-                print("✓ Created default ADMIN user (admin@example.com / admin123)")
-
-            # 4. Tạo User mặc định (giữ logic cũ)
-            if User.query.count() <= 1:  # Chỉ có admin hoặc chưa có ai
-                default_user = User(
-                    name="Người dùng mặc định",
-                    email="user@example.com",
-                    phone="0123456789",
-                    role="user",
+                app.logger.info("Created configured medical admin account")
+            elif bool(admin_email) != bool(admin_password):
+                app.logger.warning(
+                    "Medical admin bootstrap skipped: configure both email and password"
                 )
-                default_user.set_password("user123")
-                db.session.add(default_user)
-                db.session.commit()
-                print("✓ Created default NORMAL user")
 
-            # 5. Khởi tạo dữ liệu bệnh (Giữ nguyên logic cũ)
+            # 4. Khởi tạo dữ liệu bệnh (Giữ nguyên logic cũ)
             existing_count = Disease.query.count()
             if existing_count == 0:
                 # Sample disease data
@@ -416,6 +407,28 @@ def predict_disease(symptoms):
 # =======================================================
 
 
+def _authenticated_user():
+    try:
+        user_id = int(get_jwt_identity())
+    except (TypeError, ValueError):
+        return None
+    return db.session.get(User, user_id)
+
+
+def admin_required(view):
+    @wraps(view)
+    @jwt_required()
+    def wrapped(*args, **kwargs):
+        user = _authenticated_user()
+        if user is None:
+            return jsonify({"success": False, "error": "Authentication required"}), 401
+        if user.role != "admin":
+            return jsonify({"success": False, "error": "Admin access required"}), 403
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
 @app.route("/api/auth/register", methods=["POST"])
 def register():
     """Đăng ký tài khoản mới"""
@@ -475,12 +488,8 @@ def login():
 
         # Tạo Token
         access_token = create_access_token(
-            identity={
-                "id": user.id,
-                "email": user.email,
-                "role": user.role,
-                "name": user.name,
-            }
+            identity=str(user.id),
+            additional_claims={"role": user.role},
         )
 
         return (
@@ -509,8 +518,20 @@ def login():
 @jwt_required()
 def get_current_user_info():
     """Lấy thông tin người dùng từ Token"""
-    current_user = get_jwt_identity()
-    return jsonify({"success": True, "user": current_user})
+    user = _authenticated_user()
+    if user is None:
+        return jsonify({"success": False, "error": "Authentication required"}), 401
+    return jsonify(
+        {
+            "success": True,
+            "user": {
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+                "role": user.role,
+            },
+        }
+    )
 
 
 # =======================================================
@@ -534,11 +555,21 @@ def home():
 
 
 @app.route("/api/records", methods=["POST"])
+@jwt_required()
 def create_record():
     """Create medical record - GIỮ NGUYÊN LOGIC CŨ"""
     try:
         data = request.json
-        user_id = data.get("user_id", 1)
+        current_user = _authenticated_user()
+        if current_user is None:
+            return jsonify({"success": False, "error": "Authentication required"}), 401
+        requested_user_id = data.get("user_id")
+        if current_user.role == "admin" and requested_user_id is not None:
+            user_id = int(requested_user_id)
+        else:
+            if requested_user_id is not None and int(requested_user_id) != current_user.id:
+                return jsonify({"success": False, "error": "Access denied"}), 403
+            user_id = current_user.id
         symptoms = data.get("symptoms", [])
         age = data.get("age", 0)
         gender = data.get("gender", "Nam")
@@ -558,7 +589,7 @@ def create_record():
             )
 
         # Check user exists
-        user = User.query.get(user_id)
+        user = db.session.get(User, user_id)
         if not user:
             return jsonify({"success": False, "error": "Người dùng không tồn tại"}), 404
 
@@ -610,10 +641,17 @@ def create_record():
 
 
 @app.route("/api/records", methods=["GET"])
+@jwt_required()
 def get_records():
     """Get medical records - GIỮ NGUYÊN"""
     try:
-        user_id = request.args.get("user_id", type=int)
+        current_user = _authenticated_user()
+        if current_user is None:
+            return jsonify({"success": False, "error": "Authentication required"}), 401
+        requested_user_id = request.args.get("user_id", type=int)
+        if current_user.role != "admin" and requested_user_id not in (None, current_user.id):
+            return jsonify({"success": False, "error": "Access denied"}), 403
+        user_id = requested_user_id if current_user.role == "admin" else current_user.id
 
         if user_id:
             records = (
@@ -638,13 +676,20 @@ def get_records():
 
 
 @app.route("/api/records/<int:record_id>", methods=["GET"])
+@jwt_required()
 def get_record(record_id):
     """Get single medical record - GIỮ NGUYÊN"""
     try:
-        record = MedicalRecord.query.get(record_id)
+        record = db.session.get(MedicalRecord, record_id)
 
         if not record:
             return jsonify({"success": False, "error": "Không tìm thấy hồ sơ"}), 404
+
+        current_user = _authenticated_user()
+        if current_user is None:
+            return jsonify({"success": False, "error": "Authentication required"}), 401
+        if current_user.role != "admin" and record.user_id != current_user.id:
+            return jsonify({"success": False, "error": "Access denied"}), 403
 
         return jsonify({"success": True, "record": record.to_dict()})
 
@@ -699,6 +744,7 @@ def get_symptoms():
 
 
 @app.route("/api/statistics", methods=["GET"])
+@admin_required
 def get_statistics():
     """Get comprehensive diagnosis statistics"""
     try:
@@ -812,12 +858,12 @@ def get_statistics():
         )
 
     except Exception as e:
-        print(f"Error in statistics: {e}")
         app.logger.exception("Medical API request failed")
         return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/users", methods=["GET"])
+@admin_required
 def get_users():
     """Get all users - GIỮ NGUYÊN"""
     try:
@@ -844,6 +890,7 @@ def get_users():
 
 
 @app.route("/api/users", methods=["POST"])
+@admin_required
 def create_user():
     """Create new user - GIỮ NGUYÊN API CŨ (Tạo user không pass)"""
     # Nếu muốn tạo user có pass, dùng /api/auth/register
@@ -905,11 +952,11 @@ try:
     if os.path.exists("simple_image_model.pkl"):
         image_model = joblib.load("simple_image_model.pkl")
         image_classes = joblib.load("class_names.pkl")
-        print("✓ Đã load model hình ảnh (Scikit-learn)")
+        app.logger.info("Loaded medical image model")
     else:
-        print("⚠️ Chưa có file model.pkl. Chế độ ảnh sẽ dùng Random giả lập.")
-except Exception as e:
-    print(f"Lỗi load model: {e}")
+        app.logger.warning("Medical image model unavailable; demo fallback remains active")
+except Exception:
+    app.logger.exception("Failed to load medical image model")
 
 # =======================================================
 # 1. API CHATBOT (GEMINI) - BẮT BUỘC PHẢI CÓ
@@ -917,8 +964,12 @@ except Exception as e:
 
 
 @app.route("/api/ai/predict-image", methods=["POST"])
+@jwt_required()
 def predict_image():
     try:
+        current_user = _authenticated_user()
+        if current_user is None:
+            return jsonify({"success": False, "error": "Authentication required"}), 401
         if "image" not in request.files:
             return jsonify({"success": False, "error": "Không tìm thấy file"}), 400
 
@@ -991,9 +1042,8 @@ def predict_image():
             }
 
         # Lưu Database (Giữ nguyên code cũ)
-        user_id = 1
         record = MedicalRecord(
-            user_id=user_id,
+            user_id=current_user.id,
             symptoms=f"[Hình ảnh] {file.filename}",
             age=30,
             gender="Ẩn",
@@ -1008,7 +1058,6 @@ def predict_image():
         return jsonify({"success": True, "prediction": result, "record_id": record.id})
 
     except Exception as e:
-        print(f"Lỗi: {e}")
         app.logger.exception("Medical API request failed")
         return jsonify({"success": False, "error": "Internal server error"}), 500
 
@@ -1028,7 +1077,6 @@ if __name__ == "__main__":
 
     print("\n" + "=" * 60)
     print("✓ Server sẵn sàng tại: http://localhost:5000")
-    print("✓ Login Admin: admin@example.com | Pass: admin123")
     print("✓ API Login: POST /api/auth/login")
     print("=" * 60 + "\n")
 

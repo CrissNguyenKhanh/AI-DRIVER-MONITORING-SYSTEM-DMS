@@ -18,7 +18,7 @@ class DatabaseTests(unittest.TestCase):
 
     def run_route(self, postgres, path, payload=None, rows=()):
         conn, cur = self.connection(rows)
-        with patch.object(api, "POSTGRES_ACTIVE", postgres), patch.object(api, "get_mysql_conn", return_value=conn), patch.object(api, "_collect_face_embeddings", return_value=[[1., 0.]] * 3), patch.object(api, "_telegram_send_decision_message", return_value=9):
+        with patch.object(api, "POSTGRES_ACTIVE", postgres), patch.object(api, "get_mysql_conn", return_value=conn), patch.object(api, "_authenticate_request", return_value=api.Principal(role="admin")), patch.object(api, "_collect_face_embeddings", return_value=[[1., 0.]] * 3), patch.object(api, "_telegram_send_decision_message", return_value=9):
             client = api.app.test_client()
             response = client.get(path) if payload is None else client.post(path, json=payload)
         self.assertEqual(response.status_code, 200, response.json)
@@ -66,10 +66,11 @@ class DatabaseTests(unittest.TestCase):
                 self.assertEqual("RETURNING id" in sql[-1], postgres)
                 data, sql, _ = self.run_route(postgres, "/api/driving/session/alert",
                                               {"session_id": 42, "alert_type": "phone", "delta": 2},
-                                              [{"id": 42}, {"count": 5}])
+                                              [{"id": 42, "driver_id": "demo"}, {"count": 5}])
                 self.assertEqual(data["count"], 5)
                 self.assertTrue(any("count = driving_session_alerts.count +" in q for q in sql))
-                data, _, _ = self.run_route(postgres, "/api/driving/session/end", {"session_id": 42})
+                data, _, _ = self.run_route(postgres, "/api/driving/session/end", {"session_id": 42},
+                                            [{"id": 42, "driver_id": "demo"}])
                 self.assertTrue(data["ok"])
                 row = {"request_id": 42, "driver_id": "demo", "status": "pending",
                        "expires_at": datetime.utcnow() - timedelta(seconds=5),
@@ -79,11 +80,13 @@ class DatabaseTests(unittest.TestCase):
 
     def test_webhook_binding_uses_selected_dialect(self):
         for postgres in (False, True):
-            conn, cur = self.connection()
+            code_row = {"driver_id": "demo", "purpose": "telegram_bind",
+                        "expires_at": datetime.utcnow() + timedelta(minutes=5), "used_at": None}
+            conn, cur = self.connection([code_row])
             with patch.object(api, "POSTGRES_ACTIVE", postgres), patch.object(api, "get_mysql_conn", return_value=conn), patch.object(api, "TELEGRAM_BOT_TOKEN", "test-only"), patch.object(api, "TELEGRAM_WEBHOOK_SECRET", "test-only"), patch.object(api, "_telegram_send_text"):
                 response = api.app.test_client().post("/api/telegram/webhook",
                     headers={"X-Telegram-Bot-Api-Secret-Token": "test-only"},
-                    json={"message": {"text": "/bind demo", "chat": {"id": 123}, "from": {"id": 456}}})
+                    json={"message": {"text": "/bind one-time-code", "chat": {"id": 123}, "from": {"id": 456}}})
             self.assertEqual(response.status_code, 200)
             self.assertIn("ON CONFLICT" if postgres else "ON DUPLICATE", cur.execute.call_args.args[0])
 
@@ -107,8 +110,8 @@ class DatabaseTests(unittest.TestCase):
             if sql.startswith("INSERT"):
                 raise RuntimeError("private SQL details")
         cur.execute.side_effect = execute
-        with patch.object(api, "get_mysql_conn", return_value=conn), patch.object(api.app.logger, "exception"):
-            response = api.app.test_client().post("/api/driving/session/start", json={})
+        with patch.object(api, "get_mysql_conn", return_value=conn), patch.object(api, "_authenticate_request", return_value=api.Principal(role="admin")), patch.object(api.app.logger, "exception"):
+            response = api.app.test_client().post("/api/driving/session/start", json={"driver_id": "demo"})
         self.assertEqual(response.status_code, 500)
         self.assertNotIn("private", str(response.json))
         # Only schema is committed. Closing the DB-API connection rolls back the failed write.

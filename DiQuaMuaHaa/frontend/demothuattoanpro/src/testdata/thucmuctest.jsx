@@ -6,6 +6,7 @@ import OwnerVerifyGate from "../systeamdetectface/OwnerVerifyGate";
 import TelegramOwnerRejectOverlay from "../systeamdetectface/TelegramOwnerRejectOverlay";
 import DriverAuthenticatedWelcome from "../systeamdetectface/DriverAuthenticatedWelcome";
 import { getDmsApiBase } from "../config/apiEndpoints";
+import { dmsAuthHeaders } from "../utils/authApi";
 import { getWebcamSupportErrorMessage } from "../utils/cameraContext";
 import { createCameraSession } from "../utils/cameraSession.js";
 import {
@@ -1488,6 +1489,7 @@ export default function DriverMonitorDMS() {
         try {
           const r = await fetch(
             `${API_BASE}/api/identity/driver_profile?driver_id=${encodeURIComponent(id)}`,
+            { headers: dmsAuthHeaders() },
           );
           const d = await r.json();
           if (r.ok && d.driver_id) {

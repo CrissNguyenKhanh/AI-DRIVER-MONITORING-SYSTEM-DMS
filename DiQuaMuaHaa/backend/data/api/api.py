@@ -1,7 +1,9 @@
 from __future__ import annotations
 from flask_socketio import SocketIO, emit
 import base64
+import hmac
 import os
+from functools import wraps
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -25,7 +27,7 @@ except ImportError:
 import json
 from datetime import datetime, timedelta
 from urllib import parse, request as urlrequest
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
 
@@ -40,6 +42,14 @@ except Exception:  # ImportError, RuntimeError, ...
 app = Flask(__name__)
 from data.security import cors_origins
 from data.db_sql import upsert_row, insert_id
+from data.auth import (
+    Principal,
+    ensure_auth_tables,
+    extract_bearer_token,
+    generate_secret,
+    hash_secret,
+    parse_database_datetime,
+)
 
 CORS_ORIGINS = cors_origins()
 CORS(app, origins=CORS_ORIGINS, supports_credentials=True)
@@ -108,6 +118,10 @@ IDENTITY_MIN_VERIFY_SAMPLES = int(os.getenv("IDENTITY_MIN_VERIFY_SAMPLES", "2"))
 IDENTITY_DECISION_TIMEOUT_SEC = int(os.getenv("IDENTITY_DECISION_TIMEOUT_SEC", "30"))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
+AUTH_SESSION_TTL_HOURS = int(os.getenv("DMS_AUTH_SESSION_TTL_HOURS", "168"))
+ADMIN_SESSION_TTL_HOURS = int(os.getenv("DMS_ADMIN_SESSION_TTL_HOURS", "12"))
+ENROLLMENT_CODE_TTL_MINUTES = int(os.getenv("DMS_ENROLLMENT_CODE_TTL_MINUTES", "15"))
+TELEGRAM_BIND_CODE_TTL_MINUTES = int(os.getenv("DMS_TELEGRAM_BIND_CODE_TTL_MINUTES", "10"))
 
 
 artifact: Dict[str, Any] | None = None
@@ -151,6 +165,264 @@ def get_mysql_conn():
             "DB_BACKEND=mysql nhưng thiếu PyMySQL. Cài PyMySQL hoặc đặt DB_BACKEND=postgres trên Render."
         )
     return pymysql.connect(**MYSQL_CONFIG)
+
+
+def _utc_string(value: datetime | None = None) -> str:
+    return (value or datetime.utcnow()).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _insert_session(cur, principal: Principal, ttl_hours: int) -> tuple[str, str]:
+    token = generate_secret()
+    now_dt = datetime.utcnow()
+    expires_dt = now_dt + timedelta(hours=max(1, ttl_hours))
+    cur.execute(
+        """
+        INSERT INTO dms_auth_sessions
+            (token_hash, driver_id, role, created_at, expires_at, revoked_at)
+        VALUES (%s, %s, %s, %s, %s, NULL)
+        """,
+        (
+            hash_secret(token),
+            principal.driver_id,
+            principal.role,
+            _utc_string(now_dt),
+            _utc_string(expires_dt),
+        ),
+    )
+    return token, _utc_string(expires_dt)
+
+
+def _insert_one_time_code(cur, driver_id: str, purpose: str, ttl_minutes: int) -> tuple[str, str]:
+    code = generate_secret()
+    now_dt = datetime.utcnow()
+    expires_dt = now_dt + timedelta(minutes=max(1, ttl_minutes))
+    cur.execute(
+        """
+        UPDATE dms_one_time_codes
+        SET used_at = %s
+        WHERE driver_id = %s AND purpose = %s AND used_at IS NULL
+        """,
+        (_utc_string(now_dt), driver_id, purpose),
+    )
+    cur.execute(
+        """
+        INSERT INTO dms_one_time_codes
+            (code_hash, driver_id, purpose, created_at, expires_at, used_at)
+        VALUES (%s, %s, %s, %s, %s, NULL)
+        """,
+        (
+            hash_secret(code),
+            driver_id,
+            purpose,
+            _utc_string(now_dt),
+            _utc_string(expires_dt),
+        ),
+    )
+    return code, _utc_string(expires_dt)
+
+
+def _authenticate_request() -> Principal | None:
+    token = extract_bearer_token(request.headers.get("Authorization"))
+    if token is None:
+        return None
+
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            ensure_auth_tables(cur, postgres=POSTGRES_ACTIVE)
+            cur.execute(
+                """
+                SELECT driver_id, role, expires_at, revoked_at
+                FROM dms_auth_sessions
+                WHERE token_hash = %s
+                LIMIT 1
+                """,
+                (hash_secret(token),),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not row or row.get("revoked_at") is not None:
+        return None
+    try:
+        if parse_database_datetime(row["expires_at"]) <= datetime.utcnow():
+            return None
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    role = str(row.get("role") or "")
+    driver_id = str(row.get("driver_id") or "").strip() or None
+    if role not in ("admin", "driver") or (role == "driver" and not driver_id):
+        return None
+    return Principal(role=role, driver_id=driver_id)
+
+
+def require_auth(*, admin: bool = False):
+    def decorate(view):
+        @wraps(view)
+        def wrapped(*args, **kwargs):
+            principal = _authenticate_request()
+            if principal is None:
+                return jsonify({"error": "Authentication required"}), 401
+            if admin and not principal.is_admin:
+                return jsonify({"error": "Admin access required"}), 403
+            g.auth_principal = principal
+            return view(*args, **kwargs)
+
+        return wrapped
+
+    return decorate
+
+
+def _authorize_driver(driver_id: str) -> Any | None:
+    principal: Principal = g.auth_principal
+    if principal.is_admin or principal.driver_id == driver_id:
+        return None
+    return jsonify({"error": "Access denied"}), 403
+
+
+def _authorize_session_row(cur, session_id: int) -> tuple[Dict[str, Any] | None, Any | None]:
+    cur.execute(
+        "SELECT id, driver_id FROM driving_sessions WHERE id = %s LIMIT 1",
+        (session_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None, (jsonify({"error": "session_id khong ton tai."}), 404)
+    denied = _authorize_driver(str(row.get("driver_id") or ""))
+    return row, denied
+
+
+@app.post("/api/auth/admin/session")
+def create_admin_session() -> Any:
+    configured_secret = os.getenv("DMS_ADMIN_BOOTSTRAP_SECRET", "").strip()
+    if not configured_secret:
+        return jsonify({"error": "Admin authentication unavailable"}), 503
+    payload = request.get_json(silent=True) or {}
+    supplied_secret = str(payload.get("bootstrap_secret") or "")
+    if not supplied_secret or not hmac.compare_digest(supplied_secret, configured_secret):
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            ensure_auth_tables(cur, postgres=POSTGRES_ACTIVE)
+            token, expires_at = _insert_session(
+                cur, Principal(role="admin"), ADMIN_SESSION_TTL_HOURS
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"access_token": token, "token_type": "Bearer", "expires_at": expires_at})
+
+
+@app.post("/api/admin/enrollment-code")
+@require_auth(admin=True)
+def create_enrollment_code() -> Any:
+    payload = request.get_json(silent=True) or {}
+    driver_id = str(payload.get("driver_id") or "").strip()
+    if not driver_id:
+        return jsonify({"error": "Missing driver_id"}), 400
+
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            ensure_auth_tables(cur, postgres=POSTGRES_ACTIVE)
+            code, expires_at = _insert_one_time_code(
+                cur, driver_id, "driver_enrollment", ENROLLMENT_CODE_TTL_MINUTES
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"driver_id": driver_id, "enrollment_code": code, "expires_at": expires_at})
+
+
+@app.post("/api/auth/enroll")
+def enroll_driver_session() -> Any:
+    payload = request.get_json(silent=True) or {}
+    driver_id = str(payload.get("driver_id") or "").strip()
+    code = str(payload.get("enrollment_code") or "").strip()
+    if not driver_id or not code:
+        return jsonify({"error": "driver_id and enrollment_code are required"}), 400
+
+    now_dt = datetime.utcnow()
+    now = _utc_string(now_dt)
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            ensure_auth_tables(cur, postgres=POSTGRES_ACTIVE)
+            cur.execute(
+                """
+                SELECT driver_id, purpose, expires_at, used_at
+                FROM dms_one_time_codes
+                WHERE code_hash = %s
+                LIMIT 1
+                """,
+                (hash_secret(code),),
+            )
+            row = cur.fetchone()
+            try:
+                valid = bool(
+                    row
+                    and row.get("used_at") is None
+                    and str(row.get("purpose")) == "driver_enrollment"
+                    and str(row.get("driver_id")) == driver_id
+                    and parse_database_datetime(row.get("expires_at")) > now_dt
+                )
+            except (TypeError, ValueError):
+                valid = False
+            if not valid:
+                return jsonify({"error": "Invalid or expired enrollment code"}), 401
+            cur.execute(
+                """
+                UPDATE dms_one_time_codes
+                SET used_at = %s
+                WHERE code_hash = %s AND used_at IS NULL AND expires_at > %s
+                """,
+                (now, hash_secret(code), now),
+            )
+            if cur.rowcount != 1:
+                return jsonify({"error": "Invalid or expired enrollment code"}), 401
+            token, expires_at = _insert_session(
+                cur, Principal(role="driver", driver_id=driver_id), AUTH_SESSION_TTL_HOURS
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify(
+        {
+            "access_token": token,
+            "token_type": "Bearer",
+            "expires_at": expires_at,
+            "driver_id": driver_id,
+        }
+    )
+
+
+@app.get("/api/auth/me")
+@require_auth()
+def auth_me() -> Any:
+    principal: Principal = g.auth_principal
+    return jsonify({"role": principal.role, "driver_id": principal.driver_id})
+
+
+@app.post("/api/auth/logout")
+@require_auth()
+def auth_logout() -> Any:
+    token = extract_bearer_token(request.headers.get("Authorization"))
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            ensure_auth_tables(cur, postgres=POSTGRES_ACTIVE)
+            cur.execute(
+                "UPDATE dms_auth_sessions SET revoked_at = %s WHERE token_hash = %s",
+                (_utc_string(), hash_secret(token or "")),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"ok": True})
 
 
 def _ensure_identity_tables(cur) -> None:
@@ -1643,6 +1915,7 @@ def hand_predict_from_frame() -> Any:
 
 
 @app.post("/api/identity/register")
+@require_auth()
 def identity_register() -> Any:
     """
     Đăng ký khuôn mặt chính chủ cho một driver_id.
@@ -1665,6 +1938,9 @@ def identity_register() -> Any:
     name = str(payload.get("name") or "").strip()
     if not driver_id:
         return jsonify({"error": "Thiếu 'driver_id'."}), 400
+    denied = _authorize_driver(driver_id)
+    if denied:
+        return denied
 
     images = _extract_images_from_payload(payload)
     if not images:
@@ -1721,6 +1997,7 @@ def identity_register() -> Any:
 
 
 @app.post("/api/identity/verify")
+@require_auth()
 def identity_verify() -> Any:
     """
     So khớp tài xế hiện tại với chính chủ đã đăng ký.
@@ -1741,6 +2018,9 @@ def identity_verify() -> Any:
     driver_id = str(payload.get("driver_id", "")).strip()
     if not driver_id:
         return jsonify({"error": "Thiếu 'driver_id'."}), 400
+    denied = _authorize_driver(driver_id)
+    if denied:
+        return denied
 
     images = _extract_images_from_payload(payload)
     if not images:
@@ -1829,11 +2109,15 @@ def identity_verify() -> Any:
 
 
 @app.get("/api/identity/driver_profile")
+@require_auth()
 def identity_driver_profile() -> Any:
     """Trả về tên + ảnh đăng ký + ngày tạo (dùng cho UI sau khi mở khóa / Telegram accept)."""
     driver_id = str(request.args.get("driver_id", "")).strip()
     if not driver_id:
         return jsonify({"error": "Thiếu driver_id."}), 400
+    denied = _authorize_driver(driver_id)
+    if denied:
+        return denied
 
     conn = get_mysql_conn()
     try:
@@ -1873,6 +2157,7 @@ def identity_driver_profile() -> Any:
 
 
 @app.post("/api/identity/telegram/bind")
+@require_auth(admin=True)
 def bind_driver_telegram_owner() -> Any:
     try:
         payload = request.get_json(force=True, silent=False)
@@ -1927,7 +2212,44 @@ def bind_driver_telegram_owner() -> Any:
     )
 
 
+@app.post("/api/identity/telegram/bind-code")
+@require_auth()
+def create_telegram_bind_code() -> Any:
+    payload = request.get_json(silent=True) or {}
+    principal: Principal = g.auth_principal
+    driver_id = (
+        str(payload.get("driver_id") or "").strip()
+        if principal.is_admin
+        else str(principal.driver_id or "")
+    )
+    if not driver_id:
+        return jsonify({"error": "Missing driver_id"}), 400
+    denied = _authorize_driver(driver_id)
+    if denied:
+        return denied
+
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            ensure_auth_tables(cur, postgres=POSTGRES_ACTIVE)
+            code, expires_at = _insert_one_time_code(
+                cur, driver_id, "telegram_bind", TELEGRAM_BIND_CODE_TTL_MINUTES
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify(
+        {
+            "driver_id": driver_id,
+            "binding_code": code,
+            "expires_at": expires_at,
+            "command": f"/bind {code}",
+        }
+    )
+
+
 @app.post("/api/identity/request_decision")
+@require_auth()
 def request_identity_decision() -> Any:
     try:
         payload = request.get_json(force=True, silent=False)
@@ -1939,6 +2261,9 @@ def request_identity_decision() -> Any:
     driver_id = str(payload.get("driver_id", "")).strip()
     if not driver_id:
         return jsonify({"error": "Thiếu 'driver_id'."}), 400
+    denied = _authorize_driver(driver_id)
+    if denied:
+        return denied
 
     phase = str(payload.get("phase") or "").strip().lower()
     if phase != "auth":
@@ -2081,6 +2406,7 @@ def request_identity_decision() -> Any:
 
 
 @app.get("/api/identity/decision_status")
+@require_auth()
 def identity_decision_status() -> Any:
     request_id_raw = request.args.get("request_id", "").strip()
     if not request_id_raw:
@@ -2108,6 +2434,10 @@ def identity_decision_status() -> Any:
             row = cur.fetchone()
             if not row:
                 return jsonify({"error": "request_id không tồn tại."}), 404
+
+            denied = _authorize_driver(str(row.get("driver_id") or ""))
+            if denied:
+                return denied
 
             status = str(row["status"])
             expires_at = row["expires_at"]
@@ -2148,7 +2478,7 @@ def telegram_webhook() -> Any:
         return jsonify({"ok": False, "error": "Telegram unavailable"}), 503
     if TELEGRAM_WEBHOOK_SECRET:
         got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if got != TELEGRAM_WEBHOOK_SECRET:
+        if not got or not hmac.compare_digest(got, TELEGRAM_WEBHOOK_SECRET):
             return jsonify({"ok": False, "error": "Invalid secret"}), 403
 
     payload = request.get_json(silent=True) or {}
@@ -2235,21 +2565,59 @@ def telegram_webhook() -> Any:
         chat_id = int(chat.get("id") or 0)
         user_id = int(from_user.get("id") or 0)
 
-        if text.startswith("/bind"):
+        command = text.split(maxsplit=1)[0].split("@", 1)[0] if text else ""
+        if command == "/bind":
             parts = text.split()
             if len(parts) < 2:
-                _telegram_send_text(chat_id, "Cach dung: /bind <driver_id>")
+                _telegram_send_text(chat_id, "Cach dung: /bind <binding_code>")
                 return jsonify({"ok": True})
-            driver_id = parts[1].strip()
-            if not driver_id:
-                _telegram_send_text(chat_id, "driver_id khong hop le.")
+            binding_code = parts[1].strip()
+            if not binding_code:
+                _telegram_send_text(chat_id, "Ma lien ket khong hop le.")
                 return jsonify({"ok": True})
 
-            now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            now_dt = datetime.utcnow()
+            now = _utc_string(now_dt)
             conn = get_mysql_conn()
             try:
                 with conn.cursor() as cur:
                     _ensure_identity_tables(cur)
+                    ensure_auth_tables(cur, postgres=POSTGRES_ACTIVE)
+                    code_hash = hash_secret(binding_code)
+                    cur.execute(
+                        """
+                        SELECT driver_id, purpose, expires_at, used_at
+                        FROM dms_one_time_codes
+                        WHERE code_hash = %s
+                        LIMIT 1
+                        """,
+                        (code_hash,),
+                    )
+                    code_row = cur.fetchone()
+                    try:
+                        code_valid = bool(
+                            code_row
+                            and code_row.get("used_at") is None
+                            and str(code_row.get("purpose")) == "telegram_bind"
+                            and parse_database_datetime(code_row.get("expires_at")) > now_dt
+                        )
+                    except (TypeError, ValueError):
+                        code_valid = False
+                    if not code_valid:
+                        _telegram_send_text(chat_id, "Ma lien ket khong hop le hoac da het han.")
+                        return jsonify({"ok": True})
+                    driver_id = str(code_row.get("driver_id") or "")
+                    cur.execute(
+                        """
+                        UPDATE dms_one_time_codes
+                        SET used_at = %s
+                        WHERE code_hash = %s AND used_at IS NULL AND expires_at > %s
+                        """,
+                        (now, code_hash, now),
+                    )
+                    if cur.rowcount != 1:
+                        _telegram_send_text(chat_id, "Ma lien ket da duoc su dung.")
+                        return jsonify({"ok": True})
                     upsert_row(
                         cur, "driver_telegram_owner",
                         ("driver_id", "telegram_chat_id", "telegram_user_id", "created_at", "updated_at"),
@@ -2265,17 +2633,24 @@ def telegram_webhook() -> Any:
             return jsonify({"ok": True})
 
         if text.startswith("/start"):
-            _telegram_send_text(chat_id, "Xin chao. Dung lenh: /bind <driver_id> de lien ket xe.")
+            _telegram_send_text(chat_id, "Xin chao. Tao ma tren ung dung, sau do dung: /bind <binding_code>.")
             return jsonify({"ok": True})
 
     return jsonify({"ok": True})
 
 
 @app.post("/api/driving/session/start")
+@require_auth()
 def driving_session_start() -> Any:
     """Bắt đầu phiên lái (sau khi tài xế đã active)."""
     payload = request.get_json(silent=True) or {}
-    driver_id = (payload.get("driver_id") or "").strip() or None
+    requested_driver_id = str(payload.get("driver_id") or "").strip() or None
+    principal: Principal = g.auth_principal
+    if not principal.is_admin and requested_driver_id not in (None, principal.driver_id):
+        return jsonify({"error": "Access denied"}), 403
+    driver_id = requested_driver_id if principal.is_admin else principal.driver_id
+    if not driver_id:
+        return jsonify({"error": "Missing driver_id"}), 400
     label = (payload.get("label") or "").strip() or None
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     conn = get_mysql_conn()
@@ -2297,6 +2672,7 @@ def driving_session_start() -> Any:
 
 
 @app.post("/api/driving/session/end")
+@require_auth()
 def driving_session_end() -> Any:
     """Kết thúc phiên lái (ghi ended_at)."""
     payload = request.get_json(silent=True) or {}
@@ -2311,6 +2687,9 @@ def driving_session_end() -> Any:
     try:
         with conn.cursor() as cur:
             _ensure_driving_session_tables(cur)
+            _session, denied = _authorize_session_row(cur, session_id)
+            if denied:
+                return denied
             cur.execute(
                 """
                 UPDATE driving_sessions
@@ -2332,6 +2711,7 @@ def driving_session_end() -> Any:
 
 
 @app.post("/api/driving/session/alert")
+@require_auth()
 def driving_session_alert() -> Any:
     """Tăng số lần cảnh báo theo loại (delta mặc định 1)."""
     payload = request.get_json(silent=True) or {}
@@ -2362,12 +2742,9 @@ def driving_session_alert() -> Any:
     try:
         with conn.cursor() as cur:
             _ensure_driving_session_tables(cur)
-            cur.execute(
-                "SELECT id FROM driving_sessions WHERE id = %s LIMIT 1",
-                (session_id,),
-            )
-            if not cur.fetchone():
-                return jsonify({"error": "session_id không tồn tại."}), 404
+            _session, denied = _authorize_session_row(cur, session_id)
+            if denied:
+                return denied
             upsert_row(
                 cur, "driving_session_alerts", ("session_id", "alert_type", "count"),
                 (session_id, alert_type, delta), ("session_id", "alert_type"), ("count",),
@@ -2394,13 +2771,18 @@ def driving_session_alert() -> Any:
 
 
 @app.get("/api/driving/sessions")
+@require_auth()
 def driving_sessions_list() -> Any:
     """Danh sách phiên gần đây (kèm tổng cảnh báo)."""
     try:
         limit = min(100, max(1, int(request.args.get("limit", "30"))))
     except ValueError:
         limit = 30
-    driver_id = (request.args.get("driver_id") or "").strip() or None
+    requested_driver_id = (request.args.get("driver_id") or "").strip() or None
+    principal: Principal = g.auth_principal
+    if not principal.is_admin and requested_driver_id not in (None, principal.driver_id):
+        return jsonify({"error": "Access denied"}), 403
+    driver_id = requested_driver_id if principal.is_admin else principal.driver_id
 
     conn = get_mysql_conn()
     try:
@@ -2466,6 +2848,7 @@ def _session_dt_iso(v: Any) -> str | None:
 
 
 @app.get("/api/driving/session/<int:session_id>")
+@require_auth()
 def driving_session_detail(session_id: int) -> Any:
     conn = get_mysql_conn()
     try:
@@ -2481,6 +2864,9 @@ def driving_session_detail(session_id: int) -> Any:
             s = cur.fetchone()
             if not s:
                 return jsonify({"error": "Không tìm thấy phiên."}), 404
+            denied = _authorize_driver(str(s.get("driver_id") or ""))
+            if denied:
+                return denied
             cur.execute(
                 """
                 SELECT alert_type, count FROM driving_session_alerts

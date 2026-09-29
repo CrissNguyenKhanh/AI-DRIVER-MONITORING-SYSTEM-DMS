@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { CheckCircle, XCircle, AlertTriangle, Clock, User } from "lucide-react";
 import { getMedicalApiBase } from "../config/apiEndpoints";
+import { medicalAuthHeaders } from "../utils/authApi";
 
 const MedicalRecordConfirmation = () => {
   const [records, setRecords] = useState([]);
@@ -23,7 +24,8 @@ const MedicalRecordConfirmation = () => {
   const loadRecords = async () => {
     try {
       const response = await fetch(
-        `${getMedicalApiBase()}/api/records/${currentUser.id}`
+        `${getMedicalApiBase()}/api/records?user_id=${encodeURIComponent(currentUser.id)}`,
+        { headers: medicalAuthHeaders() },
       );
       const data = await response.json();
       if (data.success) {
@@ -62,7 +64,7 @@ const MedicalRecordConfirmation = () => {
         `${getMedicalApiBase()}/api/records/${selectedRecord.id}/confirm`,
         {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: medicalAuthHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
             actual_diagnosis: actualDiagnosis,
             doctor_id: currentUser.id,

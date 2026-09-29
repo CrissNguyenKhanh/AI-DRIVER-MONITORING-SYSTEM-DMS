@@ -3,6 +3,12 @@ import { useNavigate } from "react-router-dom";
 import { getDmsApiBase } from "../config/apiEndpoints";
 import { getWebcamSupportErrorMessage } from "../utils/cameraContext";
 import { speakOwnerGreeting, warmSpeechVoices } from "../utils/speakOwnerGreeting";
+import {
+  clearDmsAuthSession,
+  dmsAuthHeaders,
+  getDmsAuthToken,
+  saveDmsAuthSession,
+} from "../utils/authApi";
 
 const API_BASE = getDmsApiBase();
 const API_INTERVAL_MS = 900;
@@ -326,6 +332,11 @@ export default function FaceDetect() {
   const [smoothSimilarity, setSmoothSimilarity] = useState(null);
   const [ownerFaceImage, setOwnerFaceImage] = useState(null);
   const [driverId, setDriverId] = useState(DEFAULT_DRIVER_ID);
+  const [enrollmentCode, setEnrollmentCode] = useState("");
+  const [hasAuthSession, setHasAuthSession] = useState(() => Boolean(getDmsAuthToken()));
+  const [authLoading, setAuthLoading] = useState(false);
+  const [telegramCommand, setTelegramCommand] = useState("");
+  const [telegramLoading, setTelegramLoading] = useState(false);
 
   const [isScanning, setIsScanning] = useState(false);
   const [registered, setRegistered] = useState(false);
@@ -351,6 +362,59 @@ export default function FaceDetect() {
   useEffect(() => {
     ownerWelcomeSpokenRef.current = false;
   }, [driverId]);
+
+  const handleEnrollment = async () => {
+    if (!driverId || !enrollmentCode.trim()) {
+      setApiError("Nhập driver ID và mã enrollment do quản trị viên cấp.");
+      return;
+    }
+    setAuthLoading(true);
+    setApiError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/enroll`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          driver_id: driverId,
+          enrollment_code: enrollmentCode.trim(),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.access_token) {
+        throw new Error(data.error || "Không thể xác thực mã enrollment");
+      }
+      saveDmsAuthSession(data.access_token, data.driver_id || driverId);
+      window.localStorage.setItem(DRIVER_ID_KEY, data.driver_id || driverId);
+      setDriverId(data.driver_id || driverId);
+      setEnrollmentCode("");
+      setHasAuthSession(true);
+    } catch (error) {
+      setApiError(error.message || "Không thể xác thực mã enrollment");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleTelegramBindCode = async () => {
+    setTelegramLoading(true);
+    setApiError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/identity/telegram/bind-code`, {
+        method: "POST",
+        headers: dmsAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({}),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.command) {
+        throw new Error(data.error || "Không thể tạo mã Telegram");
+      }
+      setTelegramCommand(data.command);
+    } catch (error) {
+      setApiError(error.message || "Không thể tạo mã Telegram");
+    } finally {
+      setTelegramLoading(false);
+    }
+  };
 
   const startWebcam = async () => {
     const supportErr = getWebcamSupportErrorMessage();
@@ -423,7 +487,7 @@ export default function FaceDetect() {
 
   // Polling loop: only identity verification
   useEffect(() => {
-    if (status !== "active") return;
+    if (status !== "active" || !hasAuthSession) return;
     let cancelled = false,
       timeoutId;
     const loop = async () => {
@@ -449,7 +513,7 @@ export default function FaceDetect() {
 
         const vRes = await fetch(`${API_BASE}/api/identity/verify`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: dmsAuthHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
             driver_id: driverId,
             images: frames,
@@ -459,6 +523,10 @@ export default function FaceDetect() {
 
         if (!vRes.ok) {
           const msg = String(vData?.error || "Xác thực thất bại");
+          if (vRes.status === 401) {
+            clearDmsAuthSession();
+            setHasAuthSession(false);
+          }
           if (msg.toLowerCase().includes("không detect được khuôn mặt")) {
             setFaceVisible(false);
             setVerifyStatus("NO_FACE");
@@ -527,9 +595,13 @@ export default function FaceDetect() {
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [status, hasRegistered, driverId, captureBurstFrames, simThreshold]);
+  }, [status, hasRegistered, driverId, captureBurstFrames, simThreshold, hasAuthSession]);
 
   const handleRegisterOwner = () => {
+    if (!hasAuthSession) {
+      setApiError("Cần xác thực mã enrollment trước khi đăng ký khuôn mặt.");
+      return;
+    }
     if (status !== "active") {
       setApiError("Hãy bật webcam trước.");
       return;
@@ -554,7 +626,7 @@ export default function FaceDetect() {
     try {
       const res = await fetch(`${API_BASE}/api/identity/register`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: dmsAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           driver_id: driverId,
           name: driverId,
@@ -729,6 +801,7 @@ export default function FaceDetect() {
               </span>
               <input
                 value={driverId}
+                disabled={hasAuthSession}
                 onChange={(e) =>
                   setDriverId(e.target.value.trim() || DEFAULT_DRIVER_ID)
                 }
@@ -746,8 +819,83 @@ export default function FaceDetect() {
                 }}
               />
             </div>
+            {!hasAuthSession && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  justifyContent: "flex-end",
+                  marginBottom: 6,
+                }}
+              >
+                <input
+                  aria-label="Enrollment code"
+                  type="password"
+                  autoComplete="one-time-code"
+                  value={enrollmentCode}
+                  onChange={(event) => setEnrollmentCode(event.target.value)}
+                  placeholder="ENROLLMENT CODE"
+                  style={{
+                    background: "#0a1628",
+                    border: "1px solid #1e3a2a",
+                    borderRadius: 6,
+                    color: "#00ffa0",
+                    fontSize: 9,
+                    padding: "4px 8px",
+                    width: 150,
+                    outline: "none",
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={authLoading}
+                  onClick={handleEnrollment}
+                  style={{
+                    background: "#063b2a",
+                    border: "1px solid #00ffa0",
+                    borderRadius: 6,
+                    color: "#00ffa0",
+                    cursor: authLoading ? "wait" : "pointer",
+                    fontSize: 9,
+                    padding: "4px 7px",
+                  }}
+                >
+                  {authLoading ? "AUTH..." : "ENROLL"}
+                </button>
+              </div>
+            )}
+            {hasAuthSession && (
+              <div style={{ marginBottom: 6 }}>
+                <button
+                  type="button"
+                  disabled={telegramLoading}
+                  onClick={handleTelegramBindCode}
+                  style={{
+                    background: "#0a1628",
+                    border: "1px solid #1e3a2a",
+                    borderRadius: 6,
+                    color: "#00ffa0",
+                    cursor: telegramLoading ? "wait" : "pointer",
+                    fontSize: 9,
+                    padding: "4px 7px",
+                  }}
+                >
+                  {telegramLoading ? "CREATING..." : "TELEGRAM BIND CODE"}
+                </button>
+                {telegramCommand && (
+                  <div style={{ color: "#fbbf24", marginTop: 4 }}>
+                    Send to bot: {telegramCommand}
+                  </div>
+                )}
+              </div>
+            )}
             <div>
-              {lastUpdated ? `LAST UPDATE: ${lastUpdated}` : "AWAITING FEED"}
+              {!hasAuthSession
+                ? "AUTHORIZATION REQUIRED"
+                : lastUpdated
+                  ? `LAST UPDATE: ${lastUpdated}`
+                  : "AWAITING FEED"}
             </div>
             <div
               style={{
