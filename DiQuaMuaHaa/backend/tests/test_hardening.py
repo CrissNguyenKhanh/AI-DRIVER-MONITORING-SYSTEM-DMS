@@ -40,6 +40,12 @@ class SecurityTests(unittest.TestCase):
         self.assertNotIn("chat_id", rendered_log_call)
         self.assertIn("sendMessage", rendered_log_call)
 
+    def test_legacy_backends_do_not_ship_default_admin_passwords(self):
+        for relative_path in ("len.py", "data/database.py"):
+            source = (api.BASE_DIR / relative_path).read_text(encoding="utf-8")
+            self.assertNotIn("admin123", source)
+            self.assertNotIn("user123", source)
+
 
 class ErrorAndHealthTests(unittest.TestCase):
     def setUp(self):

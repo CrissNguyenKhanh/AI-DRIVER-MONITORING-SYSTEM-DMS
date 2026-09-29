@@ -269,7 +269,9 @@ Open the Vite URL (usually `http://localhost:5173`).
 
 The separate medical API requires `MEDICAL_DATABASE_URL` and `JWT_SECRET_KEY`. Optional
 first-admin creation uses both `MEDICAL_ADMIN_EMAIL` and `MEDICAL_ADMIN_PASSWORD`; no
-default account or password is created.
+default account or password is created. The unused legacy database helper likewise only
+creates an account when `LEGACY_MEDICAL_ADMIN_USERNAME` and
+`LEGACY_MEDICAL_ADMIN_PASSWORD` are explicitly configured.
 
 ---
 
