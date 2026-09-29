@@ -12,6 +12,7 @@ import VerifyPro from "./verify/verifypro";
 import Khanhregister from "./Khanhregister";
 
 import FaceDetect from "./systeamdetectface/face_detect";
+import ADASSimulation from "./adas/ADASSimulation";
 import { getStoredMedicalUser } from "./utils/authApi";
 
 function RequireAdmin({ children }) {
@@ -42,6 +43,7 @@ function App() {
         <Route path="/verifypro" element={<VerifyPro />} />
 
         <Route path="/test5" element={<FaceDetect />} />
+        <Route path="/adas-simulation" element={<ADASSimulation />} />
       </Routes>
     </Router>
   );
