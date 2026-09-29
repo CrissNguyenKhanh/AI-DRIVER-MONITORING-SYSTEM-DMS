@@ -897,6 +897,23 @@ export default function FaceDetect() {
                   ? `LAST UPDATE: ${lastUpdated}`
                   : "AWAITING FEED"}
             </div>
+            <button
+              type="button"
+              onClick={() => navigate("/adas-simulation")}
+              style={{
+                background: "#071b2f",
+                border: "1px solid #38bdf8",
+                borderRadius: 6,
+                color: "#7dd3fc",
+                cursor: "pointer",
+                fontSize: 9,
+                marginTop: 8,
+                padding: "5px 8px",
+                letterSpacing: "0.08em",
+              }}
+            >
+              OPEN ADAS ROAD SIMULATION
+            </button>
             <div
               style={{
                 marginTop: 4,
