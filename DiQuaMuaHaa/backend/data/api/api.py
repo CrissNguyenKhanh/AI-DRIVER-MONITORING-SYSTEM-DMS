@@ -5,6 +5,7 @@ import hmac
 import os
 from functools import wraps
 from pathlib import Path
+from threading import Lock
 from typing import Any, Dict, List
 
 import numpy as np
@@ -50,6 +51,8 @@ from data.auth import (
     hash_secret,
     parse_database_datetime,
 )
+from data.adas import ADASPipeline, load_adas_config
+from data.adas.frame_codec import decode_frame as decode_adas_frame
 
 CORS_ORIGINS = cors_origins()
 CORS(app, origins=CORS_ORIGINS, supports_credentials=True)
@@ -122,6 +125,9 @@ AUTH_SESSION_TTL_HOURS = int(os.getenv("DMS_AUTH_SESSION_TTL_HOURS", "168"))
 ADMIN_SESSION_TTL_HOURS = int(os.getenv("DMS_ADMIN_SESSION_TTL_HOURS", "12"))
 ENROLLMENT_CODE_TTL_MINUTES = int(os.getenv("DMS_ENROLLMENT_CODE_TTL_MINUTES", "15"))
 TELEGRAM_BIND_CODE_TTL_MINUTES = int(os.getenv("DMS_TELEGRAM_BIND_CODE_TTL_MINUTES", "10"))
+ADAS_CONFIG = load_adas_config(BASE_DIR)
+adas_pipeline = ADASPipeline(ADAS_CONFIG)
+_adas_processing_lock = Lock()
 
 
 artifact: Dict[str, Any] | None = None
@@ -1332,6 +1338,7 @@ def health() -> Any:
     ]:
         models[name] = {"artifact_present": path.is_file(), "loaded": loaded, "enabled": enabled}
     models["smoking"]["reason"] = _smoking_unavailable()["reason"]
+    models["road_object_detector"] = adas_pipeline.obstacle_detector.status()
     return jsonify({"status": "ok" if available else "degraded",
                     "database": {"available": available, "backend": DB_BACKEND},
                     "models": models}), 200 if available else 503
@@ -1907,6 +1914,31 @@ def hand_predict_from_frame() -> Any:
         )
     except Exception:
         return _api_error()
+
+
+@app.post("/api/adas/process-frame")
+@require_auth()
+def adas_process_frame() -> Any:
+    """Analyze one throttled road frame for visualization-only ADAS simulation."""
+    if not _adas_processing_lock.acquire(blocking=False):
+        return jsonify({"error": "ADAS processor busy; drop this frame"}), 429
+    try:
+        payload = request.get_json(silent=True) or {}
+        image_data = payload.get("image")
+        try:
+            frame = decode_adas_frame(
+                image_data,
+                max_chars=ADAS_CONFIG.max_frame_chars,
+                max_pixels=ADAS_CONFIG.max_input_pixels,
+            )
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        result = adas_pipeline.process(frame, reset=bool(payload.get("reset")))
+        return jsonify(result)
+    except Exception:
+        return _api_error()
+    finally:
+        _adas_processing_lock.release()
 
 
 # ═══════════════════════════════════════════════════════════════
