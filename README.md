@@ -15,7 +15,9 @@
 
 ---
 
-This README focuses on the **DMS part only**: backend `api.py` on port **8000**, frontend under `DiQuaMuaHaa/frontend/demothuattoanpro/`, and the ML training pipeline in `driver_training/`.
+This README focuses on the DMS runtime plus its separate, visualization-only **ADAS Road Simulation**: backend `api.py` on port **8000**, frontend under `DiQuaMuaHaa/frontend/demothuattoanpro/`, and the ML training pipeline in `driver_training/`.
+
+> **ADAS safety boundary:** the road feature is a prerecorded-video simulation. It has no CAN bus or vehicle actuator integration and produces no steering, brake, or throttle commands. See [ADAS_SIMULATION.md](ADAS_SIMULATION.md).
 
 ---
 
@@ -79,6 +81,7 @@ flowchart LR
 | **Hand activity** | Hand landmark extraction + gesture/state classification. |
 | **Driver identity** | Register/verify driver embeddings, owner binding, Telegram Accept/Reject decision flow. |
 | **Driving sessions (fleet demo)** | Start/end session, increment per-alert counters (`phone`, `smoking`, `drowsy`, ...), query history by `driver_id`. |
+| **ADAS road simulation** | Authenticated road-video lane/corridor, optional local object detection, image-space risk, and simulated path overlay. |
 
 ---
 
@@ -266,6 +269,10 @@ Open the Vite URL (usually `http://localhost:5173`).
 | `IDENTITY_SIM_THRESHOLD` | Face similarity threshold |
 | `IDENTITY_MIN_REGISTER_SAMPLES` / `IDENTITY_MIN_VERIFY_SAMPLES` | Min samples for register/verify |
 | `IDENTITY_DECISION_TIMEOUT_SEC` | Owner decision timeout |
+| `ADAS_OBJECT_MODEL_PATH` | Optional local road-object YOLO model path |
+| `DISABLE_ADAS_OBJECT_DETECTOR` | Set to `1` to run lane-only simulation |
+| `ADAS_OBJECT_INTERVAL` | Object inference sampling interval (default: every 3 accepted frames) |
+| `ADAS_OBJECT_CONFIDENCE` | Road-object confidence threshold (default: `0.35`) |
 
 The separate medical API requires `MEDICAL_DATABASE_URL` and `JWT_SECRET_KEY`. Optional
 first-admin creation uses both `MEDICAL_ADMIN_EMAIL` and `MEDICAL_ADMIN_PASSWORD`; no
@@ -299,6 +306,7 @@ creates an account when `LEGACY_MEDICAL_ADMIN_USERNAME` and
 | `POST` | `/api/identity/telegram/bind` | Admin-only direct binding for controlled migration/support |
 | `POST` | `/api/identity/request_decision` | Request a decision for the authenticated driver |
 | `GET` | `/api/identity/decision_status` | Poll an owned decision by `request_id` |
+| `POST` | `/api/adas/process-frame` | Protected, visualization-only road frame analysis |
 | `POST` | `/api/telegram/webhook` | Telegram webhook handler |
 
 Identity and driving-session routes require `Authorization: Bearer <token>`. To bind
@@ -346,6 +354,7 @@ stateDiagram-v2
 | `/test3` | Extended DMS dashboard (REST + Socket + voice + session panel) |
 | `/test4` | Hand detection screen |
 | `/test5` | Face/identity-focused monitor screen |
+| `/adas-simulation` | Protected ADAS road-video simulation and canvas overlay |
 | `/verifypro` | Verify flow testing |
 
 ---
