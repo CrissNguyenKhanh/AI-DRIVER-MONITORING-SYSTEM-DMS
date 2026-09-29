@@ -258,11 +258,18 @@ Open the Vite URL (usually `http://localhost:5173`).
 |----------|---------|
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `TELEGRAM_WEBHOOK_SECRET` | Secret token for webhook verification |
+| `DMS_ADMIN_BOOTSTRAP_SECRET` | Out-of-band secret used only to create a short-lived admin session |
+| `DMS_AUTH_SESSION_TTL_HOURS` | Driver session lifetime (default: 168 hours) |
+| `DMS_ADMIN_SESSION_TTL_HOURS` | Admin session lifetime (default: 12 hours) |
+| `DMS_ENROLLMENT_CODE_TTL_MINUTES` | One-time driver enrollment code lifetime (default: 15 minutes) |
+| `DMS_TELEGRAM_BIND_CODE_TTL_MINUTES` | One-time Telegram binding code lifetime (default: 10 minutes) |
 | `IDENTITY_SIM_THRESHOLD` | Face similarity threshold |
 | `IDENTITY_MIN_REGISTER_SAMPLES` / `IDENTITY_MIN_VERIFY_SAMPLES` | Min samples for register/verify |
 | `IDENTITY_DECISION_TIMEOUT_SEC` | Owner decision timeout |
 
-MySQL connection parameters are controlled in `MYSQL_CONFIG` inside `api.py`.
+The separate medical API requires `MEDICAL_DATABASE_URL` and `JWT_SECRET_KEY`. Optional
+first-admin creation uses both `MEDICAL_ADMIN_EMAIL` and `MEDICAL_ADMIN_PASSWORD`; no
+default account or password is created.
 
 ---
 
@@ -278,13 +285,23 @@ MySQL connection parameters are controlled in `MYSQL_CONFIG` inside `api.py`.
 | `POST` | `/api/phone/detect_from_frame` | Phone detection variant |
 | `POST` | `/api/hand/predict` | Hand landmarks |
 | `POST` | `/api/hand/predict_from_frame` | Hand prediction from frame |
-| `POST` | `/api/identity/register` | Register identity embedding |
-| `POST` | `/api/identity/verify` | Verify identity |
-| `GET` | `/api/identity/driver_profile` | Get registered profile |
-| `POST` | `/api/identity/telegram/bind` | Bind Telegram owner to driver |
-| `POST` | `/api/identity/request_decision` | Request owner decision |
-| `GET` | `/api/identity/decision_status` | Poll decision by `request_id` |
+| `POST` | `/api/auth/admin/session` | Exchange the configured bootstrap secret for an admin bearer session |
+| `POST` | `/api/admin/enrollment-code` | Admin-only: create a one-time enrollment code for a driver |
+| `POST` | `/api/auth/enroll` | Exchange a one-time enrollment code for a driver bearer session |
+| `GET` | `/api/auth/me` | Inspect the current DMS principal |
+| `POST` | `/api/auth/logout` | Revoke the current DMS session |
+| `POST` | `/api/identity/register` | Register/update the authenticated driver's identity |
+| `POST` | `/api/identity/verify` | Verify the authenticated driver's identity |
+| `GET` | `/api/identity/driver_profile` | Get the authenticated driver's registered profile |
+| `POST` | `/api/identity/telegram/bind-code` | Create a short-lived, one-time Telegram binding code |
+| `POST` | `/api/identity/telegram/bind` | Admin-only direct binding for controlled migration/support |
+| `POST` | `/api/identity/request_decision` | Request a decision for the authenticated driver |
+| `GET` | `/api/identity/decision_status` | Poll an owned decision by `request_id` |
 | `POST` | `/api/telegram/webhook` | Telegram webhook handler |
+
+Identity and driving-session routes require `Authorization: Bearer <token>`. To bind
+Telegram, create a code from the authenticated UI/API and send `/bind <binding_code>`
+to the bot. Raw bearer tokens and one-time codes are never stored in the database.
 
 ---
 
