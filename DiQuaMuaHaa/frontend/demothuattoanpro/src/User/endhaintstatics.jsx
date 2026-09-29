@@ -25,6 +25,7 @@ import {
   Thermometer,
 } from "lucide-react";
 import { getMedicalApiBase } from "../config/apiEndpoints";
+import { medicalAuthHeaders } from "../utils/authApi";
 
 const COLORS = [
   "#3b82f6",
@@ -76,7 +77,9 @@ const EnhancedPatientStatistics = () => {
 
   useEffect(() => {
     // Chỉ gọi 1 API duy nhất đã có bên Backend
-    Promise.resolve().then(() => fetch(`${getMedicalApiBase()}/api/statistics`))
+    Promise.resolve().then(() => fetch(`${getMedicalApiBase()}/api/statistics`, {
+      headers: medicalAuthHeaders(),
+    }))
       .then((response) => {
         if (!response.ok) {
           throw new Error("Lỗi kết nối đến server");

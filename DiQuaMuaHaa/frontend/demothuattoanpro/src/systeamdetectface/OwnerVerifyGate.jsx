@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { getDmsApiBase } from "../config/apiEndpoints";
+import { dmsAuthHeaders } from "../utils/authApi";
 
 const DEFAULT_API_BASE = getDmsApiBase();
 const DEFAULT_VERIFY_INTERVAL_MS = 1200;
@@ -97,7 +98,7 @@ export default function OwnerVerifyGate({
 
       const res = await fetch(`${apiBase}/api/identity/verify`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: dmsAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ driver_id: driverId, images: frames }),
       });
 
@@ -108,7 +109,7 @@ export default function OwnerVerifyGate({
     async function createDecisionRequest(similarity, threshold) {
       const res = await fetch(`${apiBase}/api/identity/request_decision`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: dmsAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           driver_id: driverId,
           similarity,
@@ -125,6 +126,7 @@ export default function OwnerVerifyGate({
     async function pollDecisionStatus(requestId) {
       const res = await fetch(
         `${apiBase}/api/identity/decision_status?request_id=${encodeURIComponent(String(requestId))}`,
+        { headers: dmsAuthHeaders() },
       );
       const data = await res.json().catch(() => ({}));
       return { ok: res.ok, data };

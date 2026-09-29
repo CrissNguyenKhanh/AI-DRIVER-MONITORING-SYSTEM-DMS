@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { getMedicalApiBase } from "../config/apiEndpoints";
+import { medicalAuthHeaders } from "../utils/authApi";
 import {
   Activity,
   AlertCircle,
@@ -60,7 +61,9 @@ const MedicalDiagnosisAI = () => {
   // --- API CALLS ---
   const fetchStatistics = async () => {
     try {
-      const response = await fetch(`${getMedicalApiBase()}/api/statistics`);
+      const response = await fetch(`${getMedicalApiBase()}/api/statistics`, {
+        headers: medicalAuthHeaders(),
+      });
       const data = await response.json();
       setStatistics(data);
     } catch (error) {
@@ -114,6 +117,7 @@ const MedicalDiagnosisAI = () => {
 
       const response = await fetch(`${getMedicalApiBase()}/api/ai/predict-image`, {
         method: "POST",
+        headers: medicalAuthHeaders(),
         body: formDataImage,
       });
 
@@ -225,9 +229,8 @@ const MedicalDiagnosisAI = () => {
 
         const response = await fetch(`${getMedicalApiBase()}/api/records`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: medicalAuthHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
-            user_id: 1,
             symptoms: symptomsArray,
             age: parseInt(formData.age),
             gender: formData.gender,

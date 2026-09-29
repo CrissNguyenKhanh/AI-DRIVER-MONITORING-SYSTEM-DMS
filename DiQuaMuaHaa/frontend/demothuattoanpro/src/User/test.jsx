@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Activity, AlertCircle, CheckCircle, TrendingUp, Users, Calendar, Save } from "lucide-react";
 import { getMedicalApiBase } from "../config/apiEndpoints";
+import { medicalAuthHeaders } from "../utils/authApi";
 
 const MedicalDiagnosisAI = () => {
   const [formData, setFormData] = useState({
@@ -24,7 +25,9 @@ const MedicalDiagnosisAI = () => {
 
   const fetchStatistics = async () => {
     try {
-      const response = await fetch(`${getMedicalApiBase()}/api/statistics`);
+      const response = await fetch(`${getMedicalApiBase()}/api/statistics`, {
+        headers: medicalAuthHeaders(),
+      });
       const data = await response.json();
       setStatistics(data);
     } catch (error) {
@@ -68,11 +71,10 @@ const MedicalDiagnosisAI = () => {
       // Gọi API /api/records để vừa predict vừa lưu luôn
       const response = await fetch(`${getMedicalApiBase()}/api/records`, {
         method: "POST",
-        headers: {
+        headers: medicalAuthHeaders({
           "Content-Type": "application/json",
-        },
+        }),
         body: JSON.stringify({
-          user_id: formData.userId,
           symptoms: symptomsArray,
           age: parseInt(formData.age),
           gender: formData.gender,

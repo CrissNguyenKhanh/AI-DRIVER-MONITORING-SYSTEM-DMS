@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { BrowserRouter as Router, Navigate, Routes, Route } from "react-router-dom";
 import "./App.css";
 
 import PatientStatistics from "./admin/PatientStatistics";
@@ -12,13 +12,22 @@ import VerifyPro from "./verify/verifypro";
 import Khanhregister from "./Khanhregister";
 
 import FaceDetect from "./systeamdetectface/face_detect";
+import { getStoredMedicalUser } from "./utils/authApi";
+
+function RequireAdmin({ children }) {
+  const user = getStoredMedicalUser();
+  const hasToken = Boolean(window.localStorage.getItem("token"));
+  return hasToken && user?.role === "admin" ? children : <Navigate to="/login" replace />;
+}
+
 function App() {
   return (
     <Router>
       <Routes>
         <Route path="/" element={<Khanhregister />} />
+        <Route path="/login" element={<Login />} />
         {/* Trang thống kê */}
-        <Route path="/admin" element={<PatientStatistics />} />
+        <Route path="/admin" element={<RequireAdmin><PatientStatistics /></RequireAdmin>} />
         {/* Trang Spam Detector */}
         <Route path="/spam" element={<MedicalDiagnosisAI />} />
 

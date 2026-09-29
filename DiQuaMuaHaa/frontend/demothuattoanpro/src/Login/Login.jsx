@@ -14,8 +14,7 @@ const Login = () => {
     email: '',      // Backend dùng email để login
     password: '',
     name: '',       // Backend dùng 'name' thay vì 'full_name'
-    phone: '',      // Backend có trường phone
-    role: 'user'
+    phone: ''       // Backend có trường phone
   });
 
   const handleChange = (e) => {
@@ -32,7 +31,7 @@ const Login = () => {
     setError('');
 
     try {
-      const endpoint = isLogin ? '/api/auth/login' : '/test5';
+      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
       
       // Chuẩn bị payload khớp với backend
       const payload = isLogin 
@@ -41,8 +40,7 @@ const Login = () => {
             name: formData.name, 
             email: formData.email, 
             phone: formData.phone, 
-            password: formData.password, 
-            role: formData.role 
+            password: formData.password
           };
 
       // Gọi API Flask (đảm bảo Backend đang chạy ở port 5000)
@@ -250,22 +248,6 @@ const Login = () => {
                     </button>
                   </div>
                 </div>
-
-                {/* Role Selection (Register only) */}
-                {!isLogin && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Vai trò</label>
-                    <select
-                      name="role"
-                      value={formData.role}
-                      onChange={handleChange}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                    >
-                      <option value="user">Người dùng (Bệnh nhân)</option>
-                      <option value="admin">Quản trị viên (Bác sĩ)</option>
-                    </select>
-                  </div>
-                )}
 
                 {/* Submit Button */}
                 <button
