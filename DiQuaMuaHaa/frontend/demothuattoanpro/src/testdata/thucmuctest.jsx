@@ -39,9 +39,12 @@ const DEFAULT_DRIVER_ID = "driver_001";
 const HISTORY_SIZE = 10;
 const CONSISTENT_FRAMES = 4;
 const MIN_PROB_FOR_LABEL = 0.6;
-const EAR_BLINK_THRESH = 0.21;
 const EAR_HISTORY = 90;
-const EYES_CLOSED_WARN_MS = 3000;
+const ATTENTION_API_INTERVAL_MS = 125;
+const ATTENTION_LANDMARK_INDICES = [
+  1, 33, 61, 133, 144, 152, 153, 158, 160, 263, 291, 362, 373, 380, 385,
+  387,
+];
 
 // ── PHONE — WebSocket YOLO, ~15fps ──────────────────────────
 const PHONE_WS_FPS = 15;
@@ -154,16 +157,6 @@ const HAND_CONNECTIONS = [
 function distPts(a, b) {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
 }
-function computeEAR(lm, eye) {
-  const p1 = lm[eye.p1],
-    p2 = lm[eye.p2],
-    p3 = lm[eye.p3],
-    p4 = lm[eye.p4],
-    p5 = lm[eye.p5],
-    p6 = lm[eye.p6];
-  if (!p1 || !p4) return 0.3;
-  return (distPts(p2, p6) + distPts(p3, p5)) / (2.0 * distPts(p1, p4) + 0.001);
-}
 function computePupilRadius(lm, irisIdx) {
   if (!lm[irisIdx[0]]) return 0;
   const c = lm[irisIdx[0]];
@@ -174,20 +167,43 @@ function computePupilRadius(lm, irisIdx) {
       .reduce((a, b) => a + b, 0) / 4
   );
 }
-function estimateHeadPose(lm) {
-  if (!lm || lm.length < 468) return { yaw: 0, pitch: 0, roll: 0 };
-  const nose = lm[1],
-    chin = lm[152],
-    lEye = lm[33],
-    rEye = lm[263];
-  const eyeMidX = (lEye.x + rEye.x) / 2;
-  const eyeWidth = Math.abs(rEye.x - lEye.x);
-  const yaw = ((nose.x - eyeMidX) / (eyeWidth + 0.001)) * 2.2;
-  const eyeMidY = (lEye.y + rEye.y) / 2;
-  const faceH = Math.abs(chin.y - eyeMidY) + 0.001;
-  const pitch = ((nose.y - eyeMidY) / faceH - 0.42) * 2.5;
-  const roll = Math.atan2(rEye.y - lEye.y, rEye.x - lEye.x);
-  return { yaw: -yaw, pitch: -pitch, roll: -roll };
+
+function emptyAttentionMetrics(reason = "waiting_for_face") {
+  return {
+    ear: { left: null, right: null, average: null },
+    eye_state: "UNKNOWN",
+    perclos: null,
+    perclos_observed_seconds: 0,
+    perclos_window_seconds: 30,
+    eye_closed_duration_seconds: 0,
+    head_pose: { yaw: null, pitch: null, roll: null, confidence: 0 },
+    direction: "UNKNOWN",
+    distraction: { state: "UNKNOWN", duration_seconds: 0 },
+    attention_state: "UNKNOWN",
+    confidence: 0,
+    reason,
+  };
+}
+
+function compactAttentionLandmarks(landmarks) {
+  if (!Array.isArray(landmarks) || !landmarks.length) return [];
+  return ATTENTION_LANDMARK_INDICES.flatMap((index) => {
+    const point = landmarks[index];
+    if (
+      !point ||
+      !Number.isFinite(point.x) ||
+      !Number.isFinite(point.y) ||
+      !Number.isFinite(point.z)
+    )
+      return [];
+    return [{ index, x: point.x, y: point.y, z: point.z }];
+  });
+}
+
+function createAttentionStreamId() {
+  const randomPart = globalThis.crypto?.randomUUID?.() ||
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  return `dms_${randomPart}`.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
 // ─────────────────────────────────────────────────────────
@@ -623,7 +639,12 @@ function SmokingFOMOOverlay({ smokingDetectionRef, landmarksRef, videoRef }) {
 // ─────────────────────────────────────────────────────────
 // FaceMeshOverlay
 // ─────────────────────────────────────────────────────────
-function FaceMeshOverlay({ landmarksRef, eyeDataRef, videoRef }) {
+function FaceMeshOverlay({
+  landmarksRef,
+  eyeDataRef,
+  attentionMetricsRef,
+  videoRef,
+}) {
   const canvasRef = useRef(null);
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -652,7 +673,8 @@ function FaceMeshOverlay({ landmarksRef, eyeDataRef, videoRef }) {
         i === 0 ? ctx.moveTo(mx(p.x), my(p.y)) : ctx.lineTo(mx(p.x), my(p.y));
       });
       ctx.closePath();
-      const blink = ear < EAR_BLINK_THRESH;
+      const threshold = attentionMetricsRef.current.thresholds?.ear_closed;
+      const blink = Number.isFinite(ear) && Number.isFinite(threshold) && ear < threshold;
       ctx.strokeStyle = blink ? "rgba(255,200,60,0.9)" : "rgba(0,200,255,0.75)";
       ctx.lineWidth = 1.2;
       ctx.stroke();
@@ -1001,7 +1023,12 @@ function EyeCanvas({ eyeDataRef, side }) {
   });
 }
 
-function WaveformCanvas({ earHistoryRef, side, color = "#1e90ff" }) {
+function WaveformCanvas({
+  earHistoryRef,
+  attentionMetricsRef,
+  side,
+  color = "#1e90ff",
+}) {
   const canvasRef = useRef(null);
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1025,7 +1052,9 @@ function WaveformCanvas({ earHistoryRef, side, color = "#1e90ff" }) {
         ctx.fillStyle = color;
         ctx.fillRect(x - bW / 2, H - bH, bW, bH);
       }
-      const ty = H - (EAR_BLINK_THRESH / 0.5) * H;
+      const threshold = attentionMetricsRef.current.thresholds?.ear_closed;
+      if (!Number.isFinite(threshold)) return;
+      const ty = H - (threshold / 0.5) * H;
       ctx.beginPath();
       ctx.setLineDash([3, 3]);
       ctx.moveTo(0, ty);
@@ -1152,9 +1181,10 @@ function Head3D({ poseRef }) {
     function animate() {
       rafId2 = requestAnimationFrame(animate);
       const p = poseRef.current;
-      cY += ((p.yaw || 0) - cY) * 0.12;
-      cP += ((p.pitch || 0) - cP) * 0.12;
-      cR += ((p.roll || 0) - cR) * 0.12;
+      const toRadians = Math.PI / 180;
+      cY += ((p.yaw || 0) * toRadians - cY) * 0.12;
+      cP += ((p.pitch || 0) * toRadians - cP) * 0.12;
+      cR += ((p.roll || 0) * toRadians - cR) * 0.12;
       headGroup.rotation.order = "YXZ";
       headGroup.rotation.y = cY;
       headGroup.rotation.x = cP;
@@ -1193,21 +1223,23 @@ export default function DriverMonitorDMS() {
   const faceMeshRef = useRef(null);
   const handsRef = useRef(null);
   const handLandmarksRef = useRef([]);
-  const poseRef = useRef({ yaw: 0, pitch: 0, roll: 0 });
+  const poseRef = useRef({ yaw: null, pitch: null, roll: null });
   const landmarksRef = useRef([]);
   const eyeDataRef = useRef({
-    left: { ear: 0.3, blinking: false, yaw: 0, pitch: 0, pupilR: 0 },
-    right: { ear: 0.3, blinking: false, yaw: 0, pitch: 0, pupilR: 0 },
+    left: { ear: null, blinking: false, yaw: 0, pitch: 0, pupilR: 0 },
+    right: { ear: null, blinking: false, yaw: 0, pitch: 0, pupilR: 0 },
   });
+  const attentionMetricsRef = useRef(emptyAttentionMetrics());
   const earHistoryRef = useRef({ left: [], right: [] });
   const blinkStateRef = useRef({ left: false, right: false });
   const blinkTimesRef = useRef([]);
   const blinkDurRef = useRef({ start: null, dur: 0 });
-  const eyesClosedSinceRef = useRef(null);
   const eyesClosedSecRef = useRef(0);
+  const drowsyMutedUntilRef = useRef(0);
   const audioCtxRef = useRef(null);
   const alarmIntervalRef = useRef(null);
   const vibrateIntervalRef = useRef(null);
+  const alarmKindRef = useRef(null);
 
   const phoneDetectionRef = useRef({ active: false, prob: 0, bbox: null });
   const phoneActiveFilteredRef = useRef(false);
@@ -1238,6 +1270,7 @@ export default function DriverMonitorDMS() {
   const prevPhoneAlertRef = useRef(null);
   const prevSmokingAlertRef = useRef(null);
   const prevDrowsyAlertRef = useRef(null);
+  const prevDistractionAlertRef = useRef(null);
   const prevHandOpenRef = useRef("");
   const prevHandCloseRef = useRef("");
   const prevHandQuickRef = useRef("");
@@ -1259,23 +1292,32 @@ export default function DriverMonitorDMS() {
   const [time, setTime] = useState(new Date());
   const [frameCount, setFrameCount] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
-  const [displayPose, setDisplayPose] = useState({ yaw: 0, pitch: 0, roll: 0 });
+  const [displayPose, setDisplayPose] = useState({
+    yaw: null,
+    pitch: null,
+    roll: null,
+  });
   const [displayEye, setDisplayEye] = useState({
     blinkRate: 0,
     blinkDur: 0,
-    pupilL: "33.5",
-    lYaw: "-11.8",
-    lPitch: "-21.6",
-    rYaw: "-19.9",
-    rPitch: "-25.1",
-    lX: "61.4",
-    lY: "3.9",
-    lZ: "-2.7",
-    rX: "63.2",
-    rY: "9.7",
-    rZ: "-3.3",
+    pupilL: "--",
+    lYaw: "--",
+    lPitch: "--",
+    rYaw: "--",
+    rPitch: "--",
+    lX: "--",
+    lY: "--",
+    lZ: "--",
+    rX: "--",
+    rY: "--",
+    rZ: "--",
   });
+  const [attentionMetrics, setAttentionMetrics] = useState(() =>
+    emptyAttentionMetrics(),
+  );
+  const [attentionError, setAttentionError] = useState("");
   const [drowsyAlert, setDrowsyAlert] = useState(null);
+  const [distractionAlert, setDistractionAlert] = useState(null);
   const [phoneActive, setPhoneActive] = useState(false);
   const [phoneAlert, setPhoneAlert] = useState(null);
   const [smokingActive, setSmokingActive] = useState(false); // state để trigger re-render icon
@@ -1304,6 +1346,7 @@ export default function DriverMonitorDMS() {
     phone: 0,
     smoking: 0,
     drowsy: 0,
+    distraction: 0,
   });
   const [sessionLogOpen, setSessionLogOpen] = useState(false);
   const [sessionLogLoading, setSessionLogLoading] = useState(false);
@@ -1321,7 +1364,13 @@ export default function DriverMonitorDMS() {
       prevPhoneAlertRef.current = null;
       prevSmokingAlertRef.current = null;
       prevDrowsyAlertRef.current = null;
-      setSessionAlertCounts({ phone: 0, smoking: 0, drowsy: 0 });
+      prevDistractionAlertRef.current = null;
+      setSessionAlertCounts({
+        phone: 0,
+        smoking: 0,
+        drowsy: 0,
+        distraction: 0,
+      });
       if (sid) {
         endDrivingSession(API_BASE, sid).catch(() => {});
       }
@@ -1353,6 +1402,7 @@ export default function DriverMonitorDMS() {
     prevPhoneAlertRef.current = phoneAlert;
     prevSmokingAlertRef.current = smokingAlert;
     prevDrowsyAlertRef.current = drowsyAlert;
+    prevDistractionAlertRef.current = distractionAlert;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ khi gán session mới
   }, [drivingSessionId, status]);
 
@@ -1384,7 +1434,21 @@ export default function DriverMonitorDMS() {
       });
     }
     prevDrowsyAlertRef.current = drowsyAlert;
-  }, [phoneAlert, smokingAlert, drowsyAlert, status]);
+
+    if (
+      distractionAlert !== null &&
+      prevDistractionAlertRef.current === null
+    ) {
+      recordDrivingAlert(API_BASE, sid, "distraction").then((r) => {
+        if (r.ok)
+          setSessionAlertCounts((c) => ({
+            ...c,
+            distraction: c.distraction + 1,
+          }));
+      });
+    }
+    prevDistractionAlertRef.current = distractionAlert;
+  }, [phoneAlert, smokingAlert, drowsyAlert, distractionAlert, status]);
 
   const refreshSessionLog = useCallback(async () => {
     setSessionLogLoading(true);
@@ -1428,14 +1492,19 @@ export default function DriverMonitorDMS() {
       osc.stop(ctx.currentTime + dur);
     } catch (_) {}
   }
-  function startAlarm() {
+  function startAlarm(kind = "general") {
     stopAlarm();
-    playBeep(880, 0.18, 0.7);
-    setTimeout(() => playBeep(660, 0.18, 0.7), 200);
+    alarmKindRef.current = kind;
+    const highPriority = kind === "high_risk" || kind === "drowsy";
+    const firstFrequency = highPriority ? 1040 : 820;
+    const secondFrequency = highPriority ? 760 : 620;
+    const intervalMs = highPriority ? 720 : 1050;
+    playBeep(firstFrequency, 0.18, 0.7);
+    setTimeout(() => playBeep(secondFrequency, 0.18, 0.7), 200);
     alarmIntervalRef.current = setInterval(() => {
-      playBeep(880, 0.18, 0.7);
-      setTimeout(() => playBeep(660, 0.18, 0.7), 200);
-    }, 900);
+      playBeep(firstFrequency, 0.18, 0.7);
+      setTimeout(() => playBeep(secondFrequency, 0.18, 0.7), 200);
+    }, intervalMs);
     if (navigator.vibrate) {
       navigator.vibrate([300, 150, 300, 150, 300]);
       vibrateIntervalRef.current = setInterval(
@@ -1445,6 +1514,7 @@ export default function DriverMonitorDMS() {
     }
   }
   function stopAlarm() {
+    alarmKindRef.current = null;
     if (alarmIntervalRef.current) {
       clearInterval(alarmIntervalRef.current);
       alarmIntervalRef.current = null;
@@ -1454,6 +1524,14 @@ export default function DriverMonitorDMS() {
       vibrateIntervalRef.current = null;
     }
     if (navigator.vibrate) navigator.vibrate(0);
+  }
+  function syncAlarm(kind) {
+    if (!kind) {
+      if (alarmIntervalRef.current) stopAlarm();
+      return;
+    }
+    if (!alarmIntervalRef.current || alarmKindRef.current !== kind)
+      startAlarm(kind);
   }
 
   // ── Owner identity gate callbacks (tách riêng khỏi thucmuctest) ──
@@ -1518,6 +1596,7 @@ export default function DriverMonitorDMS() {
   const handleIdentityLock = useCallback((reason) => {
     stopAlarm();
     setDrowsyAlert(null);
+    setDistractionAlert(null);
     setPhoneAlert(null);
     setSmokingAlert(null);
     const msg = String(reason || "ENGINE OFF: NOT OWNER");
@@ -1848,10 +1927,8 @@ export default function DriverMonitorDMS() {
           }
           const lm = results.multiFaceLandmarks[0];
           landmarksRef.current = lm;
-          poseRef.current = estimateHeadPose(lm);
-          const earL = computeEAR(lm, L_EYE),
-            earR = computeEAR(lm, R_EYE);
           const prL = computePupilRadius(lm, L_EYE.iris) * 100;
+          const prR = computePupilRadius(lm, R_EYE.iris) * 100;
           const leOX = (lm[L_EYE.outer].x + lm[L_EYE.inner].x) / 2,
             leOY = (lm[L_EYE.outer].y + lm[L_EYE.inner].y) / 2;
           const eyeSpan =
@@ -1862,55 +1939,29 @@ export default function DriverMonitorDMS() {
             reOY = (lm[R_EYE.outer].y + lm[R_EYE.inner].y) / 2;
           const rGY = ((lm[R_EYE.iris[0]].x - reOX) / eyeSpan) * 2,
             rGP = ((lm[R_EYE.iris[0]].y - reOY) / eyeSpan) * 2;
-          const now = Date.now();
-          const isBlinkL = earL < EAR_BLINK_THRESH,
-            isBlinkR = earR < EAR_BLINK_THRESH,
-            isBlink = isBlinkL && isBlinkR;
-          if (isBlink && !blinkStateRef.current.left) {
-            blinkTimesRef.current.push(now);
-            blinkDurRef.current.start = now;
-          }
-          if (
-            !isBlink &&
-            blinkStateRef.current.left &&
-            blinkDurRef.current.start
-          )
-            blinkDurRef.current.dur = (now - blinkDurRef.current.start) / 1000;
-          blinkStateRef.current = { left: isBlinkL, right: isBlinkR };
-          blinkTimesRef.current = blinkTimesRef.current.filter(
-            (t) => now - t < 60000,
-          );
-          if (isBlinkL && isBlinkR) {
-            if (eyesClosedSinceRef.current === null)
-              eyesClosedSinceRef.current = now;
-            eyesClosedSecRef.current =
-              (now - eyesClosedSinceRef.current) / 1000;
-          } else {
-            eyesClosedSinceRef.current = null;
-            eyesClosedSecRef.current = 0;
-          }
+          const previous = eyeDataRef.current;
+          const leftIris = lm[L_EYE.iris[0]];
+          const rightIris = lm[R_EYE.iris[0]];
           eyeDataRef.current = {
             left: {
-              ear: earL,
-              blinking: isBlinkL,
+              ...previous.left,
               yaw: lGY,
               pitch: lGP,
               pupilR: prL,
+              x: leftIris.x,
+              y: leftIris.y,
+              z: leftIris.z,
             },
             right: {
-              ear: earR,
-              blinking: isBlinkR,
+              ...previous.right,
               yaw: rGY,
               pitch: rGP,
-              pupilR: prL * 0.98,
+              pupilR: prR,
+              x: rightIris.x,
+              y: rightIris.y,
+              z: rightIris.z,
             },
           };
-          earHistoryRef.current.left = earHistoryRef.current.left
-            .slice(-(EAR_HISTORY - 1))
-            .concat([earL]);
-          earHistoryRef.current.right = earHistoryRef.current.right
-            .slice(-(EAR_HISTORY - 1))
-            .concat([earR]);
         });
         if (cancelled) {
           fm.close?.();
@@ -1961,22 +2012,29 @@ export default function DriverMonitorDMS() {
     const dispId = setInterval(() => {
       const p = poseRef.current;
       setDisplayPose({ yaw: p.yaw, pitch: p.pitch, roll: p.roll });
-      const ed = eyeDataRef.current,
-        now = Date.now();
+      const ed = eyeDataRef.current;
       setDisplayEye({
         blinkRate: blinkTimesRef.current.length,
         blinkDur: blinkDurRef.current.dur,
-        pupilL: ed.left.pupilR ? ed.left.pupilR.toFixed(1) : "33.5",
-        lYaw: ed.left.yaw ? (-ed.left.yaw * 18).toFixed(1) : "-11.8",
-        lPitch: ed.left.pitch ? (-ed.left.pitch * 18).toFixed(1) : "-21.6",
-        rYaw: ed.right.yaw ? (-ed.right.yaw * 18).toFixed(1) : "-19.9",
-        rPitch: ed.right.pitch ? (-ed.right.pitch * 18).toFixed(1) : "-25.1",
-        lX: (62 + Math.sin(now / 1100) * 3).toFixed(1),
-        lY: (3.9 + Math.cos(now / 900) * 1.2).toFixed(1),
-        lZ: (-2.7 + Math.sin(now / 1300) * 0.8).toFixed(1),
-        rX: (63.2 + Math.cos(now / 1200) * 2.8).toFixed(1),
-        rY: (9.7 + Math.sin(now / 800) * 1.5).toFixed(1),
-        rZ: (-3.3 + Math.cos(now / 1400) * 0.9).toFixed(1),
+        pupilL: ed.left.pupilR ? ed.left.pupilR.toFixed(1) : "--",
+        lYaw: Number.isFinite(ed.left.yaw)
+          ? (-ed.left.yaw * 18).toFixed(1)
+          : "--",
+        lPitch: Number.isFinite(ed.left.pitch)
+          ? (-ed.left.pitch * 18).toFixed(1)
+          : "--",
+        rYaw: Number.isFinite(ed.right.yaw)
+          ? (-ed.right.yaw * 18).toFixed(1)
+          : "--",
+        rPitch: Number.isFinite(ed.right.pitch)
+          ? (-ed.right.pitch * 18).toFixed(1)
+          : "--",
+        lX: Number.isFinite(ed.left.x) ? (ed.left.x * 100).toFixed(1) : "--",
+        lY: Number.isFinite(ed.left.y) ? (ed.left.y * 100).toFixed(1) : "--",
+        lZ: Number.isFinite(ed.left.z) ? (ed.left.z * 100).toFixed(1) : "--",
+        rX: Number.isFinite(ed.right.x) ? (ed.right.x * 100).toFixed(1) : "--",
+        rY: Number.isFinite(ed.right.y) ? (ed.right.y * 100).toFixed(1) : "--",
+        rZ: Number.isFinite(ed.right.z) ? (ed.right.z * 100).toFixed(1) : "--",
       });
       setFrameCount((f) => f);
       // ── smoking continuous timer ──
@@ -1990,7 +2048,6 @@ export default function DriverMonitorDMS() {
       }
       if (smokingSecRef.current >= SMOKING_WARN_MS / 1000) {
         setSmokingAlert(smokingSecRef.current);
-        if (!alarmIntervalRef.current) startAlarm();
       } else {
         setSmokingAlert(null);
       }
@@ -2004,23 +2061,43 @@ export default function DriverMonitorDMS() {
       }
       if (phoneSecRef.current >= PHONE_WARN_MS / 1000) {
         setPhoneAlert(phoneSecRef.current);
-        if (!alarmIntervalRef.current) startAlarm();
       } else {
         setPhoneAlert(null);
       }
-      // ── drowsy timer (priority cao nhất) ──
-      const closedSec = eyesClosedSecRef.current;
-      if (closedSec >= EYES_CLOSED_WARN_MS / 1000) {
-        setDrowsyAlert(closedSec);
-        if (!alarmIntervalRef.current) startAlarm();
-      } else {
-        setDrowsyAlert(null);
-        // stop alarm chỉ khi cả 3 đều không active
-        const anyAlert =
-          phoneSecRef.current >= PHONE_WARN_MS / 1000 ||
-          smokingSecRef.current >= SMOKING_WARN_MS / 1000;
-        if (alarmIntervalRef.current && !anyAlert) stopAlarm();
-      }
+      // Backend attention is the single source of truth for these two alerts.
+      const attention = attentionMetricsRef.current;
+      if (
+        attention.attention_state !== "DROWSY" &&
+        attention.attention_state !== "HIGH_RISK"
+      )
+        drowsyMutedUntilRef.current = 0;
+      const drowsyActive =
+        (attention.attention_state === "DROWSY" ||
+          attention.attention_state === "HIGH_RISK") &&
+        Date.now() >= drowsyMutedUntilRef.current;
+      const distractionActive =
+        attention.distraction?.state === "DISTRACTED" ||
+        attention.attention_state === "DISTRACTED" ||
+        attention.attention_state === "HIGH_RISK";
+      const drowsyEvidenceSeconds = Math.max(
+        attention.eye_closed_duration_seconds || 0,
+        attention.perclos_observed_seconds || 0,
+      );
+      const distractionSeconds =
+        attention.distraction?.duration_seconds || 0;
+      setDrowsyAlert(drowsyActive ? drowsyEvidenceSeconds : null);
+      setDistractionAlert(distractionActive ? distractionSeconds : null);
+
+      let alarmKind = null;
+      if (attention.attention_state === "HIGH_RISK" && drowsyActive)
+        alarmKind = "high_risk";
+      else if (drowsyActive) alarmKind = "drowsy";
+      else if (phoneSecRef.current >= PHONE_WARN_MS / 1000)
+        alarmKind = "phone";
+      else if (smokingSecRef.current >= SMOKING_WARN_MS / 1000)
+        alarmKind = "smoking";
+      else if (distractionActive) alarmKind = "distraction";
+      syncAlarm(alarmKind);
     }, 250);
     return () => {
       cancelled = true;
@@ -2066,6 +2143,123 @@ export default function DriverMonitorDMS() {
     };
   }, [status]);
 
+  // Compact FaceMesh transport; backend owns EAR/PERCLOS/head-pose/attention.
+  useEffect(() => {
+    if (status !== "active") {
+      const unknown = emptyAttentionMetrics("camera_inactive");
+      attentionMetricsRef.current = unknown;
+      setAttentionMetrics(unknown);
+      setAttentionError("");
+      return;
+    }
+    let cancelled = false;
+    let timerId;
+    let firstSample = true;
+    const streamId = createAttentionStreamId();
+    const controller = new AbortController();
+
+    function applyMetrics(data) {
+      attentionMetricsRef.current = data;
+      setAttentionMetrics(data);
+      setAttentionError("");
+      poseRef.current = {
+        yaw: data.head_pose?.yaw ?? null,
+        pitch: data.head_pose?.pitch ?? null,
+        roll: data.head_pose?.roll ?? null,
+      };
+      eyesClosedSecRef.current = data.eye_closed_duration_seconds || 0;
+
+      const isClosed = data.eye_state === "CLOSED";
+      const wasClosed =
+        blinkStateRef.current.left && blinkStateRef.current.right;
+      const now = Date.now();
+      if (isClosed && !wasClosed) {
+        blinkTimesRef.current.push(now);
+        blinkDurRef.current.start = now;
+      } else if (
+        data.eye_state === "OPEN" &&
+        wasClosed &&
+        blinkDurRef.current.start
+      ) {
+        blinkDurRef.current.dur = (now - blinkDurRef.current.start) / 1000;
+        blinkDurRef.current.start = null;
+      } else if (data.eye_state === "UNKNOWN") {
+        blinkDurRef.current.start = null;
+      }
+      blinkStateRef.current = { left: isClosed, right: isClosed };
+      blinkTimesRef.current = blinkTimesRef.current.filter(
+        (timestamp) => now - timestamp < 60000,
+      );
+
+      const previous = eyeDataRef.current;
+      eyeDataRef.current = {
+        left: {
+          ...previous.left,
+          ear: data.ear?.left ?? null,
+          blinking: isClosed,
+        },
+        right: {
+          ...previous.right,
+          ear: data.ear?.right ?? null,
+          blinking: isClosed,
+        },
+      };
+      if (Number.isFinite(data.ear?.left)) {
+        earHistoryRef.current.left = earHistoryRef.current.left
+          .slice(-(EAR_HISTORY - 1))
+          .concat([data.ear.left]);
+      }
+      if (Number.isFinite(data.ear?.right)) {
+        earHistoryRef.current.right = earHistoryRef.current.right
+          .slice(-(EAR_HISTORY - 1))
+          .concat([data.ear.right]);
+      }
+    }
+
+    async function loop() {
+      if (cancelled) return;
+      const video = videoRef.current;
+      const compact = compactAttentionLandmarks(landmarksRef.current);
+      try {
+        const response = await fetch(`${API_BASE}/api/dms/attention`, {
+          method: "POST",
+          signal: controller.signal,
+          headers: dmsAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            stream_id: streamId,
+            timestamp_ms: Date.now(),
+            frame_width: video?.videoWidth || 640,
+            frame_height: video?.videoHeight || 480,
+            face_detected: compact.length === ATTENTION_LANDMARK_INDICES.length,
+            landmarks: compact,
+            reset: firstSample,
+          }),
+        });
+        firstSample = false;
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.error || "Attention API failed");
+        if (!cancelled) applyMetrics(data);
+      } catch (error) {
+        if (!cancelled && error?.name !== "AbortError") {
+          const unknown = emptyAttentionMetrics("attention_backend_unavailable");
+          attentionMetricsRef.current = unknown;
+          setAttentionMetrics(unknown);
+          poseRef.current = { yaw: null, pitch: null, roll: null };
+          eyesClosedSecRef.current = 0;
+          setAttentionError(error?.message || "Attention API unavailable");
+        }
+      }
+      if (!cancelled) timerId = setTimeout(loop, ATTENTION_API_INTERVAL_MS);
+    }
+
+    loop();
+    return () => {
+      cancelled = true;
+      controller.abort();
+      clearTimeout(timerId);
+    };
+  }, [status]);
+
   function startWebcam() {
     return cameraRef.current?.start();
   }
@@ -2074,11 +2268,16 @@ export default function DriverMonitorDMS() {
     landmarksRef.current = [];
     handLandmarksRef.current = [];
     setStatus("idle");
-    poseRef.current = { yaw: 0, pitch: 0, roll: 0 };
+    const unknown = emptyAttentionMetrics("camera_stopped");
+    attentionMetricsRef.current = unknown;
+    setAttentionMetrics(unknown);
+    setAttentionError("");
+    poseRef.current = { yaw: null, pitch: null, roll: null };
     stopAlarm();
     setDrowsyAlert(null);
-    eyesClosedSinceRef.current = null;
+    setDistractionAlert(null);
     eyesClosedSecRef.current = 0;
+    drowsyMutedUntilRef.current = 0;
     phoneDetectionRef.current = { active: false, prob: 0, bbox: null };
     phoneActiveFilteredRef.current = false;
     phoneOnStreakRef.current = 0;
@@ -2330,21 +2529,38 @@ export default function DriverMonitorDMS() {
   const currentLabel = smoothedLabel;
   const info = LABEL_MAP[currentLabel] || LABEL_MAP.unknown;
   const isAlert = info.level === "risk" || info.level === "warning";
-  const yDeg = ((displayPose.yaw * 180) / Math.PI).toFixed(1);
-  const pDeg = ((displayPose.pitch * 180) / Math.PI).toFixed(1);
-  const rDeg = ((displayPose.roll * 180) / Math.PI).toFixed(1);
+  const yDeg = Number.isFinite(displayPose.yaw)
+    ? displayPose.yaw.toFixed(1)
+    : "--";
+  const pDeg = Number.isFinite(displayPose.pitch)
+    ? displayPose.pitch.toFixed(1)
+    : "--";
+  const rDeg = Number.isFinite(displayPose.roll)
+    ? displayPose.roll.toFixed(1)
+    : "--";
+  const attentionState = attentionMetrics.attention_state || "UNKNOWN";
+  const attentionColor =
+    attentionState === "NORMAL"
+      ? "#00e578"
+      : attentionState === "UNKNOWN"
+        ? "#7a8da6"
+        : attentionState === "HIGH_RISK"
+          ? "#ff1a1a"
+          : "#ffc940";
+  const perclosText = Number.isFinite(attentionMetrics.perclos)
+    ? `${(attentionMetrics.perclos * 100).toFixed(1)}%`
+    : "--";
   const phoneIconActive = status === "active" && phoneActive;
   const smokingIconActive = status === "active" && SMOKING_ENABLED && smokingActive;
   const activeIcons = STATUS_ICONS.map((ic) => {
     let active = false;
     if (ic.id === "camera") active = status === "active";
-    if (ic.id === "attentive") active = currentLabel === "safe";
+    if (ic.id === "attentive") active = attentionState === "NORMAL";
     if (ic.id === "awake")
       active =
         status === "active" &&
-        currentLabel !== "drowsy" &&
-        currentLabel !== "yawning" &&
-        !drowsyAlert;
+        attentionState !== "DROWSY" &&
+        attentionState !== "HIGH_RISK";
     if (ic.id === "seatbelt") active = true;
     if (ic.id === "cabin") active = cabinLightsOn || cabinAcOn;
     if (ic.id === "phone") active = phoneIconActive;
@@ -2468,6 +2684,74 @@ export default function DriverMonitorDMS() {
                 </div>
               </React.Fragment>
             ))}
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+              gap: 3,
+              flexShrink: 0,
+            }}
+          >
+            {[
+              {
+                label: "EAR L / R",
+                value:
+                  Number.isFinite(attentionMetrics.ear?.left) &&
+                  Number.isFinite(attentionMetrics.ear?.right)
+                    ? `${attentionMetrics.ear.left.toFixed(3)} / ${attentionMetrics.ear.right.toFixed(3)}`
+                    : "-- / --",
+              },
+              { label: "Eye", value: attentionMetrics.eye_state || "UNKNOWN" },
+              { label: "PERCLOS", value: perclosText },
+              { label: "Direction", value: attentionMetrics.direction || "UNKNOWN" },
+              {
+                label: "Distraction",
+                value: attentionMetrics.distraction?.state || "UNKNOWN",
+              },
+              { label: "Attention", value: attentionState },
+            ].map(({ label, value }) => (
+              <div
+                key={label}
+                title={attentionError || attentionMetrics.reason || ""}
+                style={{
+                  minWidth: 0,
+                  padding: "3px 4px",
+                  borderRadius: 3,
+                  border: "1px solid #17324b",
+                  background: "#07131f",
+                  textAlign: "center",
+                }}
+              >
+                <div style={{ fontSize: 8, color: "#54728d" }}>{label}</div>
+                <div
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    fontFamily: "monospace",
+                    fontSize: 10,
+                    fontWeight: label === "Attention" ? 700 : 500,
+                    color: label === "Attention" ? attentionColor : "#8fc4e8",
+                  }}
+                >
+                  {value}
+                </div>
+              </div>
+            ))}
+            {attentionError && (
+              <div
+                role="status"
+                style={{
+                  gridColumn: "1 / -1",
+                  color: "#ff9a9a",
+                  fontSize: 8,
+                  textAlign: "center",
+                }}
+              >
+                Attention backend unavailable — state is UNKNOWN
+              </div>
+            )}
           </div>
           <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
             {[
@@ -2701,6 +2985,7 @@ export default function DriverMonitorDMS() {
               >
                 <WaveformCanvas
                   earHistoryRef={earHistoryRef}
+                  attentionMetricsRef={attentionMetricsRef}
                   side={side}
                   color="#1e90ff"
                 />
@@ -2868,6 +3153,7 @@ export default function DriverMonitorDMS() {
             <FaceMeshOverlay
               landmarksRef={landmarksRef}
               eyeDataRef={eyeDataRef}
+              attentionMetricsRef={attentionMetricsRef}
               videoRef={videoRef}
             />
           )}
@@ -3005,7 +3291,8 @@ export default function DriverMonitorDMS() {
                 </div>
                 <div style={{ fontSize: 11, color: "#a8d8ff", marginTop: 2 }}>
                   Cảnh báo (lần phát hiện): 📱 {sessionAlertCounts.phone} · 🚬{" "}
-                  {sessionAlertCounts.smoking} · 😴 {sessionAlertCounts.drowsy}
+                  {sessionAlertCounts.smoking} · 😴 {sessionAlertCounts.drowsy} ·
+                  👀 {sessionAlertCounts.distraction}
                 </div>
                 <button
                   type="button"
@@ -3122,6 +3409,36 @@ export default function DriverMonitorDMS() {
                   : "… VERIFYING OWNER"}
             </div>
           )}
+
+          {distractionAlert !== null &&
+            status === "active" &&
+            drowsyAlert === null && (
+              <div
+                role="alert"
+                style={{
+                  position: "absolute",
+                  top: 88,
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  zIndex: 17,
+                  minWidth: 260,
+                  padding: "10px 18px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(255,185,40,0.85)",
+                  background: "rgba(45,28,0,0.9)",
+                  color: "#ffd166",
+                  textAlign: "center",
+                  boxShadow: "0 0 18px rgba(255,170,30,0.28)",
+                }}
+              >
+                <div style={{ fontWeight: 800, letterSpacing: "0.08em" }}>
+                  DRIVER ATTENTION: {attentionMetrics.direction}
+                </div>
+                <div style={{ marginTop: 2, fontSize: 11, color: "#ffe4a3" }}>
+                  Sustained off-road head pose {distractionAlert.toFixed(1)}s
+                </div>
+              </div>
+            )}
 
           {/* Drowsy alert */}
           {drowsyAlert !== null && status === "active" && (
@@ -3256,7 +3573,7 @@ export default function DriverMonitorDMS() {
                   pointerEvents: "none",
                 }}
               >
-                Tài xế nhắm mắt quá lâu — Hãy dừng xe và nghỉ ngơi!
+                Mắt nhắm kéo dài hoặc PERCLOS cao — Hãy dừng xe và nghỉ ngơi!
               </div>
               <div
                 style={{
@@ -3286,7 +3603,7 @@ export default function DriverMonitorDMS() {
                       marginBottom: 2,
                     }}
                   >
-                    THỜI GIAN NHẮM MẮT
+                    THỜI GIAN BẰNG CHỨNG
                   </span>
                   <span
                     style={{
@@ -3350,8 +3667,8 @@ export default function DriverMonitorDMS() {
                 onClick={() => {
                   stopAlarm();
                   setDrowsyAlert(null);
-                  eyesClosedSinceRef.current = null;
                   eyesClosedSecRef.current = 0;
+                  drowsyMutedUntilRef.current = Date.now() + 5000;
                 }}
                 style={{
                   padding: "8px 28px",

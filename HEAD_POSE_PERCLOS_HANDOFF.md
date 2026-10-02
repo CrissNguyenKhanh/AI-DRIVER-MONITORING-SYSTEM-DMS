@@ -34,6 +34,16 @@ alert/session integration without changing ADAS or existing DMS detectors.
   incomplete landmarks, and solvePnP failure return `UNKNOWN` rather than `FORWARD`.
 - Added backward-compatible `distraction` driving-session alert type.
 - Added deterministic offline unit/API coverage for the backend analysis contract.
+- Removed duplicate frontend EAR and heuristic head-pose calculations.
+- Added an authenticated compact landmark loop targeting 8 FPS; one request carries
+  16 normalized points instead of another encoded webcam image.
+- Added camera/session stream reset, abort cleanup, face-loss handling, and explicit
+  `UNKNOWN` UI behavior when the attention backend is unavailable.
+- Reused the existing DMS page, FaceMesh instance, alarm/vibration output, and driving
+  session flow; no page redesign or duplicate WebSocket channel was introduced.
+- Added compact EAR/eye/PERCLOS/pose/direction/distraction/attention display.
+- Added alarm priority (`HIGH_RISK`, drowsy, phone/smoking, distraction) and debounced
+  null-to-active session logging for the new `distraction` alert type.
 
 ## Current Architecture
 
@@ -75,7 +85,8 @@ Backend response contract (`schema_version: 1`):
 
 ## Commits Created
 
-Pending first local commit for the completed backend unit.
+- `f92de68 feat(dms): add head pose and perclos analysis`
+- Frontend logical unit is implemented and awaiting its local commit.
 
 ## Tests Run
 
@@ -83,6 +94,12 @@ Pending first local commit for the completed backend unit.
   - 11 tests passed.
 - `python -m unittest discover -s tests -v`
   - 58 backend tests passed, including ADAS/auth/database/hardening regressions.
+- `VITE_API_BASE=https://api.example.com npm run build`
+  - Production build passed; existing bundle-size and stale browser-data warnings only.
+- `npx eslint src/testdata/thucmuctest.jsx`
+  - Reports the same baseline 17 errors / 11 warnings as commit `f92de68`.
+  - Comparison was run by piping the pre-frontend file from Git into ESLint; this
+    feature introduced no additional scoped lint findings.
 
 ## Parameters / Thresholds
 
@@ -104,21 +121,23 @@ Pending first local commit for the completed backend unit.
   intervals; it never assumes missing time was open or closed.
 - Existing frontend contains unrelated locally rendered gaze/pupil panels; this unit
   only centralizes the requested EAR/head-pose/attention metrics.
+- The legacy monolithic DMS JSX file has 17 pre-existing scoped ESLint errors and 11
+  hook warnings; the exact counts are unchanged by this feature.
+- Production build requires `VITE_API_BASE`; an initial build without it correctly
+  failed the repository's configuration guard, then passed with an HTTPS test origin.
 
 ## Work In Progress
 
-Frontend integration of compact landmark sampling, returned metrics, reset behavior,
-alert priority, and debounced distraction session events.
+Regression verification, measured local backend performance, documentation finalization,
+and the manual webcam checklist. Physical camera behavior remains unvalidated.
 
 ## Next Exact Steps
 
-1. Commit the tested backend logical unit locally.
-2. Remove duplicate frontend EAR/head-pose calculations.
-3. Add the authenticated 8 FPS compact landmark loop and robust lifecycle reset.
-4. Render EAR, eye state, PERCLOS, angles, direction, and attention compactly.
-5. Add distraction alert priority and one transition event per session occurrence.
-6. Run frontend build/lint plus full backend regression and performance measurement.
-7. Expand this handoff with the manual webcam checklist and final evidence.
+1. Review and commit the frontend logical unit locally.
+2. Re-run full backend tests and the production frontend build from committed state.
+3. Measure pure analyzer throughput and representative HTTP endpoint latency locally.
+4. Verify diff scope, branch state, commit history, and absence of generated artifacts.
+5. Finalize this handoff with exact manual camera steps, limitations, and readiness.
 
 ## Do Not Redo
 
