@@ -86,7 +86,9 @@ Backend response contract (`schema_version: 1`):
 ## Commits Created
 
 - `f92de68 feat(dms): add head pose and perclos analysis`
-- Frontend logical unit is implemented and awaiting its local commit.
+- `90b6552 feat(dms-ui): integrate attention metrics and alerts`
+- Final verification/documentation commit will be recorded in Git history after this
+  file is finalized.
 
 ## Tests Run
 
@@ -95,11 +97,22 @@ Backend response contract (`schema_version: 1`):
 - `python -m unittest discover -s tests -v`
   - 58 backend tests passed, including ADAS/auth/database/hardening regressions.
 - `VITE_API_BASE=https://api.example.com npm run build`
-  - Production build passed; existing bundle-size and stale browser-data warnings only.
+  - Production build passed twice; existing bundle-size and stale browser-data
+    warnings only. No dependencies were updated or downloaded.
 - `npx eslint src/testdata/thucmuctest.jsx`
   - Reports the same baseline 17 errors / 11 warnings as commit `f92de68`.
   - Comparison was run by piping the pre-frontend file from Git into ESLint; this
     feature introduced no additional scoped lint findings.
+
+Measured local performance (synthetic valid landmarks, Windows workstation):
+
+- Pure analyzer including solvePnP, smoothing, and PERCLOS, 500 samples:
+  p50 0.190ms, p95 0.225ms, mean 0.187ms, about 5,352 samples/s.
+- Flask test client including JSON request/response and auth stub, 300 samples:
+  p50 0.770ms, p95 1.015ms, mean 0.817ms; all responses HTTP 200.
+- Browser transport target is 8 requests/s and 16 landmarks/request, so measured
+  backend compute headroom is well above the intended demo cadence.
+- Measurements exclude real network latency, browser FaceMesh cost, and camera FPS.
 
 ## Parameters / Thresholds
 
@@ -125,19 +138,24 @@ Backend response contract (`schema_version: 1`):
   hook warnings; the exact counts are unchanged by this feature.
 - Production build requires `VITE_API_BASE`; an initial build without it correctly
   failed the repository's configuration guard, then passed with an HTTPS test origin.
+- Head direction labels use camera-space solvePnP signs. Left/right/up/down must be
+  confirmed on the target mirrored webcam presentation before release.
+- No clinical, autonomous-driving, steering, braking, throttle, or CAN-bus behavior
+  is implemented or claimed; this remains a driver-monitoring warning aid.
 
 ## Work In Progress
 
-Regression verification, measured local backend performance, documentation finalization,
-and the manual webcam checklist. Physical camera behavior remains unvalidated.
+Code work and automated verification are complete. Physical webcam validation is the
+only outstanding release check and cannot be performed in this terminal environment.
 
 ## Next Exact Steps
 
-1. Review and commit the frontend logical unit locally.
-2. Re-run full backend tests and the production frontend build from committed state.
-3. Measure pure analyzer throughput and representative HTTP endpoint latency locally.
-4. Verify diff scope, branch state, commit history, and absence of generated artifacts.
-5. Finalize this handoff with exact manual camera steps, limitations, and readiness.
+1. Run the manual webcam checklist below on the target desk/laptop camera.
+2. Calibrate bounded environment thresholds only if observed direction signs or neutral
+   face angles are consistently biased; do not change code during the validation run.
+3. Re-run backend tests and frontend build if calibration changes deployment values.
+4. Push this branch only after reviewing the three local commits; do not merge before
+   the physical webcam checklist passes.
 
 ## Do Not Redo
 
@@ -148,5 +166,26 @@ and the manual webcam checklist. Physical camera behavior remains unvalidated.
 
 ## Manual Tests Required
 
-MANUAL TEST REQUIRED: desk/laptop webcam validation for forward, brief/sustained
-head turns, up/down, normal blink, brief/prolonged closure, face loss, and recovery.
+MANUAL TEST REQUIRED: use a stationary desk/laptop setup, never a moving vehicle.
+
+1. Look forward for at least 10s: pose should settle near neutral, direction should be
+   `FORWARD`, eye state `OPEN`, attention `NORMAL`, and no alarm should sound.
+2. Turn left and right for less than 2s each: direction should change, distraction
+   should show `SHORT_GLANCE`, and no distraction session event should be recorded.
+3. Hold left and right separately beyond 2s: `DISTRACTED` should appear once per event,
+   the compact warning/audio should activate, then clear after returning forward.
+4. Repeat looking up and down, verifying camera-space labels; record any mirrored-axis
+   mismatch before changing thresholds or signs.
+5. Blink normally for 30s: EAR waveform/blink count should react without producing a
+   prolonged-closure alert; PERCLOS should remain below 40%.
+6. Close both eyes for at least 3s while stationary: eye state should be `CLOSED`, then
+   attention `DROWSY`; verify one session alert and higher-priority audio.
+7. Alternate repeated closures over the 30s window: verify timestamp PERCLOS rises and
+   crosses 40% based on observed time rather than frame count.
+8. Combine sustained head-away with drowsiness: verify `HIGH_RISK` wins alarm priority.
+9. Cover/leave the camera view: EAR/pose/direction/attention must become `UNKNOWN`, not
+   zero/forward; uncover and verify clean recovery without carrying missing time.
+10. Stop and restart the camera/session: histories and timers must reset, alarms must
+    stop, and the new stream must not inherit PERCLOS or distraction duration.
+
+Current readiness: **READY FOR CODE MERGE — MANUAL WEBCAM VALIDATION STILL REQUIRED**.
