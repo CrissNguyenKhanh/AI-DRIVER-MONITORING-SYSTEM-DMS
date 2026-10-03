@@ -93,7 +93,8 @@ Semantic gesture accuracy requires physical webcam validation.
 
 ## Commits Created
 
-Pending local logical commits; no push/PR/merge.
+- `6108d16 fix(hand): restore compatible hand model artifact`
+- Focused test and final validation commits pending; no push/PR/merge.
 
 ## Next Exact Steps
 
