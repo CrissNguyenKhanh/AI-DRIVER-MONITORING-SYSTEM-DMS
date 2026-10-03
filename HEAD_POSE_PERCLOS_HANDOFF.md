@@ -10,7 +10,7 @@
 
 ## Base Commit
 
-`9ad81da` (`main` and `origin/main`, ADAS PR #9 merged)
+Feature base: `9ad81da`; `origin/main` is now PR #10 merge `e0b7efb`; local `main` remains at `9ad81da`.
 
 ## Current Goal
 
@@ -188,4 +188,63 @@ MANUAL TEST REQUIRED: use a stationary desk/laptop setup, never a moving vehicle
 10. Stop and restart the camera/session: histories and timers must reset, alarms must
     stop, and the new stream must not inherit PERCLOS or distraction duration.
 
-Current readiness: **READY FOR CODE MERGE — MANUAL WEBCAM VALIDATION STILL REQUIRED**.
+## Runtime Smoke Test
+
+### Dirty Test Resolution
+The two edits in `backend/tests/test_auth.py` were accidental identifier/environment-key
+corruption. Only that file was restored; its 9 focused tests passed.
+
+### Environment
+Root `.venv`: Python 3.11.9. Node 22.16.0 / npm 10.9.2. Existing imports passed;
+pip was repaired with `ensurepip` and pinned `onnxruntime==1.19.2` was installed locally.
+
+### Backend Startup
+Eventlet runs at `http://127.0.0.1:8000` (launcher/listener PID 20556/31516); root and `/health` return 200.
+
+### Database
+Local MySQL/XAMPP is listening on 3306; schema `diquamuaha` is reachable. `/api/ping-db`
+returned HTTP 200 with backend `mysql`.
+
+### Admin Authentication
+A random temporary secret created an admin session; `/api/auth/me` returned `admin`; no secret or token was persisted or printed.
+
+### Enrollment Flow
+One-time enrollment created a disposable driver whose token resolved through `/api/auth/me` and could list driving sessions.
+
+### One-Time Code Reuse
+Reusing the consumed enrollment code returned HTTP 401 with the expected invalid/
+expired response.
+
+### DMS Runtime
+Unauthenticated attention was rejected (401), invalid input was rejected (400), and an
+authenticated face-missing reset returned HTTP 200 with conservative `UNKNOWN` values.
+
+### ADAS Runtime
+Authenticated black-frame processing returned HTTP 200, `simulation_only: true`,
+decision `UNKNOWN`, lane `not_detected`, and an available road-object detector.
+
+### Frontend Runtime
+Vite is running at `https://127.0.0.1:5173` (npm PID 29920, listener PID 19648).
+`/`, `/test3`, `/test5`, `/adas-simulation`, and proxied `/health` returned HTTP 200.
+No dedicated admin enrollment-code UI exists; the backend admin flow is operational.
+
+### Automated Tests
+Backend: 58/58 passed. Frontend Node tests: 16/16 passed. Production build passed.
+Feature-scoped lint passed; repository lint retains 39 errors/17 warnings, including
+the unchanged DMS baseline of 17 errors/11 warnings.
+
+### Manual Validation Remaining
+Browser automation had no browser available. Physical webcam pose/PERCLOS, camera
+permission, and real road-video UI checks remain manual; no input was fabricated.
+
+### Runtime Issues Fixed
+Repaired missing pip in the existing venv and installed the already-pinned optional
+ONNX runtime. No tracked application source or model artifact was changed.
+
+### Next Exact Steps
+Run the stationary webcam checklist, validate a real road video on the simulation page,
+and replace/re-export `hand_model.pkl`; its serialized NumPy BitGenerator is incompatible.
+Smoking remains disabled by design because its optional model is absent.
+
+Current readiness: **NO — BLOCKER REMAINS** (hand-model artifact compatibility and
+physical webcam/browser validation). Note that `origin/main` already contains PR #10.
