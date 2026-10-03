@@ -82,24 +82,40 @@ scikit-learn 1.7.2, joblib 1.4.2, source hash, and explicit re-export action.
   Hands all usable.
 - Existing hardening tests: 14 passed.
 - New focused hand tests: 4 passed.
+- Full backend regression: 62 passed.
+- Frontend Node regression: 16 passed.
+- Frontend production build: passed; existing bundle-size/browser-data warnings only.
+- `git diff --check`: passed.
 
 ## Runtime Validation
 
-Fresh backend process and live endpoint/health validation remain pending.
+Fresh eventlet backend runs at `http://127.0.0.1:8000` (launcher/listener PID
+31124/32228). Before trigger, health reported `present=true, loaded=false, enabled=true`.
+Wrong vector length returned 400; a tracked `no_sign` vector returned 200 with five
+finite scores; malformed base64 returned 400; a valid black no-hand JPEG returned 200
+`no_sign`. Repeat inference succeeded without reload. Health then reported hand
+`present=true, loaded=true, enabled=true`; server logs contain no artifact traceback.
+
+Measured process working set was 247,267,328 bytes before and 447,787,008 after the
+complete lazy landmark/FaceMesh/Hands stack loaded. This delta is not artifact-only.
 
 ## Known Limitations
 
-Semantic gesture accuracy requires physical webcam validation.
+No physical webcam gesture was available. CSV fixtures validate preserved model output,
+not camera-domain accuracy. The exact creator NumPy minor was absent from the original
+artifact; its NumPy 2.x reducer format is proven, and re-export used NumPy 2.2.6.
 
 ## Commits Created
 
 - `6108d16 fix(hand): restore compatible hand model artifact`
-- Focused test and final validation commits pending; no push/PR/merge.
+- `0d5b7ae test(hand): cover artifact loading and inference`
+- `docs(hand): record artifact compatibility validation` (this commit)
+- No push/PR/merge performed.
 
 ## Next Exact Steps
 
-Commit the compatibility unit, commit focused tests, run full backend/frontend
-regressions, then start a fresh backend and validate both hand endpoints plus health.
+Run the physical webcam checklist below, review the three local commits, then push the
+feature branch. Do not merge based on automated gesture accuracy alone.
 
 ## Do Not Redo
 
