@@ -53,6 +53,8 @@ from data.auth import (
 )
 from data.adas import ADASPipeline, load_adas_config
 from data.adas.frame_codec import decode_frame as decode_adas_frame
+from data.dms import AttentionRegistry, load_dms_attention_config
+from data.dms.attention import parse_landmark_payload
 
 CORS_ORIGINS = cors_origins()
 CORS(app, origins=CORS_ORIGINS, supports_credentials=True)
@@ -128,6 +130,8 @@ TELEGRAM_BIND_CODE_TTL_MINUTES = int(os.getenv("DMS_TELEGRAM_BIND_CODE_TTL_MINUT
 ADAS_CONFIG = load_adas_config(BASE_DIR)
 adas_pipeline = ADASPipeline(ADAS_CONFIG)
 _adas_processing_lock = Lock()
+DMS_ATTENTION_CONFIG = load_dms_attention_config()
+dms_attention_registry = AttentionRegistry(DMS_ATTENTION_CONFIG)
 
 
 artifact: Dict[str, Any] | None = None
@@ -594,7 +598,15 @@ def _ensure_driving_session_tables(cur) -> None:
 
 
 DRIVING_ALERT_TYPES = frozenset(
-    {"phone", "smoking", "drowsy", "identity_lock", "landmark_risk", "other"}
+    {
+        "phone",
+        "smoking",
+        "drowsy",
+        "distraction",
+        "identity_lock",
+        "landmark_risk",
+        "other",
+    }
 )
 
 
@@ -1939,6 +1951,56 @@ def adas_process_frame() -> Any:
         return _api_error()
     finally:
         _adas_processing_lock.release()
+
+
+@app.post("/api/dms/attention")
+@require_auth()
+def dms_attention() -> Any:
+    """Analyze compact FaceMesh landmarks for one authenticated camera stream."""
+    payload = request.get_json(silent=True) or {}
+    stream_id = str(payload.get("stream_id") or "").strip()
+    if not 8 <= len(stream_id) <= 80 or any(
+        char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+        for char in stream_id
+    ):
+        return jsonify({"error": "invalid stream_id"}), 400
+
+    try:
+        timestamp_ms = float(payload.get("timestamp_ms"))
+        frame_width = int(payload.get("frame_width"))
+        frame_height = int(payload.get("frame_height"))
+    except (TypeError, ValueError, OverflowError):
+        return jsonify({"error": "invalid timestamp or frame dimensions"}), 400
+    if (
+        not np.isfinite(timestamp_ms)
+        or timestamp_ms < 0
+        or not 160 <= frame_width <= 4096
+        or not 120 <= frame_height <= 4096
+    ):
+        return jsonify({"error": "invalid timestamp or frame dimensions"}), 400
+
+    face_detected = bool(payload.get("face_detected", True))
+    try:
+        points = parse_landmark_payload(payload.get("landmarks", []))
+    except ValueError:
+        return jsonify({"error": "invalid landmarks"}), 400
+
+    principal: Principal = g.auth_principal
+    owner = principal.driver_id or principal.role
+    key = f"{principal.role}:{owner}:{stream_id}"
+    try:
+        result = dms_attention_registry.analyze(
+            key,
+            points,
+            timestamp_ms / 1000.0,
+            frame_width,
+            frame_height,
+            face_detected=face_detected,
+            reset=bool(payload.get("reset")),
+        )
+    except ValueError:
+        return jsonify({"error": "invalid attention sample"}), 400
+    return jsonify({"schema_version": 1, **result})
 
 
 # ═══════════════════════════════════════════════════════════════
