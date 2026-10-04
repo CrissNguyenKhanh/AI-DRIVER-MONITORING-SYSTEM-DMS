@@ -35,12 +35,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import time
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
 import joblib
 import numpy as np
+from sklearn import __version__ as sklearn_version
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.model_selection import cross_val_score, train_test_split
 from sklearn.neural_network import MLPClassifier
@@ -64,6 +66,7 @@ except ImportError:
 
 ROOT_DIR = _DRIVER_TRAINING_ROOT
 DEFAULT_MODEL_PATH = ROOT_DIR / "models" / "hand_model.pkl"
+HAND_ARTIFACT_VERSION = 2
 
 
 # ══════════════════════════════════════════════
@@ -192,6 +195,18 @@ def build_model(random_state: int = 42) -> Pipeline:
     ])
 
 
+def _prepare_model_for_inference_export(model: Pipeline) -> None:
+    """Remove fitted RNG state that prediction does not use.
+
+    ``MLPClassifier._random_state`` is training-only private state. Keeping it
+    makes the artifact depend on NumPy's private RandomState pickle format,
+    while the public ``random_state`` parameter still records the training seed.
+    """
+    classifier = model.named_steps.get("clf")
+    if isinstance(classifier, MLPClassifier):
+        classifier.__dict__.pop("_random_state", None)
+
+
 # ══════════════════════════════════════════════
 # TRAIN
 # ══════════════════════════════════════════════
@@ -284,7 +299,13 @@ def train_hand_model(
 
     # ── Save ──────────────────────────────────────────────────
     idx_to_label = {v: k for k, v in label_to_idx.items()}
+    _prepare_model_for_inference_export(model)
     artifact: Dict[str, Any] = {
+        "artifact_version": HAND_ARTIFACT_VERSION,
+        "python_version": platform.python_version(),
+        "numpy_version": np.__version__,
+        "sklearn_version": sklearn_version,
+        "joblib_version": joblib.__version__,
         "model":        model,
         "label_to_idx": label_to_idx,
         "idx_to_label": idx_to_label,   # ← thêm mới, backend dùng trực tiếp
