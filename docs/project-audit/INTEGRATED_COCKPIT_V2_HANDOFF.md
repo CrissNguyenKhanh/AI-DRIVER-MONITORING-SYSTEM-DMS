@@ -90,5 +90,12 @@ Functional/test commits:
 
 - `9dd905b`, `7837bc3`, `327d8eb`, `d471813`, `44f85d9`, `ede026a`.
 
-Push/PR/merge được cập nhật sau khi remote operation hoàn tất. Merge chỉ được thực hiện nếu GitHub branch/review/check gates cho phép; không dùng admin bypass hoặc force push.
+Kết quả remote:
+
+- Push: **PASS**. Nhánh remote `feat/dms-adas-integrated-cockpit-v2` đã được xác minh tại `bd9931f2840b629f1d45da739c8c5e4bc5fe5d70`.
+- PR: **BLOCKED BY TOOL PERMISSION**. GitHub connector trả `403 Resource not accessible by integration` khi gọi create-pull-request.
+- URL tạo PR đã được GitHub trả về: `https://github.com/CrissNguyenKhanh/AI-DRIVER-MONITORING-SYSTEM-DMS/pull/new/feat/dms-adas-integrated-cockpit-v2`.
+- Merge: **NOT ATTEMPTED** vì chưa tạo được PR, chưa có review/required-check state để xác minh. Không dùng admin bypass, credential extraction hoặc force push.
+
+Khi quyền tạo PR có sẵn, dùng base `main`, head `feat/dms-adas-integrated-cockpit-v2`; chỉ merge sau khi review/check gates của GitHub cho phép.
 
