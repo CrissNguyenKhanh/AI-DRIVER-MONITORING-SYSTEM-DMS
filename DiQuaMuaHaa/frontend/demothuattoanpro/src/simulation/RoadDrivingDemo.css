@@ -1,0 +1,619 @@
+.road-sim-page {
+  min-height: 100vh;
+  padding: 24px;
+  color: #eaf6ff;
+  background:
+    radial-gradient(circle at 15% 0%, rgba(18, 123, 164, 0.2), transparent 35%),
+    linear-gradient(160deg, #030711 0%, #07111e 52%, #041018 100%);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+.road-sim-page * {
+  box-sizing: border-box;
+}
+
+.road-sim-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  max-width: 1680px;
+  margin: 0 auto 16px;
+}
+
+.road-sim-header h1 {
+  max-width: 950px;
+  margin: 5px 0 7px;
+  font-size: clamp(1.7rem, 3.1vw, 3.15rem);
+  line-height: 1.07;
+}
+
+.road-sim-header p {
+  max-width: 920px;
+  margin: 0;
+  color: #a9bfd1;
+  line-height: 1.55;
+}
+
+.road-sim-eyebrow {
+  color: #38d9c5;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.2em;
+}
+
+.road-sim-safety-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 15px;
+  border: 1px solid #f6b73c;
+  border-radius: 999px;
+  color: #ffd477;
+  background: rgba(130, 74, 10, 0.2);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.road-sim-gate,
+.road-sim-toolbar,
+.road-sim-grid,
+.road-sim-readouts,
+.road-sim-bottom,
+.road-sim-footer {
+  max-width: 1680px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.road-sim-gate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 11px 14px;
+  border: 1px solid rgba(251, 191, 36, 0.38);
+  border-radius: 12px;
+  color: #f8df9a;
+  background: rgba(75, 45, 8, 0.42);
+  font-size: 0.87rem;
+  line-height: 1.4;
+}
+
+.road-sim-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 14px;
+  padding: 10px;
+  overflow-x: auto;
+  border: 1px solid rgba(112, 163, 194, 0.2);
+  border-radius: 14px;
+  background: rgba(4, 15, 28, 0.84);
+}
+
+.road-sim-toolbar button,
+.road-sim-toolbar select,
+.road-sim-camera-switch button,
+.road-sim-side select {
+  border: 1px solid rgba(123, 173, 204, 0.34);
+  border-radius: 9px;
+  color: #eaf6ff;
+  background: #0a1c2c;
+}
+
+.road-sim-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.road-sim-toolbar button:hover:not(:disabled),
+.road-sim-camera-switch button:hover,
+.road-sim-toolbar button.is-active,
+.road-sim-camera-switch button.is-active {
+  border-color: #3ce4c6;
+  color: #7fffe5;
+  background: #10352f;
+}
+
+.road-sim-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.43;
+}
+
+.road-sim-toolbar button.is-recording {
+  border-color: #ff667f;
+  color: #ffd8de;
+  background: #4b1420;
+}
+
+.road-sim-toolbar > label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 5px;
+  color: #aac4d8;
+  white-space: nowrap;
+  font-size: 0.8rem;
+}
+
+.road-sim-toolbar select {
+  padding: 8px 10px;
+}
+
+.road-sim-segmented {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 10px;
+  background: #020a12;
+}
+
+.road-sim-segmented button {
+  min-height: 33px;
+  padding: 0 9px;
+  border: 0;
+  font-size: 0.69rem;
+}
+
+.road-sim-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: 14px;
+}
+
+.road-sim-stage {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.road-sim-stage--split {
+  grid-template-columns: minmax(0, 1.75fr) minmax(270px, 1fr);
+}
+
+.road-sim-stage--virtual,
+.road-sim-stage--video {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.road-sim-pane {
+  position: relative;
+  min-width: 0;
+  height: 560px;
+  overflow: hidden;
+  border: 1px solid rgba(103, 166, 199, 0.28);
+  border-radius: 18px;
+  background: #020811;
+  box-shadow: 0 20px 55px rgba(0, 0, 0, 0.28);
+}
+
+.road-sim-pane.is-hidden {
+  display: none;
+}
+
+.road-sim-three,
+.road-sim-three canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.road-sim-three canvas {
+  display: block;
+}
+
+.road-sim-stage-overlay {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid rgba(91, 226, 201, 0.36);
+  border-radius: 8px;
+  background: rgba(2, 9, 16, 0.78);
+  pointer-events: none;
+}
+
+.road-sim-stage-overlay span {
+  color: #8fb6c9;
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.road-sim-stage-overlay strong {
+  color: #67f5d4;
+  font-size: 0.82rem;
+}
+
+.road-sim-camera-switch {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+  border-radius: 10px;
+  background: rgba(2, 9, 16, 0.82);
+}
+
+.road-sim-camera-switch button {
+  padding: 7px 8px;
+  cursor: pointer;
+  font-size: 0.65rem;
+  font-weight: 800;
+}
+
+.road-sim-video-pane video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #010409;
+}
+
+.road-sim-video-empty {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 9px;
+  color: #6f91a6;
+  text-align: center;
+}
+
+.road-sim-video-empty span {
+  max-width: 260px;
+  font-size: 0.78rem;
+}
+
+.road-sim-upload {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid rgba(103, 190, 231, 0.42);
+  border-radius: 9px;
+  color: #ccecff;
+  background: rgba(4, 18, 31, 0.88);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.road-sim-upload input {
+  display: none;
+}
+
+.road-sim-video-warning {
+  position: absolute;
+  right: 12px;
+  bottom: 42px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(255, 191, 70, 0.4);
+  border-radius: 9px;
+  color: #ebd39c;
+  background: rgba(25, 17, 5, 0.86);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.road-sim-video-warning strong {
+  color: #ffc857;
+  letter-spacing: 0.05em;
+}
+
+.road-sim-video-warning a,
+.road-sim-footer a {
+  color: #5eead4;
+}
+
+.road-sim-video-name {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 8px 12px;
+  overflow: hidden;
+  color: #9ab6c8;
+  background: rgba(1, 6, 11, 0.9);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+}
+
+.road-sim-side {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(103, 166, 199, 0.23);
+  border-radius: 18px;
+  background: rgba(4, 15, 27, 0.9);
+}
+
+.road-sim-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #8eacbf;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.road-sim-side select {
+  width: 100%;
+  padding: 10px;
+  text-transform: none;
+}
+
+.road-sim-scenario-description {
+  margin: 0;
+  color: #a7c0d0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.road-sim-expected,
+.road-sim-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(75, 143, 179, 0.25);
+  border-radius: 10px;
+  background: #071522;
+}
+
+.road-sim-expected span,
+.road-sim-status-card span {
+  color: #6e95ab;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.road-sim-expected strong,
+.road-sim-status-card strong {
+  overflow-wrap: anywhere;
+  color: #eaf7ff;
+  font-size: 0.83rem;
+}
+
+.road-sim-status-card small {
+  color: #7795a7;
+  line-height: 1.35;
+}
+
+.road-sim-lanes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  margin-top: auto;
+}
+
+.road-sim-lanes div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 5px;
+  border: 1px solid;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.road-sim-lanes span {
+  font-size: 0.62rem;
+}
+
+.road-sim-lanes strong {
+  overflow-wrap: anywhere;
+  font-size: 0.58rem;
+}
+
+.road-sim-lanes .is-clear {
+  border-color: rgba(52, 211, 153, 0.45);
+  color: #84f4cb;
+  background: rgba(9, 83, 59, 0.2);
+}
+
+.road-sim-lanes .is-blocked {
+  border-color: rgba(251, 113, 133, 0.45);
+  color: #ff9aaa;
+  background: rgba(114, 25, 43, 0.22);
+}
+
+.road-sim-readouts {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+  overflow-x: auto;
+}
+
+.road-sim-readouts article {
+  display: flex;
+  min-width: 120px;
+  min-height: 86px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid rgba(103, 166, 199, 0.2);
+  border-radius: 11px;
+  background: rgba(5, 18, 31, 0.86);
+}
+
+.road-sim-readouts article > svg {
+  width: 18px;
+  height: 18px;
+  color: #4adfc5;
+}
+
+.road-sim-readouts span {
+  color: #7595a9;
+  font-size: 0.66rem;
+}
+
+.road-sim-readouts strong {
+  color: #edf9ff;
+  font-size: 0.83rem;
+}
+
+.road-sim-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.road-sim-explanation,
+.road-sim-timeline {
+  padding: 16px;
+  border: 1px solid rgba(103, 166, 199, 0.2);
+  border-radius: 14px;
+  background: rgba(4, 15, 27, 0.88);
+}
+
+.road-sim-bottom h2 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.road-sim-explanation ol {
+  margin: 0;
+  padding-left: 20px;
+  color: #9eb8c9;
+  line-height: 1.65;
+}
+
+.road-sim-explanation p {
+  margin: 10px 0 0;
+  color: #e6c372;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.road-sim-timeline ol {
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.road-sim-timeline li {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(104, 151, 177, 0.14);
+  color: #a8c1d1;
+  font-size: 0.74rem;
+}
+
+.road-sim-timeline time {
+  color: #55e7cd;
+  font-variant-numeric: tabular-nums;
+}
+
+.road-sim-toast {
+  position: fixed;
+  z-index: 20;
+  right: 20px;
+  bottom: 20px;
+  max-width: min(440px, calc(100vw - 40px));
+  padding: 11px 14px;
+  border: 1px solid #4adfc5;
+  border-radius: 11px;
+  color: #dffdf7;
+  background: rgba(4, 35, 35, 0.96);
+  box-shadow: 0 15px 45px rgba(0, 0, 0, 0.45);
+  font-size: 0.8rem;
+}
+
+.road-sim-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 11px 4px;
+  color: #6f8c9e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+}
+
+@media (max-width: 1180px) {
+  .road-sim-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .road-sim-side {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .road-sim-lanes {
+    margin-top: 0;
+  }
+}
+
+@media (max-width: 820px) {
+  .road-sim-page {
+    padding: 14px;
+  }
+
+  .road-sim-header {
+    flex-direction: column;
+  }
+
+  .road-sim-stage--split {
+    grid-template-columns: 1fr;
+  }
+
+  .road-sim-pane {
+    height: 430px;
+  }
+
+  .road-sim-side,
+  .road-sim-bottom {
+    grid-template-columns: 1fr;
+  }
+
+  .road-sim-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .road-sim-page *,
+  .road-sim-page *::before,
+  .road-sim-page *::after {
+    scroll-behavior: auto !important;
+  }
+}
