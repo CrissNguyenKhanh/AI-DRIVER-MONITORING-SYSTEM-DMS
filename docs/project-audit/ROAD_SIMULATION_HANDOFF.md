@@ -28,6 +28,9 @@ Một standalone route `/demo/road-driving` đã được triển khai cho deter
 | Validation-doc commit | `671537ab9460` |
 | Push | Thành công lên `origin/feat/dms-road-obstacle-avoidance-sim` |
 | Pull Request | `https://github.com/CrissNguyenKhanh/AI-DRIVER-MONITORING-SYSTEM-DMS/pull/12` |
+| PR state | MERGED |
+| Squash merge commit | `025c815dfdf9f9432ab0ee9fdfbe059d538d9860` |
+| Post-merge verification | 46/46 frontend, 58/58 backend, targeted lint/build PASS; Vercel success |
 | Force push | Không được phép |
 | Deploy | Không thực hiện |
 
@@ -38,7 +41,7 @@ git log -1 --format=%H
 git status --short
 ```
 
-và final delivery response là nguồn xác nhận commit SHA/push result thực tế.
+Final delivery response vẫn là nguồn xác nhận trạng thái GitHub mới nhất; merge SHA đã được ghi ở bảng trên.
 
 ## 3. Security dependency status
 
