@@ -11,11 +11,13 @@ import {
   updateSimulationInput,
 } from "../src/simulation/roadSimulation.js";
 
-test("all ten deterministic scenarios have explicit Vietnamese presentation copy", () => {
-  assert.deepEqual(Object.keys(SCENARIO_PRESENTATION), [
-    "S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08", "S09", "S10",
-  ]);
+test("all twenty deterministic scenarios have explicit Vietnamese presentation copy", () => {
+  assert.deepEqual(
+    Object.keys(SCENARIO_PRESENTATION),
+    Array.from({ length: 20 }, (_, index) => `S${String(index + 1).padStart(2, "0")}`),
+  );
   assert.match(SCENARIO_PRESENTATION.S10.description, /PR B\/C/);
+  assert.match(SCENARIO_PRESENTATION.S20.description, /trình diễn/i);
 });
 
 test("DMS metrics are visibly synthetic and UNKNOWN never fabricates values", () => {
