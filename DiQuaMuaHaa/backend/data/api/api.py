@@ -1,6 +1,7 @@
 from __future__ import annotations
 from flask_socketio import SocketIO, emit
 import base64
+import binascii
 import hmac
 import os
 from functools import wraps
@@ -714,6 +715,39 @@ def load_model() -> None:
     idx_to_label = {v: k for k, v in label_to_idx.items()}
 
 
+def _validate_hand_artifact(candidate: Any) -> tuple[Any, Dict[int, str], int]:
+    """Validate the small trusted artifact contract before publishing globals."""
+    if not isinstance(candidate, dict):
+        raise ValueError("Hand artifact must be a dictionary")
+
+    candidate_model = candidate.get("model")
+    if candidate_model is None or not callable(getattr(candidate_model, "predict", None)):
+        raise ValueError("Hand artifact model must provide predict()")
+
+    label_to_idx = candidate.get("label_to_idx")
+    if not isinstance(label_to_idx, dict) or not label_to_idx:
+        raise ValueError("Hand artifact label_to_idx must be a non-empty dictionary")
+
+    normalized_labels: Dict[int, str] = {}
+    for label, index in label_to_idx.items():
+        if not isinstance(label, str) or not label:
+            raise ValueError("Hand artifact labels must be non-empty strings")
+        if isinstance(index, bool) or not isinstance(index, (int, np.integer)):
+            raise ValueError("Hand artifact label indexes must be integers")
+        normalized_labels[int(index)] = label
+    if sorted(normalized_labels) != list(range(len(label_to_idx))):
+        raise ValueError("Hand artifact label indexes must be unique and contiguous")
+
+    try:
+        candidate_vec_len = int(candidate.get("vec_len", 126))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Hand artifact vec_len must be 63 or 126") from exc
+    if candidate_vec_len not in (63, 126):
+        raise ValueError("Hand artifact vec_len must be 63 or 126")
+
+    return candidate_model, normalized_labels, candidate_vec_len
+
+
 def load_hand_model() -> None:
     global hand_artifact, hand_model, hand_idx_to_label, hand_vec_len
     hand_artifact = None
@@ -725,21 +759,16 @@ def load_hand_model() -> None:
         return
 
     try:
-        hand_artifact = _compat_joblib_load(HAND_MODEL_PATH)
+        candidate = _compat_joblib_load(HAND_MODEL_PATH)
+        candidate_model, candidate_labels, candidate_vec_len = _validate_hand_artifact(candidate)
     except Exception:
         app.logger.exception("Hand model artifact is incompatible or invalid")
         return
 
-    if hand_artifact is None:
-        return
-
-    hand_model = hand_artifact.get("model")
-    label_to_idx = hand_artifact.get("label_to_idx", {})
-    hand_idx_to_label = {v: k for k, v in label_to_idx.items()}
-    try:
-        hand_vec_len = int(hand_artifact.get("vec_len", 126))
-    except (TypeError, ValueError):
-        hand_vec_len = 126
+    hand_artifact = candidate
+    hand_model = candidate_model
+    hand_idx_to_label = candidate_labels
+    hand_vec_len = candidate_vec_len
 
 
 def load_phone_model() -> None:
@@ -1114,7 +1143,10 @@ def _image_base64_to_landmarks_for_predict(image_b64: str, flip: bool = False) -
 def _image_base64_to_hand_landmarks(image_b64: str) -> List[float] | None:
     """Decode base64 → MediaPipe Hands → vector khớp hand_vec_len (63 hoặc 126)."""
     _ensure_models_loaded()
-    raw = base64.b64decode(image_b64)
+    try:
+        raw = base64.b64decode(image_b64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("Không decode được ảnh base64.") from exc
     arr = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     
@@ -1341,9 +1373,15 @@ def ping_db() -> Any:
 def health() -> Any:
     available = _database_available()
     models = {}
+    hand_runtime_loaded = (
+        hand_model is not None
+        and bool(hand_idx_to_label)
+        and _hands is not None
+        and hand_vec_len in (63, 126)
+    )
     for name, path, loaded, enabled in [
         ("landmark", MODEL_PATH, model is not None, True),
-        ("hand", HAND_MODEL_PATH, hand_model is not None, not DISABLE_HAND_DETECT),
+        ("hand", HAND_MODEL_PATH, hand_runtime_loaded, not DISABLE_HAND_DETECT),
         ("smoking", SMOKING_MODEL_PATH, False, False),
         ("phone", PHONE_YOLO_ONNX_PATH if PHONE_YOLO_ONNX_PATH.exists() else PHONE_YOLO_MODEL_PATH,
          _yolo_available(), not DISABLE_PHONE_YOLO),
