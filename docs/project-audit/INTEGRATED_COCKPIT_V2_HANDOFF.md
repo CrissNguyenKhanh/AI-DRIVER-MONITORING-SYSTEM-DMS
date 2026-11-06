@@ -10,7 +10,7 @@
 ## 2. Cách chạy offline demo
 
 ```powershell
-cd D:\mirofish\AI-DRIVER-MONITORING-SYSTEM-DMS\DiQuaMuaHaa\frontend\demothuattoanpro
+cd D:\mirofish\dms-integrated-cockpit-v2\DiQuaMuaHaa\frontend\demothuattoanpro
 npm install
 $env:VITE_API_BASE = "/"
 npm run dev
@@ -38,7 +38,7 @@ Demo đề nghị:
 Backend dùng setup hiện có của dự án:
 
 ```powershell
-cd D:\mirofish\AI-DRIVER-MONITORING-SYSTEM-DMS\DiQuaMuaHaa\backend
+cd D:\mirofish\dms-integrated-cockpit-v2\DiQuaMuaHaa\backend
 python app.py
 ```
 
