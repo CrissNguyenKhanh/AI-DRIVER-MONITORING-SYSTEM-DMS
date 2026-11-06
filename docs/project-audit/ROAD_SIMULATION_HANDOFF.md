@@ -23,9 +23,11 @@ Một standalone route `/demo/road-driving` đã được triển khai cho deter
 | Thuộc tính | Trạng thái tại thời điểm viết handoff |
 |---|---|
 | Branch | `feat/dms-road-obstacle-avoidance-sim` |
-| Target branch | Không merge trong task này |
-| Commit | Root agent thực hiện sau khi hoàn tất docs/gates |
-| Push | Root agent thực hiện sau commit nếu final staged diff an toàn |
+| Target branch | `main` qua PR #12 |
+| Feature commit | `ccb144e50f15` — cherry-pick sạch từ source commit `c53b923d8335` |
+| Validation-doc commit | `671537ab9460` |
+| Push | Thành công lên `origin/feat/dms-road-obstacle-avoidance-sim` |
+| Pull Request | `https://github.com/CrissNguyenKhanh/AI-DRIVER-MONITORING-SYSTEM-DMS/pull/12` |
 | Force push | Không được phép |
 | Deploy | Không thực hiện |
 
