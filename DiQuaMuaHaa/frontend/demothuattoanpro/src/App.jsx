@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter as Router, Navigate, Routes, Route } from "react-router-dom";
 import "./App.css";
 
@@ -14,6 +15,8 @@ import Khanhregister from "./Khanhregister";
 import FaceDetect from "./systeamdetectface/face_detect";
 import ADASSimulation from "./adas/ADASSimulation";
 import { getStoredMedicalUser } from "./utils/authApi";
+
+const RoadDrivingDemo = lazy(() => import("./simulation/RoadDrivingDemo"));
 
 function RequireAdmin({ children }) {
   const user = getStoredMedicalUser();
@@ -44,6 +47,14 @@ function App() {
 
         <Route path="/test5" element={<FaceDetect />} />
         <Route path="/adas-simulation" element={<ADASSimulation />} />
+        <Route
+          path="/demo/road-driving"
+          element={(
+            <Suspense fallback={<div role="status">Đang tải mô phỏng đường đi…</div>}>
+              <RoadDrivingDemo />
+            </Suspense>
+          )}
+        />
       </Routes>
     </Router>
   );
