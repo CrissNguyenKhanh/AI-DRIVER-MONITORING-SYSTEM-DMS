@@ -76,8 +76,12 @@ Stress 100 seed × 10 scenario = 1.000 runs, 0 virtual collisions. Đây chỉ l
 | Remote branch URL | `https://github.com/CrissNguyenKhanh/AI-DRIVER-MONITORING-SYSTEM-DMS/tree/feat/dms-road-obstacle-avoidance-sim` |
 | Pull Request | `https://github.com/CrissNguyenKhanh/AI-DRIVER-MONITORING-SYSTEM-DMS/pull/12` |
 | Base/head | `main` ← `feat/dms-road-obstacle-avoidance-sim` |
-| PR state tại snapshot này | OPEN — đang đánh giá checks/reviews trước auto-merge |
-| Merge commit | Chưa có tại snapshot pre-merge; final response là nguồn trạng thái sau merge |
+| PR state | MERGED |
+| Merge method | Squash |
+| Merge commit | `025c815dfdf9f9432ab0ee9fdfbe059d538d9860` |
+| Merge status check | `Vercel=success`; không có GitHub Actions workflow run |
+| Post-merge tests | Frontend 46/46; backend 58/58; targeted lint/build PASS |
+| Tree verification | Feature head và `origin/main` cùng tree SHA `22859160df9698904946f89692bb26de63c87ee2` |
 | PR #11 isolation | PASS — branch delivery xuất phát trực tiếp từ `main`; không chứa commit PR #11 |
 
 ## M. Finding còn mở
@@ -93,4 +97,4 @@ Stress 100 seed × 10 scenario = 1.000 runs, 0 virtual collisions. Đây chỉ l
 
 Simulator không điều khiển xe thật, không có CAN/actuator output và không đo khoảng cách/TTC từ camera. `productionControlOutput` luôn `null`. Không được gọi feature này là autonomous-driving system, accident-avoidance guarantee hoặc safety-certified product.
 
-Trạng thái merge/post-merge cuối cùng phải được xác minh từ GitHub và final response; không suy ra từ snapshot pre-merge này.
+GitHub và `origin/main` đã được xác minh sau merge. Final response là nguồn trạng thái mới nhất ngoài thời điểm tài liệu này được commit.

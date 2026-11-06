@@ -32,9 +32,11 @@ Worktree ban đầu ở commit `fbcaaddb7347`, là head của PR #11 `fix/hand-m
 | URL | `https://github.com/CrissNguyenKhanh/AI-DRIVER-MONITORING-SYSTEM-DMS/pull/12` |
 | Base | `main` |
 | Head | `feat/dms-road-obstacle-avoidance-sim` |
-| Trạng thái tại snapshot này | OPEN |
+| Trạng thái | MERGED |
 | Draft | false |
-| Merge | Chưa thực hiện; chờ xác minh checks/reviews/mergeability |
+| Merge method | Squash |
+| Merge commit | `025c815dfdf9f9432ab0ee9fdfbe059d538d9860` |
+| Merged at | 2026-11-06 10:57:51 +07:00 |
 
 GitHub connector có quyền đọc nhưng trả 403 khi tạo PR. PR #12 được tạo qua GitHub REST bằng credential đã lưu của cùng remote; token không được in, ghi file hoặc commit.
 
@@ -51,4 +53,15 @@ GitHub connector có quyền đọc nhưng trả 403 khi tạo PR. PR #12 đư�
 - Visual browser E2E NOT VERIFIED do không có browser surface.
 - Không auth bypass, secure-E2E claim hoặc production vehicle-control path.
 
-Kết quả merge, merge SHA và post-merge verification được ghi trong final response sau khi GitHub trả trạng thái thực tế. Nếu required check/review/protection chưa đạt, PR phải giữ OPEN và report phải ghi NOT MERGED.
+## Post-merge verification
+
+- GitHub xác nhận PR #12 `merged=true`.
+- `origin/main` trỏ tới merge commit `025c815dfdf9f9432ab0ee9fdfbe059d538d9860`.
+- Tree SHA của feature head và merge commit đều là `22859160df9698904946f89692bb26de63c87ee2`; diff tree bằng 0 file.
+- Combined status của merge commit: `Vercel=success`; repository không trả về GitHub Actions workflow run.
+- Frontend chạy lại 46/46 PASS.
+- Backend chạy lại 58/58 PASS.
+- Targeted ESLint chạy lại PASS.
+- Production build chạy lại PASS, 2.315 modules.
+- PR #11 vẫn OPEN/độc lập và không bị merge như side effect.
+- Không deploy production từ task này.
