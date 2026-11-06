@@ -44,6 +44,10 @@ function cloneStepState(state) {
     road: { ...state.road, laneCenters: [...state.road.laneCenters] },
     perception: { ...state.perception },
     driver: { ...state.driver },
+    risk: {
+      ...state.risk,
+      frontHazard: state.risk?.frontHazard ? { ...state.risk.frontHazard } : null,
+    },
     ego: { ...state.ego },
     obstacles: state.obstacles.map((obstacle) => ({ ...obstacle })),
     events: state.events.map((event) => ({ ...event })),
@@ -271,6 +275,13 @@ function applyScenarioEvents(state) {
       appendTimeline(state, "PERCEPTION", "Synthetic perception availability changed", {
         available: state.perception.available,
         laneGeometryKnown: state.perception.laneGeometryKnown,
+      });
+    } else if (event.type === "PHONE_USAGE") {
+      state.driver.phoneUsage = Boolean(event.value);
+      appendTimeline(state, "PHONE_USAGE", state.driver.phoneUsage
+        ? "Synthetic phone usage became active"
+        : "Synthetic phone usage cleared", {
+        active: state.driver.phoneUsage,
       });
     } else if (event.type === "OBSTACLE_ACTIVE") {
       const obstacle = state.obstacles.find((item) => item.id === event.obstacleId);
@@ -702,6 +713,7 @@ export function createInitialSimulationState(
       maxX: centers[centers.length - 1] + config.laneWidth / 2,
       length: config.roadLength,
       geometryKnown: true,
+      visualCurveAmplitude: Number(scenario.visualCurveAmplitude || 0),
     },
     perception: {
       available: true,
@@ -712,6 +724,8 @@ export function createInitialSimulationState(
     driver: {
       attention: scenario.driverState,
       warningElapsed: 0,
+      phoneUsage: false,
+      handGesture: null,
     },
     ego: {
       id: "ego",
@@ -736,6 +750,10 @@ export function createInitialSimulationState(
       reason: "SIMULATION_INITIALIZED",
       requestedTargetLane: null,
       productionControlOutput: null,
+    },
+    risk: {
+      level: "CLEAR",
+      frontHazard: null,
     },
     maneuver: {
       phase: MANEUVER_PHASES.NONE,
@@ -803,6 +821,25 @@ export function stepSimulation(state) {
     : 0;
 
   const hazard = frontHazards(next)[0] || null;
+  next.risk = {
+    level: hazard
+      ? hazard.timeToCollision <= next.config.emergencyTtc
+        ? "CRITICAL"
+        : "WARNING"
+      : next.perception.available
+        ? "CLEAR"
+        : "UNKNOWN",
+    frontHazard: hazard
+      ? {
+          obstacleId: hazard.obstacleId,
+          virtualBumperGap: round(hazard.bumperGap, 3),
+          timeToCollision: Number.isFinite(hazard.timeToCollision)
+            ? round(hazard.timeToCollision, 3)
+            : null,
+          virtualOnly: true,
+        }
+      : null,
+  };
   const leftLane = next.ego.currentLane - 1;
   const rightLane = next.ego.currentLane + 1;
   const leftClearance = evaluateLaneClearance(next, leftLane);

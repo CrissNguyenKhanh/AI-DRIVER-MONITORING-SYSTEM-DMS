@@ -1,7 +1,7 @@
 import { DMS_STATES } from "./constants.js";
 
 export const SCENARIO_IDS = Object.freeze(
-  Array.from({ length: 10 }, (_, index) => `S${String(index + 1).padStart(2, "0")}`),
+  Array.from({ length: 20 }, (_, index) => `S${String(index + 1).padStart(2, "0")}`),
 );
 
 const car = (id, lane, s, options = {}) => ({
@@ -138,6 +138,125 @@ const catalog = {
       integrationBlocked: true,
       reason: "PR_B_SERVER_VERIFICATION_GRANT_NOT_AVAILABLE",
     },
+  },
+  S11: {
+    name: "Phone distraction with obstacle",
+    description: "Phone use escalates distraction before a front obstacle; the virtual car brakes and uses a clear corridor.",
+    duration: 18,
+    driverState: DMS_STATES.NORMAL,
+    obstacles: [car("phone-front", 1, 86), car("phone-right", 2, 38, { speed: 12 })],
+    events: [
+      { at: 0.5, type: "PHONE_USAGE", value: true },
+      { at: 0.5, type: "DRIVER_STATE", value: DMS_STATES.DISTRACTED },
+      { at: 11, type: "PHONE_USAGE", value: false },
+    ],
+    expected: "PHONE_WARNING_BRAKE_SHIFT_LEFT",
+  },
+  S12: {
+    name: "Drowsiness escalation",
+    description: "Drowsiness escalates to high risk without inventing a road hazard or arbitrary steering.",
+    duration: 12,
+    driverState: DMS_STATES.NORMAL,
+    obstacles: [],
+    events: [
+      { at: 1, type: "DRIVER_STATE", value: DMS_STATES.DROWSY },
+      { at: 5, type: "DRIVER_STATE", value: DMS_STATES.HIGH_RISK },
+    ],
+    expected: "ESCALATE_WARNING_KEEP_LANE",
+  },
+  S13: {
+    name: "Moving target-lane cut-in",
+    description: "A moving vehicle enters the planned left corridor and forces a deterministic abort and stop.",
+    duration: 17,
+    driverState: DMS_STATES.DISTRACTED,
+    obstacles: [
+      car("cutin-front", 1, 88),
+      car("cutin-right", 2, 35, { speed: 12 }),
+      car("cutin-moving", 0, 78, { speed: 7, active: false }),
+    ],
+    events: [{ at: 3, type: "OBSTACLE_ACTIVE", obstacleId: "cutin-moving", value: true }],
+    expected: "MOVING_CUT_IN_ABORT",
+  },
+  S14: {
+    name: "Consecutive obstacles",
+    description: "Multiple virtual vehicles constrain the corridor while the car completes one stable avoidance cycle.",
+    duration: 24,
+    driverState: DMS_STATES.DROWSY,
+    obstacles: [
+      car("series-front", 1, 88),
+      car("series-left", 0, 34, { speed: 13 }),
+      car("series-right-far", 2, 142, { speed: 10 }),
+      car("series-center-far", 1, 185, { speed: 9 }),
+    ],
+    events: [],
+    expected: "STABLE_MULTI_OBSTACLE_RESPONSE",
+  },
+  S15: {
+    name: "Driver recovery after warning",
+    description: "A distraction warning clears after a stable recovery; no road hazard means no lane change.",
+    duration: 11,
+    driverState: DMS_STATES.DISTRACTED,
+    obstacles: [],
+    events: [{ at: 5, type: "DRIVER_STATE", value: DMS_STATES.NORMAL }],
+    expected: "WARNING_RECOVERY_KEEP_LANE",
+  },
+  S16: {
+    name: "Sensor and model unavailable",
+    description: "Unavailable perception is represented as UNKNOWN and cannot authorize a blind maneuver.",
+    duration: 10,
+    driverState: DMS_STATES.UNKNOWN,
+    obstacles: [],
+    events: [{ at: 0.5, type: "PERCEPTION", available: false, laneGeometryKnown: false }],
+    expected: "UNAVAILABLE_CONTROLLED_SLOWDOWN",
+  },
+  S17: {
+    name: "Low-risk moving obstacle",
+    description: "A faster vehicle remains far ahead; no unnecessary maneuver is triggered.",
+    duration: 14,
+    driverState: DMS_STATES.NORMAL,
+    obstacles: [car("low-risk-car", 1, 115, { speed: 22 })],
+    events: [],
+    expected: "KEEP_LANE_NO_UNNECESSARY_ACTION",
+  },
+  S18: {
+    name: "Critical obstacle and blocked sides",
+    description: "A close front obstacle and two occupied corridors force maximum bounded virtual braking and safe stop.",
+    duration: 15,
+    driverState: DMS_STATES.HIGH_RISK,
+    obstacles: [
+      car("critical-front", 1, 58),
+      car("critical-left", 0, 29, { speed: 12 }),
+      car("critical-right", 2, 30, { speed: 12 }),
+    ],
+    events: [],
+    expected: "CRITICAL_BRAKE_SAFE_STOP",
+  },
+  S19: {
+    name: "Camera disconnects mid-trip",
+    description: "The DMS/perception signal becomes unavailable mid-trip and the virtual car slows without steering blindly.",
+    duration: 12,
+    driverState: DMS_STATES.NORMAL,
+    obstacles: [],
+    events: [
+      { at: 4, type: "DRIVER_STATE", value: DMS_STATES.UNKNOWN },
+      { at: 4, type: "PERCEPTION", available: false, laneGeometryKnown: false },
+    ],
+    expected: "MID_TRIP_UNKNOWN_NO_LANE_CHANGE",
+  },
+  S20: {
+    name: "Integrated presentation showcase",
+    description: "A timed presentation: normal drive, distraction, obstacle warning, braking, lane change, recovery and local summary.",
+    duration: 20,
+    driverState: DMS_STATES.NORMAL,
+    visualCurveAmplitude: 2.2,
+    obstacles: [car("showcase-front", 1, 102), car("showcase-right", 2, 42, { speed: 12 })],
+    events: [
+      { at: 0.1, type: "LOCAL_SESSION", value: "STARTED" },
+      { at: 2.2, type: "DRIVER_STATE", value: DMS_STATES.DISTRACTED },
+      { at: 13.5, type: "DRIVER_STATE", value: DMS_STATES.NORMAL },
+      { at: 19, type: "LOCAL_SESSION", value: "ENDED" },
+    ],
+    expected: "FULL_PRESENTATION_AVOID_RECOVER_REPORT",
   },
 };
 
