@@ -35,4 +35,3 @@ Ngày: 2026-11-07
 ## Definition of Done thực tế
 
 P0/P1/P2 độc lập với protected workflow đã được triển khai và test tự động. “Browser visual/audio/recording E2E” chưa được xác minh vì môi trường không cung cấp native UI pipe hoặc browser provider; do đó không báo 100% hoàn tất.
-

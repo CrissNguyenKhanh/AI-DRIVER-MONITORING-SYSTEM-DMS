@@ -1,7 +1,9 @@
 # Kiến trúc DMS + ADAS Integrated Cockpit V2
 
-Ngày xác minh: 2026-11-07 (Asia/Bangkok)  
-Nhánh: `feat/dms-adas-integrated-cockpit-v2`  
+Ngày xác minh: 2026-11-07 (Asia/Bangkok)
+
+Nhánh: `feat/dms-adas-integrated-cockpit-v2`
+
 Base đã xác minh: `origin/main` tại `3069424`, chứa PR #12 và không chứa các commit của PR #11.
 
 ## 1. Phạm vi và ranh giới an toàn
@@ -114,4 +116,3 @@ Module tái sử dụng/mở rộng:
 - `d471813` — S11-S20 và risk state.
 - `44f85d9` — cockpit, timeline, report và recording overlay.
 - `ede026a` — test V2.
-

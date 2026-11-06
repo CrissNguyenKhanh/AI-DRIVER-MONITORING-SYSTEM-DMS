@@ -39,4 +39,3 @@ Seed validation: `20261105`. Tất cả scenario kết thúc với `virtual coll
 10. Tại 20 s kịch bản complete và sinh report/export.
 
 Các mốc là thời gian mô phỏng monotonic, không phụ thuộc đồng hồ hệ thống. Playback 0.5×/1×/2×/4× chỉ thay đổi tốc độ trình diễn, không thay đổi kết quả deterministic.
-

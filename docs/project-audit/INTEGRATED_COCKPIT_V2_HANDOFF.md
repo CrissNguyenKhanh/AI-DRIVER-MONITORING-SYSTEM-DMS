@@ -98,4 +98,3 @@ Kết quả remote:
 - Merge: **NOT ATTEMPTED** vì chưa tạo được PR, chưa có review/required-check state để xác minh. Không dùng admin bypass, credential extraction hoặc force push.
 
 Khi quyền tạo PR có sẵn, dùng base `main`, head `feat/dms-adas-integrated-cockpit-v2`; chỉ merge sau khi review/check gates của GitHub cho phép.
-
