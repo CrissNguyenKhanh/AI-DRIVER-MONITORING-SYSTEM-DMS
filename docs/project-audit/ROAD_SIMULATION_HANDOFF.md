@@ -234,14 +234,14 @@ Seed `20261105` run: tất cả 10 scenario pass, 0 virtual collisions. Chi ti�
 | Gate | Actual result |
 |---|---|
 | Engine/scenario core | 22/22 PASS |
-| Full frontend | 47/47 PASS |
-| Full backend | 62/62 PASS |
+| Full frontend (`main`-based delivery branch) | 46/46 PASS |
+| Full backend (`main`-based delivery branch) | 58/58 PASS |
 | Stress | 1,000 runs / 100 seeds / 0 virtual collisions |
 | Targeted ESLint | PASS |
 | Global ESLint | FAIL baseline — 39 errors, 17 warnings |
 | Production build | PASS — 2315 modules |
 | Simulator chunk | CSS 8.63 kB/gzip 2.48; JS 48.14 kB/gzip 15.64 |
-| Base chunk | CSS 55.03 kB/gzip 14.49; JS 1557.68 kB/gzip 436.09 |
+| Base chunk | CSS 55.03 kB/gzip 14.49; JS 1555.97 kB/gzip 435.46 |
 | Chunk warning | >500 kB remains |
 | HTTPS route smoke | 200 |
 | Visual browser/WebGL E2E | NOT VERIFIED — browser unavailable |
@@ -378,8 +378,8 @@ Feature đã triển khai một simulator frontend-only/offline tại `/demo/roa
 Validation hiện tại:
 
 - engine/scenario 22/22 pass;
-- full frontend 47/47 pass;
-- backend 62/62 pass;
+- full frontend 46/46 pass trên branch sạch từ `main`;
+- backend 58/58 pass trên branch sạch từ `main`;
 - stress 1,000 runs trên 100 seed, 0 virtual collisions;
 - targeted ESLint pass;
 - production build pass: 2315 modules; simulator chunk CSS 8.63 kB/gzip 2.48, JS 48.14 kB/gzip 15.64; base JS còn warning >500 kB;

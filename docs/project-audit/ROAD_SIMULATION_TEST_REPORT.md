@@ -5,8 +5,8 @@
 Standalone road simulator đạt các automated gate áp dụng cho phạm vi feature:
 
 - engine/scenario core: **22/22 PASS**;
-- toàn bộ frontend Node suite: **47/47 PASS**;
-- toàn bộ backend regression suite: **62/62 PASS**;
+- toàn bộ frontend Node suite trên branch sạch từ `main`: **46/46 PASS**;
+- toàn bộ backend regression suite trên branch sạch từ `main`: **58/58 PASS**;
 - stress deterministic: **1,000/1,000 runs hoàn tất, 0 virtual collision** trên 10 scenario × 100 seed;
 - targeted ESLint cho phạm vi simulation: **PASS**;
 - production build: **PASS**;
@@ -43,8 +43,8 @@ Commit SHA và push result không được nhúng trong report này vì report n
 | Gate | Kết quả | Bằng chứng/diễn giải |
 |---|---|---|
 | Core engine + scenario tests | **PASS — 22/22** | 9 engine tests + 13 scenario/security-boundary tests |
-| Full frontend tests | **PASS — 47/47** | 22 core + 8 support tests + 17 regression tests hiện hữu |
-| Backend regression tests | **PASS — 62/62** | Không có backend source nào được feature sửa |
+| Full frontend tests | **PASS — 46/46** | 22 core + 8 support tests + 16 regression tests hiện hữu trên `main` |
+| Backend regression tests | **PASS — 58/58** | Không có backend source nào được feature sửa |
 | Deterministic stress | **PASS — 1,000 runs** | 10 scenario × 100 seed; 0 collision trong virtual world |
 | Targeted ESLint | **PASS** | Simulation source/tests và route integration không phát sinh lint finding |
 | Repository-wide ESLint | **FAIL — baseline** | 39 errors, 17 warnings; cùng baseline audit trước feature, không phát sinh từ simulation scope |
@@ -98,9 +98,9 @@ Hai nhóm trên tạo tổng **22/22 core tests**.
 
 ### 4.4 Regression compatibility
 
-17 frontend tests hiện hữu vẫn pass. Cộng với 30 test mới của simulation domain/support layer, full frontend suite đạt **47/47**. Đây là kết quả trên working tree hiện tại, nên nó cũng bao gồm các thay đổi camera/camera-test đã dirty từ trước; 22 core simulation tests và 8 simulation support tests không phụ thuộc các path dirty đó.
+16 frontend tests hiện hữu trên `main` vẫn pass. Cộng với 30 test mới của simulation domain/support layer, full frontend suite đạt **46/46** trên branch delivery sạch. Worktree WIP chứa thay đổi camera chưa commit đã từng đạt 47/47, nhưng số đó không được dùng làm evidence cho PR nhắm `main`.
 
-Backend suite đạt **62/62**. Đây là regression signal, không phải bằng chứng các finding bảo mật trước đó đã đóng. Cụ thể, PR B/server verification grant vẫn chưa tồn tại và medical fallback finding vẫn nằm ngoài phạm vi feature.
+Backend suite của branch delivery sạch đạt **58/58**. Bốn test hand-model bổ sung thuộc PR #11 chưa merge nên không nằm trong target branch; PR #11 được giữ độc lập. Đây là regression signal, không phải bằng chứng các finding bảo mật trước đó đã đóng. Cụ thể, PR B/server verification grant vẫn chưa tồn tại và medical fallback finding vẫn nằm ngoài phạm vi feature.
 
 ## 5. Kết quả S01–S10 thực tế
 
@@ -193,7 +193,7 @@ Production build pass với:
 | Simulator CSS chunk | 8.63 kB; gzip 2.48 kB |
 | Base CSS | 55.03 kB; gzip 14.49 kB |
 | Simulator JS chunk | 48.14 kB; gzip 15.64 kB |
-| Base JavaScript | 1557.68 kB; gzip 436.09 kB |
+| Base JavaScript | 1555.97 kB; gzip 435.46 kB |
 | Build status | PASS |
 
 Build vẫn phát warning base chunk lớn hơn 500 kB. Warning này không chặn build nhưng là performance debt có sẵn. Route simulator đã dùng `React.lazy`, nên Three.js/simulator được tách thành chunk riêng thay vì tăng initial route bundle.
