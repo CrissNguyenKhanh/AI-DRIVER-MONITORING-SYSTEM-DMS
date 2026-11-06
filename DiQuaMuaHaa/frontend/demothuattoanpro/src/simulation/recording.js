@@ -46,12 +46,13 @@ export function drawRecordingComposite({
     `Kịch bản: ${overlay.scenarioLabel}`,
     `Tài xế: ${overlay.driverState} · Chế độ: ${overlay.assistanceMode}`,
     `Quyết định: ${overlay.decision} · Tốc độ ảo: ${overlay.speedKph} km/h`,
+    `Rủi ro: ${overlay.roadRisk || "UNKNOWN"} · ${overlay.warningText || "Không có cảnh báo ưu tiên"}`,
   ];
 
   context.save();
   context.fillStyle = "rgba(3, 10, 18, 0.78)";
-  context.fillRect(0, 0, width, 112);
-  context.font = "700 18px system-ui, sans-serif";
+  context.fillRect(0, 0, width, 138);
+  context.font = "700 17px system-ui, sans-serif";
   context.fillStyle = "#f8fafc";
   lines.forEach((line, index) => context.fillText(line, 20, 27 + index * 25));
   context.restore();

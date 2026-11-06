@@ -12,6 +12,19 @@ export {
   createScenario,
 } from "./scenarios.js";
 export { evaluateSimulationOrchestrator } from "./SimulationOrchestrator.js";
+export { AudioAlertManager } from "./AudioAlertManager.js";
+export { DrivingEventTimeline } from "./DrivingEventTimeline.js";
+export { eventsFromSimulationTransition, virtualRoadStatus } from "./RoadPerceptionAdapter.js";
+export { SafetyAlertEngine, ALERT_PRIORITY, alertCopy } from "./SafetyAlertEngine.js";
+export {
+  EVENT_SEVERITIES,
+  EVENT_SOURCE_MODES,
+  NormalizedEventGuard,
+  createNormalizedEvent,
+  simulationEventId,
+} from "./eventContract.js";
+export { SimulationSessionManager } from "./SimulationSessionManager.js";
+export { buildSimulationReport, timelineToCsv } from "./SimulationReport.js";
 export {
   SimulationController,
   advanceSimulation,

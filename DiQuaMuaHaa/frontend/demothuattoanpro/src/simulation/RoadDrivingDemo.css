@@ -8,6 +8,35 @@
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
+.road-sim-header-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.road-sim-header-state > strong {
+  color: #f7fbff;
+  font-size: 1.4rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.driver-state {
+  padding: 8px 11px;
+  border: 1px solid #4d6c7e;
+  border-radius: 999px;
+  background: #0b1b28;
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.driver-state--normal { border-color: #35d6a4; color: #77f5ce; }
+.driver-state--distracted,
+.driver-state--drowsy { border-color: #ff9d42; color: #ffc47a; }
+.driver-state--high_risk { border-color: #ff4365; color: #ff9bad; }
+.driver-state--unknown { border-color: #7f91a0; color: #c1cfda; }
+
 .road-sim-page * {
   box-sizing: border-box;
 }
@@ -58,6 +87,9 @@
 }
 
 .road-sim-gate,
+.road-sim-modebar,
+.road-alert,
+.road-cockpit-grid,
 .road-sim-toolbar,
 .road-sim-grid,
 .road-sim-readouts,
@@ -67,6 +99,202 @@
   margin-right: auto;
   margin-left: auto;
 }
+
+.road-sim-modebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 9px;
+  border: 1px solid rgba(112, 163, 194, 0.2);
+  border-radius: 14px;
+  background: rgba(4, 15, 28, 0.84);
+}
+
+.road-sim-modebar button {
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px;
+  color: #89a6b9;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.road-sim-modebar button.is-active {
+  color: #76f5db;
+  background: #10352f;
+}
+
+.road-sim-health-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.road-sim-health-strip span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  color: #9db5c5;
+  background: #071521;
+  white-space: nowrap;
+  font-size: 0.61rem;
+  font-weight: 800;
+}
+
+.road-sim-health-strip i,
+.system-health-panel i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.health-ready { color: #55e6bd !important; }
+.health-running { color: #62d8ff !important; }
+.health-degraded { color: #f2c45e !important; }
+.health-starting { color: #9bb3c2 !important; }
+.health-unavailable { color: #aab3bb !important; }
+.health-blocked { color: #ff7890 !important; }
+
+.road-alert {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 13px 15px;
+  border: 1px solid;
+  border-radius: 13px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.26);
+}
+
+.road-alert > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.road-alert span,
+.road-alert small { font-size: 0.67rem; }
+.road-alert strong { font-size: clamp(0.88rem, 1.6vw, 1.15rem); }
+.road-alert button {
+  padding: 7px 10px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.road-alert--warning { border-color: #fb7d35; color: #ffd0a6; background: rgba(112, 43, 8, 0.72); }
+.road-alert--critical { border-color: #ff3d5d; color: #ffe0e5; background: rgba(111, 10, 29, 0.82); animation: criticalPulse 1.25s ease-in-out infinite alternate; }
+.road-alert--caution { border-color: #e6bd45; color: #ffebaa; background: rgba(88, 66, 8, 0.72); }
+.road-alert--unavailable { border-color: #7f93a0; color: #d1dbe2; background: rgba(43, 55, 64, 0.82); }
+.road-alert--info { border-color: #32c99b; color: #c8ffed; background: rgba(8, 73, 57, 0.72); }
+
+@keyframes criticalPulse {
+  from { box-shadow: 0 0 0 rgba(255, 61, 93, 0); }
+  to { box-shadow: 0 0 22px rgba(255, 61, 93, 0.32); }
+}
+
+.road-cockpit-grid {
+  display: grid;
+  grid-template-columns: minmax(230px, 270px) minmax(560px, 1fr) minmax(290px, 340px);
+  gap: 12px;
+  align-items: start;
+}
+
+.road-center-stack {
+  min-width: 0;
+}
+
+.road-dms-panel,
+.road-sim-side {
+  min-height: 620px;
+  max-height: 780px;
+  overflow-y: auto;
+}
+
+.road-dms-panel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(103, 166, 199, 0.23);
+  border-radius: 18px;
+  background: rgba(4, 15, 27, 0.9);
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #68e9cf;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.camera-placeholder {
+  display: flex;
+  min-height: 170px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px dashed rgba(100, 171, 202, 0.42);
+  border-radius: 13px;
+  color: #85a8bc;
+  background:
+    linear-gradient(rgba(9, 27, 40, 0.72), rgba(3, 13, 21, 0.9)),
+    repeating-linear-gradient(90deg, transparent, transparent 15px, rgba(67, 132, 156, 0.08) 16px);
+  text-align: center;
+}
+
+.camera-placeholder.synthetic { color: #7fe9ce; }
+.camera-placeholder strong { font-size: 0.72rem; }
+.camera-placeholder span { color: #708e9f; font-size: 0.67rem; line-height: 1.4; }
+.live-dms-bridge { display: flex; flex-direction: column; gap: 8px; }
+.live-dms-bridge > small { color: #7b98a9; font-size: 0.63rem; line-height: 1.4; }
+
+.road-link-button {
+  padding: 9px 10px;
+  border: 1px solid #2dcdaa;
+  border-radius: 9px;
+  color: #83f4dc;
+  text-align: center;
+  text-decoration: none;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.dms-metrics {
+  display: flex;
+  margin: 0;
+  flex-direction: column;
+}
+
+.dms-metrics div {
+  display: grid;
+  grid-template-columns: 1fr minmax(0, 1.15fr);
+  gap: 7px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(99, 151, 178, 0.14);
+  font-size: 0.66rem;
+}
+
+.dms-metrics dt { color: #779bad; }
+.dms-metrics dd { margin: 0; overflow-wrap: anywhere; color: #dcebf3; text-align: right; font-weight: 800; }
 
 .road-sim-gate {
   display: flex;
@@ -92,6 +320,11 @@
   border: 1px solid rgba(112, 163, 194, 0.2);
   border-radius: 14px;
   background: rgba(4, 15, 28, 0.84);
+}
+
+.road-center-stack > .road-sim-toolbar {
+  margin-top: 10px;
+  margin-bottom: 0;
 }
 
 .road-sim-toolbar button,
@@ -196,6 +429,8 @@
   box-shadow: 0 20px 55px rgba(0, 0, 0, 0.28);
 }
 
+.road-cockpit-grid .road-sim-pane { height: 620px; }
+
 .road-sim-pane.is-hidden {
   display: none;
 }
@@ -223,6 +458,64 @@
   background: rgba(2, 9, 16, 0.78);
   pointer-events: none;
 }
+
+.virtual-risk {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid;
+  border-radius: 9px;
+  background: rgba(2, 9, 16, 0.8);
+  text-align: right;
+}
+
+.virtual-risk span { font-size: 0.58rem; letter-spacing: 0.1em; }
+.virtual-risk strong { font-size: 0.78rem; }
+.virtual-risk--clear { border-color: #33d6a5; color: #65ebc3; }
+.virtual-risk--warning { border-color: #ff9c42; color: #ffc078; }
+.virtual-risk--critical { border-color: #ff4365; color: #ff8ca0; }
+.virtual-risk--unknown { border-color: #899aa5; color: #b8c3ca; }
+
+.virtual-cluster {
+  position: absolute;
+  bottom: 58px;
+  left: 50%;
+  display: grid;
+  grid-template-columns: auto auto auto;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 150px;
+  padding: 10px 13px;
+  border: 1px solid rgba(125, 210, 229, 0.34);
+  border-radius: 14px;
+  color: #eafaff;
+  background: rgba(2, 10, 17, 0.8);
+  transform: translateX(-50%);
+  backdrop-filter: blur(6px);
+}
+
+.virtual-cluster svg { width: 18px; color: #4be3c5; }
+.virtual-cluster > strong { font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+.virtual-cluster > span { color: #84a6b8; font-size: 0.6rem; }
+.virtual-cluster i { padding: 3px 5px; border-radius: 4px; color: #536d7b; background: #0a1720; font-size: 0.52rem; font-style: normal; font-weight: 900; }
+.virtual-cluster .brake-on { color: #fff; background: #e62f4e; }
+.virtual-cluster .signal-on { color: #161006; background: #ffbe38; }
+
+.audio-settings {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  padding: 7px 11px 0;
+  color: #7696a9;
+  font-size: 0.66rem;
+}
+
+.audio-settings label { display: flex; align-items: center; gap: 7px; }
 
 .road-sim-stage-overlay span {
   color: #8fb6c9;
@@ -351,6 +644,8 @@
   background: rgba(4, 15, 27, 0.9);
 }
 
+.road-cockpit-grid .road-sim-side { min-height: 620px; }
+
 .road-sim-field {
   display: flex;
   flex-direction: column;
@@ -414,6 +709,17 @@
   margin-top: auto;
 }
 
+.compact-timeline { margin-top: 4px; }
+.compact-timeline h2 { margin: 0 0 8px; font-size: 0.78rem; }
+.compact-timeline > p { color: #7391a2; font-size: 0.7rem; }
+.compact-timeline ol { max-height: 260px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.compact-timeline li { display: grid; grid-template-columns: 48px 1fr; gap: 7px; padding: 7px 0; border-bottom: 1px solid rgba(99, 151, 178, 0.14); }
+.compact-timeline time { color: #55e7cd; font-size: 0.61rem; font-variant-numeric: tabular-nums; }
+.compact-timeline li div { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.compact-timeline strong { overflow-wrap: anywhere; color: #ddecf4; font-size: 0.65rem; }
+.compact-timeline span,
+.compact-timeline small { color: #7897a8; font-size: 0.58rem; }
+
 .road-sim-lanes div {
   display: flex;
   min-width: 0;
@@ -448,11 +754,50 @@
 
 .road-sim-readouts {
   display: grid;
-  grid-template-columns: repeat(10, minmax(120px, 1fr));
+  grid-template-columns: repeat(8, minmax(120px, 1fr));
   gap: 8px;
   margin-top: 12px;
   overflow-x: auto;
 }
+
+.system-health-panel,
+.session-report {
+  padding: 16px;
+  border: 1px solid rgba(103, 166, 199, 0.2);
+  border-radius: 14px;
+  background: rgba(4, 15, 27, 0.88);
+}
+
+.system-health-panel h2,
+.session-report h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.system-health-panel > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.system-health-panel > div span {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: #071622;
+  font-size: 0.68rem;
+}
+
+.system-health-panel > div strong { font-size: 0.6rem; }
+.system-health-panel p,
+.session-report p { color: #829dad; font-size: 0.72rem; line-height: 1.45; }
+.session-report > strong { color: #72eacb; }
+.session-report > div { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.session-report button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid rgba(91, 204, 185, 0.45); border-radius: 8px; color: #a8f8e8; background: #08231f; cursor: pointer; font-size: 0.68rem; font-weight: 800; }
 
 .road-sim-readouts article {
   display: flex;
@@ -572,6 +917,18 @@
     grid-template-columns: 1fr;
   }
 
+  .road-cockpit-grid {
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  }
+
+  .road-cockpit-grid .road-sim-side {
+    grid-column: 1 / -1;
+    display: grid;
+    min-height: 0;
+    max-height: none;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .road-sim-side {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -589,6 +946,31 @@
 
   .road-sim-header {
     flex-direction: column;
+  }
+
+  .road-sim-header-state,
+  .road-sim-modebar,
+  .audio-settings {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .road-alert { grid-template-columns: auto 1fr; }
+  .road-alert button { grid-column: 2; justify-self: start; }
+
+  .road-cockpit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .road-dms-panel,
+  .road-cockpit-grid .road-sim-side {
+    min-height: 0;
+    max-height: none;
+  }
+
+  .road-cockpit-grid .road-sim-side {
+    grid-column: auto;
+    grid-template-columns: 1fr;
   }
 
   .road-sim-stage--split {
@@ -616,4 +998,20 @@
   .road-sim-page *::after {
     scroll-behavior: auto !important;
   }
+
+  .road-alert--critical { animation: none; }
+}
+
+@media print {
+  .road-sim-toolbar,
+  .road-sim-modebar,
+  .road-sim-camera-switch,
+  .road-sim-upload,
+  .road-sim-toast { display: none !important; }
+  .road-sim-page { padding: 12px; color: #111827; background: #fff; }
+  .road-cockpit-grid { grid-template-columns: 1fr; }
+  .road-dms-panel,
+  .road-sim-side,
+  .system-health-panel,
+  .session-report { color: #111827; background: #fff; break-inside: avoid; }
 }
