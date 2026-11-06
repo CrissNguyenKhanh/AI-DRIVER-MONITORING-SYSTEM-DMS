@@ -9,6 +9,7 @@ import { getDmsApiBase } from "../config/apiEndpoints";
 import { dmsAuthHeaders } from "../utils/authApi";
 import { getWebcamSupportErrorMessage } from "../utils/cameraContext";
 import { createCameraSession } from "../utils/cameraSession.js";
+import { createDmsMetricsChannel } from "../utils/DriverMonitoringAdapter.js";
 import {
   speakOwnerGreeting,
   warmSpeechVoices,
@@ -1240,6 +1241,7 @@ export default function DriverMonitorDMS() {
   const alarmIntervalRef = useRef(null);
   const vibrateIntervalRef = useRef(null);
   const alarmKindRef = useRef(null);
+  const metricsChannelRef = useRef(null);
 
   const phoneDetectionRef = useRef({ active: false, prob: 0, bbox: null });
   const phoneActiveFilteredRef = useRef(false);
@@ -1353,6 +1355,14 @@ export default function DriverMonitorDMS() {
   const [sessionLogItems, setSessionLogItems] = useState([]);
 
   const dismissAuthWelcome = useCallback(() => setAuthWelcomeProfile(null), []);
+
+  useEffect(() => {
+    metricsChannelRef.current = createDmsMetricsChannel();
+    return () => {
+      metricsChannelRef.current?.close();
+      metricsChannelRef.current = null;
+    };
+  }, []);
 
   /** Phiên lái: bắt đầu khi active, kết thúc khi rời active (locked / idle / …). */
   useEffect(() => {
@@ -2162,6 +2172,10 @@ export default function DriverMonitorDMS() {
       attentionMetricsRef.current = data;
       setAttentionMetrics(data);
       setAttentionError("");
+      metricsChannelRef.current?.publish({
+        ...data,
+        phone_usage: phoneDetectionRef.current?.active === true,
+      });
       poseRef.current = {
         yaw: data.head_pose?.yaw ?? null,
         pitch: data.head_pose?.pitch ?? null,
