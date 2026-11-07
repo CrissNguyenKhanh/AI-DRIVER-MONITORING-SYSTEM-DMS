@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 from data.api import api
+from data.auth import hash_secret
 
 
 class DatabaseTests(unittest.TestCase):
@@ -18,7 +19,7 @@ class DatabaseTests(unittest.TestCase):
 
     def run_route(self, postgres, path, payload=None, rows=()):
         conn, cur = self.connection(rows)
-        with patch.object(api, "POSTGRES_ACTIVE", postgres), patch.object(api, "get_mysql_conn", return_value=conn), patch.object(api, "_authenticate_request", return_value=api.Principal(role="admin")), patch.object(api, "_collect_face_embeddings", return_value=[[1., 0.]] * 3), patch.object(api, "_telegram_send_decision_message", return_value=9):
+        with patch.object(api, "POSTGRES_ACTIVE", postgres), patch.object(api, "get_mysql_conn", return_value=conn), patch.object(api, "_authenticate_request", return_value=api.Principal(role="admin", session_id="admin-session")), patch.object(api, "_collect_face_embeddings", return_value=[[1., 0.]] * 3), patch.object(api, "_telegram_send_decision_message", return_value=9):
             client = api.app.test_client()
             response = client.get(path) if payload is None else client.post(path, json=payload)
         self.assertEqual(response.status_code, 200, response.json)
@@ -60,10 +61,22 @@ class DatabaseTests(unittest.TestCase):
                 data, _, _ = self.run_route(postgres, "/api/identity/request_decision",
                                             {"driver_id": "demo", "phase": "auth"}, rows)
                 self.assertEqual(data["request_id"], 42)
+                grant = {
+                    "grant_hash": hash_secret("approved-grant"),
+                    "challenge_id": "challenge-a",
+                    "driver_id": "demo",
+                    "auth_session_hash": "admin-session",
+                    "purpose": "start_driving_session",
+                    "expires_at": datetime.utcnow() + timedelta(minutes=1),
+                    "consumed_at": None,
+                    "revoked_at": None,
+                }
+                start_rows = [grant] + ([{"id": 42}] if postgres else [])
                 data, sql, _ = self.run_route(postgres, "/api/driving/session/start",
-                                              {"driver_id": "demo"}, [{"id": 42}] if postgres else [])
+                                              {"driver_id": "demo", "verification_grant": "approved-grant"}, start_rows)
                 self.assertEqual(data["session_id"], 42)
-                self.assertEqual("RETURNING id" in sql[-1], postgres)
+                session_insert = next(q for q in sql if "INSERT INTO driving_sessions" in q)
+                self.assertEqual("RETURNING id" in session_insert, postgres)
                 data, sql, _ = self.run_route(postgres, "/api/driving/session/alert",
                                               {"session_id": 42, "alert_type": "phone", "delta": 2},
                                               [{"id": 42, "driver_id": "demo"}, {"count": 5}])
@@ -105,17 +118,27 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(connect.call_args.kwargs["connect_timeout"], 5)
 
     def test_failed_write_closes_connection_without_data_commit(self):
-        conn, cur = self.connection()
+        grant = {
+            "grant_hash": hash_secret("approved-grant"),
+            "challenge_id": "challenge-a",
+            "driver_id": "demo",
+            "auth_session_hash": "admin-session",
+            "purpose": "start_driving_session",
+            "expires_at": datetime.utcnow() + timedelta(minutes=1),
+            "consumed_at": None,
+            "revoked_at": None,
+        }
+        conn, cur = self.connection([grant])
         def execute(sql, *args):
-            if sql.startswith("INSERT"):
+            if "INSERT INTO driving_sessions" in sql:
                 raise RuntimeError("private SQL details")
         cur.execute.side_effect = execute
-        with patch.object(api, "get_mysql_conn", return_value=conn), patch.object(api, "_authenticate_request", return_value=api.Principal(role="admin")), patch.object(api.app.logger, "exception"):
-            response = api.app.test_client().post("/api/driving/session/start", json={"driver_id": "demo"})
+        with patch.object(api, "get_mysql_conn", return_value=conn), patch.object(api, "_authenticate_request", return_value=api.Principal(role="admin", session_id="admin-session")), patch.object(api.app.logger, "exception"):
+            response = api.app.test_client().post("/api/driving/session/start", json={"driver_id": "demo", "verification_grant": "approved-grant"})
         self.assertEqual(response.status_code, 500)
         self.assertNotIn("private", str(response.json))
-        # Only schema is committed. Closing the DB-API connection rolls back the failed write.
-        conn.commit.assert_called_once()
+        conn.commit.assert_not_called()
+        conn.rollback.assert_called_once()
         conn.close.assert_called_once()
 
 

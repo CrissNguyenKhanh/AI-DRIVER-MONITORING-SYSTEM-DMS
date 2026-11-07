@@ -1,6 +1,10 @@
 import React, { useEffect, useRef } from "react";
 import { getDmsApiBase } from "../config/apiEndpoints";
 import { dmsAuthHeaders } from "../utils/authApi";
+import {
+  createDrivingAuthorizationChallenge,
+  getDrivingAuthorizationChallenge,
+} from "../utils/drivingSessionApi";
 
 const DEFAULT_API_BASE = getDmsApiBase();
 const DEFAULT_VERIFY_INTERVAL_MS = 1200;
@@ -82,6 +86,7 @@ export default function OwnerVerifyGate({
   const ownerStreakRef = useRef(0);
   const lockedStateRef = useRef(false);
   const pendingRequestIdRef = useRef(null);
+  const pendingVerificationTokenRef = useRef(null);
 
   useEffect(() => {
     if (!enabled) return;
@@ -106,30 +111,12 @@ export default function OwnerVerifyGate({
       return { ok: res.ok, data };
     }
 
-    async function createDecisionRequest(similarity, threshold) {
-      const res = await fetch(`${apiBase}/api/identity/request_decision`, {
-        method: "POST",
-        headers: dmsAuthHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          driver_id: driverId,
-          similarity,
-          threshold,
-          reason: "intruder",
-          timeout_sec: decisionTimeoutSec,
-          phase: "auth",
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      return { ok: res.ok, data };
+    async function createDecisionRequest() {
+      return createDrivingAuthorizationChallenge(apiBase, { driverId });
     }
 
     async function pollDecisionStatus(requestId) {
-      const res = await fetch(
-        `${apiBase}/api/identity/decision_status?request_id=${encodeURIComponent(String(requestId))}`,
-        { headers: dmsAuthHeaders() },
-      );
-      const data = await res.json().catch(() => ({}));
-      return { ok: res.ok, data };
+      return getDrivingAuthorizationChallenge(apiBase, requestId);
     }
 
     async function loop() {
@@ -157,12 +144,24 @@ export default function OwnerVerifyGate({
             const remain = Number(stRes.data?.remaining_sec || 0);
             let waitMsg = `WAITING OWNER DECISION (${remain}s)`;
 
-            if (stRaw === "accepted") {
+            if (stRaw === "approved") {
+              const verificationGrant = pendingVerificationTokenRef.current;
               pendingRequestIdRef.current = null;
+              pendingVerificationTokenRef.current = null;
+              lockedStateRef.current = true;
               intruderStreakRef.current = 0;
               ownerStreakRef.current = unlockStreakFrames;
-              waitMsg = "OWNER ACCEPTED REMOTE OVERRIDE";
-              onUnlockRef.current?.({ driverId, source: "telegram" });
+              waitMsg = "SERVER AUTHORIZATION APPROVED";
+              if (!verificationGrant) {
+                onLockRef.current?.("AUTHORIZATION TOKEN LOST. REQUEST AGAIN.");
+                if (!cancelled) tid = setTimeout(loop, verifyIntervalMs);
+                return;
+              }
+              onUnlockRef.current?.({
+                driverId,
+                source: "server_approval",
+                verification_grant: verificationGrant,
+              });
               if (onUpdateRef.current) {
                 onUpdateRef.current({
                   hasRegistered: true,
@@ -178,6 +177,7 @@ export default function OwnerVerifyGate({
             }
             if (stRaw === "rejected" || stRaw === "expired") {
               pendingRequestIdRef.current = null;
+              pendingVerificationTokenRef.current = null;
               lockedStateRef.current = false;
               const lockMsg =
                 stRaw === "rejected"
@@ -279,18 +279,26 @@ export default function OwnerVerifyGate({
           ownerStreakRef.current += 1;
 
           if (carState === "auth" && ownerStreakRef.current >= unlockStreakFrames && !lockedStateRef.current) {
-            lockedStateRef.current = true;
-            onUnlockRef.current?.({
-              driverId,
-              driver_id: res.data?.driver_id || driverId,
-              registered_name: res.data?.registered_name,
-              profile_image_base64: res.data?.profile_image_base64,
-              registered_at: res.data?.registered_at,
-              similarity: res.data?.similarity,
-              threshold: res.data?.threshold,
-              samples_used: res.data?.samples_used,
-              source: "face",
-            });
+            if (!pendingRequestIdRef.current) {
+              const reqRes = await createDecisionRequest();
+              if (!reqRes.ok || reqRes.data?.error) {
+                onLockRef.current?.(
+                  String(reqRes.data?.error || "Cannot request server authorization"),
+                );
+              } else {
+                pendingRequestIdRef.current = reqRes.data?.challenge_id || null;
+                pendingVerificationTokenRef.current =
+                  reqRes.data?.verification_token || null;
+                onUpdateRef.current?.({
+                  hasRegistered,
+                  isOwner: false,
+                  similarity,
+                  threshold,
+                  samplesUsed,
+                  error: "WAITING SERVER AUTHORIZATION",
+                });
+              }
+            }
           }
         } else {
           ownerStreakRef.current = 0;
@@ -308,15 +316,17 @@ export default function OwnerVerifyGate({
 
           if (mustEscalate) {
             if (!pendingRequestIdRef.current) {
-              const reqRes = await createDecisionRequest(similarity, threshold);
+              const reqRes = await createDecisionRequest();
               if (!reqRes.ok || reqRes.data?.error) {
                 pendingRequestIdRef.current = null;
                 lockedStateRef.current = false;
                 msg = String(reqRes.data?.error || "Cannot request owner decision");
                 onLockRef.current?.(msg);
               } else {
-                pendingRequestIdRef.current = reqRes.data?.request_id || null;
-                const remain = Number(reqRes.data?.remaining_sec || decisionTimeoutSec);
+                pendingRequestIdRef.current = reqRes.data?.challenge_id || null;
+                pendingVerificationTokenRef.current =
+                  reqRes.data?.verification_token || null;
+                const remain = decisionTimeoutSec;
                 msg = `WAITING OWNER DECISION (${remain}s)`;
               }
             }
@@ -354,6 +364,7 @@ export default function OwnerVerifyGate({
     return () => {
       cancelled = true;
       if (tid) clearTimeout(tid);
+      pendingVerificationTokenRef.current = null;
     };
   }, [
     enabled,
