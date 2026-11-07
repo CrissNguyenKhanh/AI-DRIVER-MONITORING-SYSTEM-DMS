@@ -134,7 +134,7 @@ class OwnershipTests(unittest.TestCase):
         cur.lastrowid = 42
         return conn, cur
 
-    def test_identity_cross_driver_rejected_and_owner_allowed(self):
+    def test_identity_cross_driver_and_bearer_only_enrollment_are_rejected(self):
         with self.driver_a():
             response = self.client.post(
                 "/api/identity/register",
@@ -142,14 +142,18 @@ class OwnershipTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 403)
 
-        conn, _cur = self.connection()
-        with self.driver_a(), patch.object(api, "get_mysql_conn", return_value=conn), \
-                patch.object(api, "_collect_face_embeddings", return_value=[[1.0, 0.0]] * 3):
+        with self.driver_a(), patch.object(api, "_collect_face_embeddings") as collect:
             response = self.client.post(
                 "/api/identity/register",
-                json={"driver_id": "driver-a", "images": ["a", "b", "c"]},
+                json={
+                    "driver_id": "driver-a",
+                    "operation": "initial_enroll",
+                    "images": ["a", "b", "c"],
+                },
             )
-        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(response.status_code, 403, response.json)
+        self.assertEqual(response.json["code"], "enrollment_grant_required")
+        collect.assert_not_called()
 
     def test_driver_cannot_direct_bind_or_create_code_for_another_driver(self):
         with self.driver_a():
@@ -492,6 +496,161 @@ class VerificationGrantTests(unittest.TestCase):
             self.assertEqual(response.json["code"], expected)
             statements = [call.args[0] for call in cur.execute.call_args_list]
             self.assertFalse(any("INSERT INTO dms_authorization_grants" in sql for sql in statements))
+
+
+class BiometricEnrollmentTests(unittest.TestCase):
+    def setUp(self):
+        self.client = api.app.test_client()
+
+    @staticmethod
+    def connection(rows=()):
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.connection = conn
+        cur.fetchone.side_effect = rows
+        cur.rowcount = 1
+        cur.lastrowid = 88
+        return conn, cur
+
+    @staticmethod
+    def principal():
+        return patch.object(
+            api,
+            "_authenticate_request",
+            return_value=Principal("driver", "driver-a", "session-a"),
+        )
+
+    @staticmethod
+    def grant(purpose="identity_initial_enroll", **overrides):
+        row = {
+            "grant_hash": hash_secret("enrollment-grant"),
+            "challenge_id": "challenge-enroll",
+            "driver_id": "driver-a",
+            "auth_session_hash": "session-a",
+            "purpose": purpose,
+            "expires_at": datetime.utcnow() + timedelta(minutes=1),
+            "consumed_at": None,
+            "revoked_at": None,
+        }
+        row.update(overrides)
+        return row
+
+    def register(self, operation, conn):
+        with self.principal(), patch.object(api, "get_mysql_conn", return_value=conn), \
+                patch.object(api, "_collect_face_embeddings", return_value=[[1.0, 0.0]] * 3):
+            return self.client.post(
+                "/api/identity/register",
+                json={
+                    "driver_id": "driver-a",
+                    "name": "Driver A",
+                    "operation": operation,
+                    "enrollment_grant": "enrollment-grant",
+                    "images": ["raw-face-a", "raw-face-b", "raw-face-c"],
+                },
+            )
+
+    def test_initial_enrollment_is_conditional_insert_without_raw_image_storage(self):
+        conn, cur = self.connection([self.grant(), None])
+        response = self.register("initial_enroll", conn)
+
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(response.json["enrollment_version"], 1)
+        statements = [call.args[0] for call in cur.execute.call_args_list]
+        insert = next(sql for sql in statements if "INSERT INTO driver_identity" in sql)
+        self.assertIn("image_base64", insert)
+        self.assertIn("NULL", insert)
+        executed = str([call.args for call in cur.execute.call_args_list])
+        self.assertNotIn("raw-face", executed)
+        self.assertNotIn("enrollment-grant", executed)
+        self.assertIn(hash_secret("enrollment-grant"), executed)
+        conn.commit.assert_called_once()
+
+    def test_replacement_is_explicit_versioned_update_and_preserves_legacy_image(self):
+        conn, cur = self.connection(
+            [self.grant("identity_replace"), {"driver_id": "driver-a", "enrollment_version": 3}]
+        )
+        response = self.register("replace", conn)
+
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(response.json["enrollment_version"], 4)
+        statements = [call.args[0] for call in cur.execute.call_args_list]
+        update = next(sql for sql in statements if "UPDATE driver_identity" in sql)
+        self.assertIn("enrollment_version = enrollment_version + 1", update)
+        self.assertNotIn("image_base64", update)
+        self.assertFalse(any("ON DUPLICATE" in sql or "ON CONFLICT" in sql for sql in statements))
+
+    def test_initial_existing_and_replace_missing_profiles_fail_closed(self):
+        cases = [
+            ("initial_enroll", self.grant(), {"driver_id": "driver-a", "enrollment_version": 1}, "profile_exists"),
+            ("replace", self.grant("identity_replace"), None, "profile_missing"),
+        ]
+        for operation, grant, identity, expected in cases:
+            with self.subTest(operation=operation):
+                conn, cur = self.connection([grant, identity])
+                response = self.register(operation, conn)
+                self.assertEqual(response.status_code, 409, response.json)
+                self.assertEqual(response.json["code"], expected)
+                conn.commit.assert_not_called()
+                statements = [call.args[0] for call in cur.execute.call_args_list]
+                self.assertFalse(any("SET consumed_at" in sql for sql in statements))
+
+    def test_driving_grant_cannot_authorize_enrollment(self):
+        conn, _cur = self.connection([self.grant("start_driving_session")])
+        response = self.register("initial_enroll", conn)
+        self.assertEqual(response.status_code, 403, response.json)
+        self.assertEqual(response.json["code"], "grant_purpose_mismatch")
+        conn.commit.assert_not_called()
+
+    def test_profile_api_is_metadata_only_even_when_legacy_image_exists(self):
+        row = {
+            "driver_id": "driver-a",
+            "name": "Driver A",
+            "image_base64": "raw-legacy-image",
+            "embedding_json": "[1, 0]",
+            "created_at": datetime(2026, 1, 1),
+            "updated_at": datetime(2026, 2, 1),
+            "enrollment_version": 2,
+            "enrollment_status": "active",
+        }
+        conn, cur = self.connection([row])
+        with self.principal(), patch.object(api, "get_mysql_conn", return_value=conn):
+            response = self.client.get(
+                "/api/identity/driver_profile?driver_id=driver-a"
+            )
+
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertTrue(response.json["has_registered"])
+        self.assertNotIn("profile_image_base64", response.json)
+        self.assertNotIn("image_base64", response.json)
+        self.assertNotIn("embedding_json", response.json)
+        query = cur.execute.call_args_list[0].args[0]
+        self.assertNotIn("image_base64", query)
+        self.assertNotIn("embedding_json", query)
+
+    def test_identity_write_failure_rolls_back_grant_consumption(self):
+        conn, cur = self.connection([self.grant(), None])
+
+        def execute(sql, *args):
+            if "INSERT INTO driver_identity" in sql:
+                raise RuntimeError("test biometric write failure")
+
+        cur.execute.side_effect = execute
+        with self.principal(), patch.object(api, "get_mysql_conn", return_value=conn), \
+                patch.object(api, "_collect_face_embeddings", return_value=[[1.0, 0.0]] * 3), \
+                patch.object(api.app.logger, "exception"):
+            response = self.client.post(
+                "/api/identity/register",
+                json={
+                    "driver_id": "driver-a",
+                    "operation": "initial_enroll",
+                    "enrollment_grant": "enrollment-grant",
+                    "images": ["a", "b", "c"],
+                },
+            )
+
+        self.assertEqual(response.status_code, 500, response.json)
+        conn.rollback.assert_called_once()
+        conn.commit.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -1569,7 +1569,6 @@ export default function DriverMonitorDMS() {
         driver_id: id,
         registered_name:
           (detail && (detail.registered_name || detail.name)) || "",
-        profile_image_base64: detail && detail.profile_image_base64,
         registered_at: detail && detail.registered_at,
         similarity:
           detail && typeof detail.similarity === "number"
@@ -1583,7 +1582,7 @@ export default function DriverMonitorDMS() {
         source: (detail && detail.source) || "face",
       };
 
-      if (!merged.profile_image_base64 && id) {
+      if (!merged.registered_name && id) {
         try {
           const r = await fetch(
             `${API_BASE}/api/identity/driver_profile?driver_id=${encodeURIComponent(id)}`,
@@ -1595,8 +1594,6 @@ export default function DriverMonitorDMS() {
               ...merged,
               registered_name:
                 merged.registered_name || d.registered_name || id,
-              profile_image_base64:
-                merged.profile_image_base64 || d.profile_image_base64,
               registered_at: merged.registered_at || d.registered_at,
             };
           }

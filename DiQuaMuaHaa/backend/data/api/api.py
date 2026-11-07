@@ -56,6 +56,8 @@ from data.adas.frame_codec import decode_frame as decode_adas_frame
 from data.dms import AttentionRegistry, load_dms_attention_config
 from data.dms.attention import parse_landmark_payload
 from data.verification import (
+    IDENTITY_INITIAL_ENROLL,
+    IDENTITY_REPLACE,
     START_DRIVING_SESSION,
     challenge_expired,
     validate_grant_row,
@@ -691,10 +693,16 @@ def _telegram_send_verification_challenge(
     chat_id: int,
     driver_id: str,
     challenge_id: str,
+    purpose: str,
     timeout_sec: int,
 ) -> int:
+    purpose_text = {
+        START_DRIVING_SESSION: "BAT DAU PHIEN LAI XE",
+        IDENTITY_INITIAL_ENROLL: "DANG KY SINH TRAC HOC LAN DAU",
+        IDENTITY_REPLACE: "THAY THE SINH TRAC HOC",
+    }.get(purpose, purpose)
     text = (
-        "YEU CAU BAT DAU PHIEN LAI XE\n"
+        f"YEU CAU {purpose_text}\n"
         f"Driver ID: {driver_id}\n"
         f"Challenge: {challenge_id}\n"
         f"Het han sau: {timeout_sec}s\n\n"
@@ -2056,6 +2064,147 @@ def dms_attention() -> Any:
 # ═══════════════════════════════════════════════════════════════
 
 
+@app.post("/api/identity/enrollment/challenge")
+@require_auth()
+def create_identity_enrollment_challenge() -> Any:
+    payload = request.get_json(silent=True) or {}
+    principal: Principal = g.auth_principal
+    requested_driver_id = str(payload.get("driver_id") or "").strip() or None
+    if not principal.is_admin and requested_driver_id not in (None, principal.driver_id):
+        return jsonify({"code": "driver_mismatch", "error": "Access denied"}), 403
+    driver_id = requested_driver_id if principal.is_admin else principal.driver_id
+    if not driver_id:
+        return jsonify({"code": "missing_driver_id", "error": "Missing driver_id"}), 400
+    if not principal.session_id:
+        return jsonify({"code": "auth_session_required", "error": "Authentication session unavailable"}), 401
+
+    operation = str(payload.get("operation") or "").strip().lower()
+    purpose_by_operation = {
+        "initial_enroll": IDENTITY_INITIAL_ENROLL,
+        "replace": IDENTITY_REPLACE,
+    }
+    purpose = purpose_by_operation.get(operation)
+    if not purpose:
+        return jsonify({"code": "invalid_operation", "error": "operation must be initial_enroll or replace"}), 400
+
+    challenge_id = generate_secret()[:32]
+    verification_token = generate_secret()
+    now_dt = datetime.utcnow()
+    now = _utc_string(now_dt)
+    expires_at = _utc_string(now_dt + timedelta(seconds=DRIVING_CHALLENGE_TTL_SECONDS))
+    owner_row = None
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT driver_id FROM driver_identity WHERE driver_id = %s LIMIT 1",
+                (driver_id,),
+            )
+            profile_exists = cur.fetchone() is not None
+            if operation == "initial_enroll" and profile_exists:
+                conn.rollback()
+                return jsonify({"code": "profile_exists", "error": "Driver profile already exists"}), 409
+            if operation == "replace" and not profile_exists:
+                conn.rollback()
+                return jsonify({"code": "profile_missing", "error": "Driver profile does not exist"}), 409
+
+            cur.execute(
+                """
+                SELECT telegram_chat_id, telegram_user_id
+                FROM driver_telegram_owner WHERE driver_id = %s LIMIT 1
+                """,
+                (driver_id,),
+            )
+            owner_row = cur.fetchone()
+            chat_id = int(owner_row.get("telegram_chat_id") or 0) if owner_row else None
+            user_id = int(owner_row.get("telegram_user_id") or 0) if owner_row else None
+            cur.execute(
+                """
+                INSERT INTO dms_verification_challenges
+                    (challenge_id, secret_hash, driver_id, auth_session_hash, purpose,
+                     status, requested_at, expires_at, decided_at,
+                     decided_by_type, decided_by_id, telegram_chat_id,
+                     telegram_user_id, telegram_message_id)
+                VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s,
+                        NULL, NULL, NULL, %s, %s, NULL)
+                """,
+                (
+                    challenge_id,
+                    hash_secret(verification_token),
+                    driver_id,
+                    principal.session_id,
+                    purpose,
+                    now,
+                    expires_at,
+                    chat_id,
+                    user_id,
+                ),
+            )
+            _security_audit(
+                cur,
+                event_type="identity_enrollment_challenge_created",
+                challenge_id=challenge_id,
+                driver_id=driver_id,
+                auth_session_hash=principal.session_id,
+                actor_type=principal.role,
+                actor_id=principal.driver_id or principal.session_id,
+                outcome="pending",
+                reason_code=purpose,
+                created_at=now,
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        return _api_error()
+    finally:
+        conn.close()
+
+    delivery = "admin_approval_required"
+    if owner_row and TELEGRAM_BOT_TOKEN:
+        try:
+            chat_id = int(owner_row["telegram_chat_id"])
+            message_id = _telegram_send_verification_challenge(
+                chat_id,
+                driver_id,
+                challenge_id,
+                purpose,
+                DRIVING_CHALLENGE_TTL_SECONDS,
+            )
+            conn = get_mysql_conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE dms_verification_challenges
+                        SET telegram_message_id = %s
+                        WHERE challenge_id = %s AND status = 'pending'
+                        """,
+                        (message_id, challenge_id),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+            delivery = "telegram_owner"
+        except Exception:
+            app.logger.warning("Identity enrollment Telegram delivery failed")
+            delivery = "telegram_failed_admin_fallback"
+
+    return (
+        jsonify(
+            {
+                "challenge_id": challenge_id,
+                "verification_token": verification_token,
+                "operation": operation,
+                "purpose": purpose,
+                "status": "pending",
+                "expires_at": expires_at,
+                "delivery": delivery,
+            }
+        ),
+        202,
+    )
+
+
 @app.post("/api/identity/register")
 @require_auth()
 def identity_register() -> Any:
@@ -2084,6 +2233,23 @@ def identity_register() -> Any:
     if denied:
         return denied
 
+    principal: Principal = g.auth_principal
+    if not principal.session_id:
+        return jsonify({"code": "auth_session_required", "error": "Authentication session unavailable"}), 401
+    operation = str(payload.get("operation") or "").strip().lower()
+    purpose_by_operation = {
+        "initial_enroll": IDENTITY_INITIAL_ENROLL,
+        "replace": IDENTITY_REPLACE,
+    }
+    purpose = purpose_by_operation.get(operation)
+    if not purpose:
+        return jsonify({"code": "invalid_operation", "error": "operation must be initial_enroll or replace"}), 400
+    enrollment_grant = str(payload.get("enrollment_grant") or "").strip()
+    if not enrollment_grant:
+        return jsonify({"code": "enrollment_grant_required", "error": "Admin-approved enrollment grant required"}), 403
+    if len(enrollment_grant) > 512:
+        return jsonify({"code": "invalid_grant", "error": "Invalid enrollment grant"}), 403
+
     images = _extract_images_from_payload(payload)
     if not images:
         return jsonify({"error": "Thiếu 'image' hoặc 'images' trong JSON body."}), 400
@@ -2107,23 +2273,118 @@ def identity_register() -> Any:
         )
 
     embedding = _mean_embedding(embeddings)
-    image_b64 = images[0]
 
     embedding_json = json.dumps(embedding)
-    created_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    now_dt = datetime.utcnow()
+    created_at = _utc_string(now_dt)
+    grant_hash = hash_secret(enrollment_grant)
 
     conn = get_mysql_conn()
     try:
         with conn.cursor() as cur:
-            _ensure_identity_tables(cur)
-            upsert_row(
-                cur, "driver_identity",
-                ("driver_id", "name", "embedding_json", "image_base64", "created_at"),
-                (driver_id, name, embedding_json, image_b64, created_at),
-                ("driver_id",), ("name", "embedding_json", "image_base64", "created_at"),
-                postgres=POSTGRES_ACTIVE,
+            cur.execute(
+                """
+                SELECT grant_hash, challenge_id, driver_id, auth_session_hash,
+                       purpose, expires_at, consumed_at, revoked_at
+                FROM dms_authorization_grants
+                WHERE grant_hash = %s
+                FOR UPDATE
+                """,
+                (grant_hash,),
+            )
+            grant_row = cur.fetchone()
+            denial = validate_grant_row(
+                grant_row,
+                driver_id=driver_id,
+                auth_session_hash=principal.session_id,
+                purpose=purpose,
+                now=now_dt,
+            )
+            if denial:
+                conn.rollback()
+                return jsonify({"code": denial, "error": "Enrollment grant rejected"}), 403
+
+            cur.execute(
+                """
+                SELECT driver_id, enrollment_version
+                FROM driver_identity
+                WHERE driver_id = %s
+                FOR UPDATE
+                """,
+                (driver_id,),
+            )
+            identity_row = cur.fetchone()
+            if operation == "initial_enroll" and identity_row is not None:
+                conn.rollback()
+                return jsonify({"code": "profile_exists", "error": "Initial enrollment requires no existing profile"}), 409
+            if operation == "replace" and identity_row is None:
+                conn.rollback()
+                return jsonify({"code": "profile_missing", "error": "Replacement requires an existing profile"}), 409
+
+            cur.execute(
+                """
+                UPDATE dms_authorization_grants
+                SET consumed_at = %s
+                WHERE grant_hash = %s
+                  AND driver_id = %s
+                  AND auth_session_hash = %s
+                  AND purpose = %s
+                  AND consumed_at IS NULL
+                  AND revoked_at IS NULL
+                  AND expires_at > %s
+                """,
+                (created_at, grant_hash, driver_id, principal.session_id, purpose, created_at),
+            )
+            if cur.rowcount != 1:
+                conn.rollback()
+                return jsonify({"code": "grant_replayed", "error": "Enrollment grant rejected"}), 403
+
+            if operation == "initial_enroll":
+                cur.execute(
+                    """
+                    INSERT INTO driver_identity
+                        (driver_id, name, embedding_json, image_base64, created_at,
+                         updated_at, enrollment_version, enrollment_status)
+                    VALUES (%s, %s, %s, NULL, %s, %s, 1, 'active')
+                    """,
+                    (driver_id, name, embedding_json, created_at, created_at),
+                )
+                enrollment_version = 1
+            else:
+                cur.execute(
+                    """
+                    UPDATE driver_identity
+                    SET name = %s, embedding_json = %s, updated_at = %s,
+                        enrollment_version = enrollment_version + 1,
+                        enrollment_status = 'active'
+                    WHERE driver_id = %s
+                    """,
+                    (name, embedding_json, created_at, driver_id),
+                )
+                if cur.rowcount != 1:
+                    raise RuntimeError("Identity replacement lost its target row")
+                enrollment_version = int(identity_row.get("enrollment_version") or 1) + 1
+
+            _security_audit(
+                cur,
+                event_type=(
+                    "identity_initial_enrollment_completed"
+                    if operation == "initial_enroll"
+                    else "identity_replacement_completed"
+                ),
+                challenge_id=str(grant_row.get("challenge_id") or ""),
+                driver_id=driver_id,
+                auth_session_hash=principal.session_id,
+                actor_type=principal.role,
+                actor_id=principal.driver_id or principal.session_id,
+                outcome="consumed",
+                reason_code=purpose,
+                created_at=created_at,
             )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        return _api_error()
     finally:
         conn.close()
 
@@ -2133,6 +2394,9 @@ def identity_register() -> Any:
             "driver_id": driver_id,
             "name": name,
             "created_at": created_at,
+            "updated_at": created_at,
+            "enrollment_version": enrollment_version,
+            "operation": operation,
             "samples_used": len(embeddings),
         }
     )
@@ -2192,10 +2456,10 @@ def identity_verify() -> Any:
     conn = get_mysql_conn()
     try:
         with conn.cursor() as cur:
-            _ensure_identity_tables(cur)
             cur.execute(
                 """
-                SELECT embedding_json, name, image_base64, created_at
+                SELECT embedding_json, name, created_at, updated_at,
+                       enrollment_version, enrollment_status
                 FROM driver_identity WHERE driver_id = %s
                 """,
                 (driver_id,),
@@ -2244,8 +2508,10 @@ def identity_verify() -> Any:
             "threshold": float(threshold),
             "samples_used": len(current_embeddings),
             "registered_name": reg_name,
-            "profile_image_base64": row.get("image_base64"),
             "registered_at": registered_at,
+            "updated_at": _session_dt_iso(row.get("updated_at")),
+            "enrollment_version": int(row.get("enrollment_version") or 1),
+            "enrollment_status": str(row.get("enrollment_status") or "active"),
         }
     )
 
@@ -2253,7 +2519,7 @@ def identity_verify() -> Any:
 @app.get("/api/identity/driver_profile")
 @require_auth()
 def identity_driver_profile() -> Any:
-    """Trả về tên + ảnh đăng ký + ngày tạo (dùng cho UI sau khi mở khóa / Telegram accept)."""
+    """Trả metadata hồ sơ; không trả raw image hoặc embedding sinh trắc học."""
     driver_id = str(request.args.get("driver_id", "")).strip()
     if not driver_id:
         return jsonify({"error": "Thiếu driver_id."}), 400
@@ -2264,10 +2530,10 @@ def identity_driver_profile() -> Any:
     conn = get_mysql_conn()
     try:
         with conn.cursor() as cur:
-            _ensure_identity_tables(cur)
             cur.execute(
                 """
-                SELECT driver_id, name, image_base64, created_at
+                SELECT driver_id, name, created_at, updated_at,
+                       enrollment_version, enrollment_status
                 FROM driver_identity WHERE driver_id = %s
                 """,
                 (driver_id,),
@@ -2291,9 +2557,12 @@ def identity_driver_profile() -> Any:
     return jsonify(
         {
             "driver_id": did,
+            "has_registered": True,
             "registered_name": reg_name or did,
-            "profile_image_base64": row.get("image_base64"),
             "registered_at": registered_at,
+            "updated_at": _session_dt_iso(row.get("updated_at")),
+            "enrollment_version": int(row.get("enrollment_version") or 1),
+            "enrollment_status": str(row.get("enrollment_status") or "active"),
         }
     )
 
@@ -2846,7 +3115,11 @@ def create_driving_authorization_challenge() -> Any:
         try:
             chat_id = int(owner_row["telegram_chat_id"])
             message_id = _telegram_send_verification_challenge(
-                chat_id, driver_id, challenge_id, DRIVING_CHALLENGE_TTL_SECONDS
+                chat_id,
+                driver_id,
+                challenge_id,
+                START_DRIVING_SESSION,
+                DRIVING_CHALLENGE_TTL_SECONDS,
             )
             conn = get_mysql_conn()
             try:
@@ -2883,6 +3156,7 @@ def create_driving_authorization_challenge() -> Any:
 
 
 @app.get("/api/driving/authorization/challenge/<challenge_id>")
+@app.get("/api/authorization/challenge/<challenge_id>")
 @require_auth()
 def driving_authorization_challenge_status(challenge_id: str) -> Any:
     principal: Principal = g.auth_principal
@@ -2933,6 +3207,7 @@ def driving_authorization_challenge_status(challenge_id: str) -> Any:
 
 
 @app.post("/api/admin/driving/authorization/challenge/<challenge_id>/decision")
+@app.post("/api/admin/authorization/challenge/<challenge_id>/decision")
 @require_auth(admin=True)
 def decide_driving_authorization_challenge(challenge_id: str) -> Any:
     payload = request.get_json(silent=True) or {}
@@ -2964,6 +3239,7 @@ def decide_driving_authorization_challenge(challenge_id: str) -> Any:
 
 
 @app.post("/api/admin/driving/authorization/challenge/<challenge_id>/revoke")
+@app.post("/api/admin/authorization/challenge/<challenge_id>/revoke")
 @require_auth(admin=True)
 def revoke_driving_authorization_grant(challenge_id: str) -> Any:
     principal: Principal = g.auth_principal

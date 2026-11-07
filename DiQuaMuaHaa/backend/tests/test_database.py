@@ -17,14 +17,17 @@ class DatabaseTests(unittest.TestCase):
         cur.rowcount = 1
         return conn, cur
 
-    def run_route(self, postgres, path, payload=None, rows=()):
+    def run_route(self, postgres, path, payload=None, rows=(), expect_commit=True):
         conn, cur = self.connection(rows)
         with patch.object(api, "POSTGRES_ACTIVE", postgres), patch.object(api, "get_mysql_conn", return_value=conn), patch.object(api, "_authenticate_request", return_value=api.Principal(role="admin", session_id="admin-session")), patch.object(api, "_collect_face_embeddings", return_value=[[1., 0.]] * 3), patch.object(api, "_telegram_send_decision_message", return_value=9):
             client = api.app.test_client()
             response = client.get(path) if payload is None else client.post(path, json=payload)
         self.assertEqual(response.status_code, 200, response.json)
         conn.close.assert_called_once()
-        self.assertTrue(conn.commit.called)
+        if expect_commit:
+            self.assertTrue(conn.commit.called)
+        else:
+            conn.commit.assert_not_called()
         statements = [call.args[0] for call in cur.execute.call_args_list]
         for sql in statements:
             if postgres:
@@ -39,17 +42,35 @@ class DatabaseTests(unittest.TestCase):
     def test_identity_register_lookup_and_bind_both_dialects(self):
         for postgres in (False, True):
             with self.subTest(postgres=postgres):
+                grant = {
+                    "grant_hash": hash_secret("enrollment-grant"),
+                    "challenge_id": "identity-challenge",
+                    "driver_id": "demo",
+                    "auth_session_hash": "admin-session",
+                    "purpose": "identity_initial_enroll",
+                    "expires_at": datetime.utcnow() + timedelta(minutes=1),
+                    "consumed_at": None,
+                    "revoked_at": None,
+                }
                 data, sql, _ = self.run_route(postgres, "/api/identity/register",
-                                             {"driver_id": "demo", "images": ["a", "b", "c"]})
+                                             {"driver_id": "demo", "operation": "initial_enroll",
+                                              "enrollment_grant": "enrollment-grant",
+                                              "images": ["a", "b", "c"]}, [grant, None])
                 self.assertEqual(data["samples_used"], 3)
-                self.assertIn("ON CONFLICT" if postgres else "ON DUPLICATE", sql[-1])
+                self.assertTrue(any("INSERT INTO driver_identity" in q for q in sql))
+                self.assertFalse(any("ON CONFLICT" in q or "ON DUPLICATE" in q for q in sql))
                 row = {"driver_id": "demo", "name": "Demo", "embedding_json": "[1,0]",
-                       "image_base64": "image", "created_at": datetime(2026, 1, 1)}
+                       "image_base64": "image", "created_at": datetime(2026, 1, 1),
+                       "updated_at": datetime(2026, 1, 2), "enrollment_version": 1,
+                       "enrollment_status": "active"}
                 data, _, _ = self.run_route(postgres, "/api/identity/verify",
-                                            {"driver_id": "demo", "images": ["a", "b"]}, [row])
+                                            {"driver_id": "demo", "images": ["a", "b"]}, [row],
+                                            expect_commit=False)
                 self.assertTrue(data["is_owner"])
-                data, _, _ = self.run_route(postgres, "/api/identity/driver_profile?driver_id=demo", rows=[row])
+                data, _, _ = self.run_route(postgres, "/api/identity/driver_profile?driver_id=demo",
+                                            rows=[row], expect_commit=False)
                 self.assertEqual(data["registered_name"], "Demo")
+                self.assertNotIn("profile_image_base64", data)
                 _, sql, _ = self.run_route(postgres, "/api/identity/telegram/bind",
                                            {"driver_id": "demo", "telegram_chat_id": 123})
                 self.assertIn("ON CONFLICT" if postgres else "ON DUPLICATE", sql[-1])

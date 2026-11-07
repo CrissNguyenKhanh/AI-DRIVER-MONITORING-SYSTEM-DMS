@@ -19,6 +19,14 @@ class VerificationMigrationTests(unittest.TestCase):
             / f"V001__verification_grants.{direction}.sql"
         ).read_text(encoding="utf-8")
 
+    def biometric_migration(self, dialect, direction):
+        return (
+            self.backend
+            / "migrations"
+            / dialect
+            / f"V002__biometric_enrollment_privacy.{direction}.sql"
+        ).read_text(encoding="utf-8")
+
     def test_up_and_down_migrations_cover_all_security_tables(self):
         tables = {
             "dms_verification_challenges",
@@ -53,6 +61,20 @@ class VerificationMigrationTests(unittest.TestCase):
         self.assertNotIn("CREATE TABLE", source)
         self.assertIn("FOR UPDATE", source)
         self.assertIn("SET consumed_at", source)
+
+    def test_biometric_migration_is_ordered_additive_and_reversible(self):
+        for dialect in ("mysql", "postgres"):
+            with self.subTest(dialect=dialect):
+                base = self.migration(dialect, "up")
+                up = self.biometric_migration(dialect, "up")
+                down = self.biometric_migration(dialect, "down")
+                self.assertIn("CREATE TABLE IF NOT EXISTS driver_identity", base)
+                self.assertIn("ADD COLUMN updated_at", up)
+                self.assertIn("ADD COLUMN enrollment_version", up)
+                self.assertIn("ADD COLUMN enrollment_status", up)
+                self.assertIn("DROP COLUMN enrollment_status", down)
+                self.assertNotIn("embedding_json =", up)
+                self.assertNotIn("image_base64 =", up)
 
 
 if __name__ == "__main__":
