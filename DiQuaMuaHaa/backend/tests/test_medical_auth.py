@@ -1,7 +1,11 @@
 """Security contracts for the legacy medical API's existing JWT stack."""
 import os
 import unittest
+from io import BytesIO
 from unittest.mock import patch
+
+import numpy as np
+from PIL import Image
 
 os.environ.setdefault("MEDICAL_DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-jwt-secret-with-sufficient-length")
@@ -101,6 +105,102 @@ class MedicalAuthorizationTests(unittest.TestCase):
             f"/api/records/{record.id}", headers=self.bearer(other_token)
         )
         self.assertEqual(denied.status_code, 403)
+
+
+class MedicalImageFailClosedTests(unittest.TestCase):
+    def setUp(self):
+        medical_api.app.config["TESTING"] = True
+        self.context = medical_api.app.app_context()
+        self.context.push()
+        medical_api.db.drop_all()
+        medical_api.db.create_all()
+        self.user = medical_api.User(
+            name="Image User", email="image@example.test", role="user"
+        )
+        self.user.set_password("image-pass")
+        medical_api.db.session.add(self.user)
+        medical_api.db.session.commit()
+        self.client = medical_api.app.test_client()
+        response = self.client.post(
+            "/api/auth/login",
+            json={"email": "image@example.test", "password": "image-pass"},
+        )
+        self.headers = {"Authorization": f"Bearer {response.json['access_token']}"}
+        self.original_model = medical_api.image_model
+        self.original_classes = medical_api.image_classes
+
+    def tearDown(self):
+        medical_api.image_model = self.original_model
+        medical_api.image_classes = self.original_classes
+        medical_api.db.session.remove()
+        medical_api.db.drop_all()
+        self.context.pop()
+
+    @staticmethod
+    def image_payload():
+        stream = BytesIO()
+        Image.new("L", (8, 8), color=128).save(stream, format="PNG")
+        stream.seek(0)
+        return {"image": (stream, "sample.png")}
+
+    def test_missing_model_returns_machine_readable_503_without_record(self):
+        medical_api.image_model = None
+        medical_api.image_classes = []
+
+        response = self.client.post(
+            "/api/ai/predict-image",
+            headers=self.headers,
+            data=self.image_payload(),
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 503, response.json)
+        self.assertEqual(response.json["code"], "model_unavailable")
+        self.assertEqual(response.json["model"]["status"], "UNAVAILABLE")
+        self.assertEqual(medical_api.MedicalRecord.query.count(), 0)
+
+    def test_inference_exception_fails_closed_without_record(self):
+        class BrokenModel:
+            def predict(self, _input):
+                raise RuntimeError("test inference failure")
+
+        medical_api.image_model = BrokenModel()
+        medical_api.image_classes = ["Normal"]
+
+        response = self.client.post(
+            "/api/ai/predict-image",
+            headers=self.headers,
+            data=self.image_payload(),
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 503, response.json)
+        self.assertEqual(response.json["code"], "model_unavailable")
+        self.assertEqual(response.json["model"]["reason"], "inference_failed")
+        self.assertEqual(medical_api.MedicalRecord.query.count(), 0)
+
+    def test_successful_real_model_result_is_persisted(self):
+        class DeterministicModel:
+            def predict(self, _input):
+                return np.array([0])
+
+            def predict_proba(self, _input):
+                return np.array([[0.8, 0.2]])
+
+        medical_api.image_model = DeterministicModel()
+        medical_api.image_classes = ["Normal", "Pneumonia"]
+
+        response = self.client.post(
+            "/api/ai/predict-image",
+            headers=self.headers,
+            data=self.image_payload(),
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(response.json["prediction"]["diagnosis"], "Normal")
+        self.assertAlmostEqual(response.json["prediction"]["confidence"], 0.8)
+        self.assertEqual(medical_api.MedicalRecord.query.count(), 1)
 
 
 if __name__ == "__main__":
