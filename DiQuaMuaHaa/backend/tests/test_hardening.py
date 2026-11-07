@@ -1,6 +1,8 @@
 """Offline regressions; never connects to a real database, camera or Telegram."""
 import os
+import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from data.api import api
@@ -158,6 +160,58 @@ class ModelCompatibilityTests(unittest.TestCase):
                 response = client.post(endpoint, json={})
                 self.assertEqual(response.status_code, 503)
                 self.assertEqual(response.json, {"error": "Hand inference unavailable"})
+
+    def test_landmark_ambiguity_is_unknown_never_safe(self):
+        ambiguous_model = MagicMock()
+        ambiguous_model.predict.return_value = [0]
+        ambiguous_model.predict_proba.return_value = [[0.51, 0.49]]
+        with patch.object(api, "_ensure_models_loaded"), \
+                patch.object(api, "model", ambiguous_model), \
+                patch.object(api, "idx_to_label", {0: "safe", 1: "drowsy"}):
+            response = api.app.test_client().post(
+                "/api/landmark/predict", json={"landmarks": [0.0, 1.0]}
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["label"], "unknown")
+        self.assertEqual(response.json["reason"], "ambiguous_inference")
+        self.assertTrue(response.json["available"])
+
+    def test_unavailable_landmark_model_is_machine_readable_503(self):
+        missing_path = MagicMock()
+        missing_path.is_file.return_value = False
+        with patch.object(api, "_ensure_models_loaded"), \
+                patch.object(api, "model", None), \
+                patch.object(api, "idx_to_label", {}), \
+                patch.object(api, "MODEL_PATH", missing_path):
+            client = api.app.test_client()
+            for endpoint in ["/api/landmark/predict", "/api/landmark/predict_from_frame"]:
+                response = client.post(endpoint, json={})
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json["code"], "model_unavailable")
+                self.assertEqual(response.json["label"], "unavailable")
+                self.assertFalse(response.json["available"])
+                self.assertIsNone(response.json["prob"])
+
+    def test_torch_loader_is_restored_when_trusted_model_load_raises(self):
+        def original_load(*_args, **_kwargs):
+            return "original"
+
+        fake_torch = SimpleNamespace(load=original_load)
+        with patch.object(api, "ALLOW_TRUSTED_LOCAL_PT_MODELS", True), \
+                patch.object(api, "PHONE_YOLO_MODEL_SHA256", "a" * 64), \
+                patch.object(api, "_sha256_file", return_value="a" * 64), \
+                patch.object(api, "YOLO", side_effect=RuntimeError("invalid model")), \
+                patch.dict(sys.modules, {"torch": fake_torch}):
+            with self.assertRaisesRegex(RuntimeError, "invalid model"):
+                api._load_hash_pinned_yolo_pt(api.PHONE_YOLO_MODEL_PATH)
+        self.assertIs(fake_torch.load, original_load)
+
+    def test_unpinned_pytorch_model_is_never_deserialized(self):
+        with patch.object(api, "ALLOW_TRUSTED_LOCAL_PT_MODELS", False), \
+                patch.object(api, "YOLO") as yolo:
+            with self.assertRaisesRegex(RuntimeError, "disabled"):
+                api._load_hash_pinned_yolo_pt(api.PHONE_YOLO_MODEL_PATH)
+        yolo.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -78,6 +78,7 @@ const LABEL_MAP = {
   stressed: { vi: "STRESSED", level: "risk", color: "#ff6b6b" },
   unknown: { vi: "ANALYZING", level: "unknown", color: "#4a90d9" },
   no_face: { vi: "NO FACE", level: "unknown", color: "#4a90d9" },
+  unavailable: { vi: "MODEL UNAVAILABLE", level: "unavailable", color: "#7a8da6" },
 };
 
 const STATUS_ICONS = [
@@ -2395,7 +2396,17 @@ export default function DriverMonitorDMS() {
 
         const data = await res.json();
         if (cancelled) return;
-        if (!res.ok) throw new Error(data?.error || "API failed");
+        if (!res.ok) {
+          setApiResult({
+            label: "unavailable",
+            available: false,
+            reason: data?.reason || data?.code || `http_${res.status}`,
+            prob: null,
+            scores: {},
+          });
+          setHistory([]);
+          throw new Error(data?.error || "API unavailable");
+        }
         setApiResult(data);
         setLastUpdated(new Date().toLocaleTimeString());
 
@@ -2414,7 +2425,21 @@ export default function DriverMonitorDMS() {
           return n.length > HISTORY_SIZE ? n.slice(n.length - HISTORY_SIZE) : n;
         });
       } catch (err) {
-        if (!cancelled) setApiError(err.message || "Cannot reach API");
+        if (!cancelled) {
+          setApiError(err.message || "Cannot reach API");
+          setApiResult((current) =>
+            current?.label === "unavailable"
+              ? current
+              : {
+                  label: "unavailable",
+                  available: false,
+                  reason: "network_or_inference_error",
+                  prob: null,
+                  scores: {},
+                },
+          );
+          setHistory([]);
+        }
       } finally {
         if (!cancelled) setApiLoading(false);
       }

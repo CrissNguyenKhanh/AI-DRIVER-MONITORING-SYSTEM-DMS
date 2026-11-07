@@ -1,6 +1,7 @@
 from __future__ import annotations
 from flask_socketio import SocketIO, emit
 import base64
+import hashlib
 import hmac
 import os
 from functools import wraps
@@ -104,7 +105,7 @@ MYSQL_CONFIG = {
     "write_timeout": 10,
 }
 
-# Model landmark 2-class (safe/drowsy): nếu top1 - top2 < margin hoặc top1 < confidence → "safe"
+# Model landmark: độ tin cậy thấp hoặc biên top-2 nhỏ phải là UNKNOWN, không phải SAFE.
 LANDMARK_AMBIGUOUS_MARGIN = float(os.getenv("LANDMARK_AMBIGUOUS_MARGIN", "0.05"))
 LANDMARK_MIN_CONFIDENCE = float(os.getenv("LANDMARK_MIN_CONFIDENCE", "0.52"))
 LANDMARK_FLIP_INPUT = os.getenv("LANDMARK_FLIP_INPUT", "0") == "1"
@@ -116,6 +117,9 @@ DISABLE_HAND_DETECT = os.getenv("DISABLE_HAND_DETECT", "0") == "1"
 # Local: cài thêm `pip install onnxruntime` (xem requirements-phone.txt) rồi set DISABLE_PHONE_YOLO=0
 _ON_RENDER = os.getenv("RENDER", "").lower() in ("true", "1", "yes")
 DISABLE_PHONE_YOLO = os.getenv("DISABLE_PHONE_YOLO", "1" if _ON_RENDER else "0") == "1"
+ALLOW_TRUSTED_LOCAL_PT_MODELS = os.getenv("ALLOW_TRUSTED_LOCAL_PT_MODELS", "0") == "1"
+PHONE_YOLO_MODEL_SHA256 = os.getenv("PHONE_YOLO_MODEL_SHA256", "").strip().lower()
+_TORCH_LOAD_PATCH_LOCK = Lock()
 
 IDENTITY_SIM_THRESHOLD = float(os.getenv("IDENTITY_SIM_THRESHOLD", "0.975"))
 IDENTITY_MIN_REGISTER_SAMPLES = int(os.getenv("IDENTITY_MIN_REGISTER_SAMPLES", "3"))
@@ -762,6 +766,45 @@ def load_phone_model() -> None:
         phone_image_size = None
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as model_file:
+        for chunk in iter(lambda: model_file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_hash_pinned_yolo_pt(path: Path) -> Any:
+    """Load only an explicitly trusted, hash-pinned local PyTorch artifact.
+
+    Older Ultralytics checkpoints require ``weights_only=False``. That setting
+    is never enabled for an unpinned artifact, and the process-global loader is
+    restored even when YOLO construction raises.
+    """
+    if not ALLOW_TRUSTED_LOCAL_PT_MODELS:
+        raise RuntimeError("local PyTorch model loading is disabled")
+    expected = PHONE_YOLO_MODEL_SHA256
+    if len(expected) != 64 or any(char not in "0123456789abcdef" for char in expected):
+        raise RuntimeError("PHONE_YOLO_MODEL_SHA256 is required")
+    if not hmac.compare_digest(_sha256_file(path), expected):
+        raise RuntimeError("phone YOLO artifact hash mismatch")
+
+    import torch as _torch  # noqa: PLC0415
+
+    with _TORCH_LOAD_PATCH_LOCK:
+        original_load = _torch.load
+
+        def trusted_local_load(file, *args, **kwargs):
+            kwargs.setdefault("weights_only", False)
+            return original_load(file, *args, **kwargs)
+
+        try:
+            _torch.load = trusted_local_load
+            return YOLO(str(path))
+        finally:
+            _torch.load = original_load
+
+
 def load_phone_yolo_model() -> None:
     """Ưu tiên ONNX (onnxruntime). Fallback sang .pt nếu không có .onnx."""
     global phone_yolo_model, phone_yolo_onnx
@@ -796,14 +839,7 @@ def load_phone_yolo_model() -> None:
         phone_yolo_model = None
         return
     try:
-        import torch as _torch
-        _orig = _torch.load
-        def _patched(f, *a, **kw):
-            kw.setdefault("weights_only", False)
-            return _orig(f, *a, **kw)
-        _torch.load = _patched
-        phone_yolo_model = YOLO(str(PHONE_YOLO_MODEL_PATH))
-        _torch.load = _orig
+        phone_yolo_model = _load_hash_pinned_yolo_pt(PHONE_YOLO_MODEL_PATH)
         app.logger.info("phone_yolo.pt loaded OK (ultralytics fallback)")
     except Exception as exc:
         app.logger.warning("phone_yolo.pt load failed: %s", exc)
@@ -1372,18 +1408,42 @@ def _parse_landmarks(payload: Dict[str, Any]) -> List[float]:
     return vec
 
 
+def _landmark_unavailable_response():
+    reason = "artifact_missing" if not MODEL_PATH.is_file() else "model_load_failed"
+    return (
+        jsonify(
+            {
+                "code": "model_unavailable",
+                "label": "unavailable",
+                "available": False,
+                "reason": reason,
+                "prob": None,
+                "scores": {},
+                "error": "Landmark inference unavailable",
+            }
+        ),
+        503,
+    )
+
+
+def _classify_landmark_result(
+    predicted_label: str, scores: Dict[str, float]
+) -> tuple[str, float | None, str | None]:
+    best_prob = float(max(scores.values())) if scores else None
+    if len(scores) < 2 or best_prob is None:
+        return predicted_label, best_prob, None
+    sorted_probabilities = sorted(scores.values(), reverse=True)
+    margin = sorted_probabilities[0] - sorted_probabilities[1]
+    if best_prob < LANDMARK_MIN_CONFIDENCE or margin < LANDMARK_AMBIGUOUS_MARGIN:
+        return "unknown", best_prob, "ambiguous_inference"
+    return predicted_label, best_prob, None
+
+
 @app.post("/api/landmark/predict")
 def predict_landmark() -> Any:
     _ensure_models_loaded()
     if model is None or not idx_to_label:
-        return (
-            jsonify(
-                {
-                    "error": "Model chưa được load. Hãy train model trước (train_landmarks.py).",
-                }
-            ),
-            500,
-        )
+        return _landmark_unavailable_response()
 
     try:
         payload = request.get_json(force=True, silent=False)  # type: ignore[assignment]
@@ -1422,13 +1482,14 @@ def predict_landmark() -> Any:
         for i, p in enumerate(proba):
             scores[idx_to_label.get(i, str(i))] = float(p)
 
-    return jsonify(
-        {
-            "label": label,
-            "prob": float(max(scores.values())) if scores else None,
-            "scores": scores,
-        }
-    )
+    label, best_prob, reason = _classify_landmark_result(label, scores)
+    return jsonify({
+        "label": label,
+        "prob": best_prob,
+        "scores": scores,
+        "available": True,
+        "reason": reason,
+    })
 
 
 @app.post("/api/landmark/predict_from_frame")
@@ -1445,14 +1506,7 @@ def predict_from_frame() -> Any:
             return _api_error(503)
 
         if model is None or not idx_to_label:
-            return (
-                jsonify(
-                    {
-                        "error": "Model chưa được load. Hãy train model trước (train_landmarks.py).",
-                    }
-                ),
-                500,
-            )
+            return _landmark_unavailable_response()
 
         try:
             payload = request.get_json(force=True, silent=False)
@@ -1511,20 +1565,15 @@ def predict_from_frame() -> Any:
             for i, p in enumerate(proba):
                 scores[idx_to_label.get(i, str(i))] = float(p)
 
-        best_prob = float(max(scores.values())) if scores else None
-
-        # Nếu model không đủ tự tin → safe (tránh false positive khi mặt bình thường)
-        if scores and len(scores) >= 2:
-            sorted_p = sorted(scores.values(), reverse=True)
-            margin = sorted_p[0] - sorted_p[1]
-            if best_prob is not None and (best_prob < LANDMARK_MIN_CONFIDENCE or margin < LANDMARK_AMBIGUOUS_MARGIN):
-                label = "safe"
+        label, best_prob, reason = _classify_landmark_result(label, scores)
 
         return jsonify(
             {
                 "label": label,
                 "prob": best_prob,
                 "scores": scores,
+                "available": True,
+                "reason": reason,
             }
         )
     except Exception:
