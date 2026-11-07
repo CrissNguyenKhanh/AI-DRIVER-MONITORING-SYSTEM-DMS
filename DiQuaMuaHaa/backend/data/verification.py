@@ -8,7 +8,11 @@ from data.auth import parse_database_datetime
 
 
 START_DRIVING_SESSION = "start_driving_session"
-ALLOWED_PURPOSES = frozenset({START_DRIVING_SESSION})
+IDENTITY_INITIAL_ENROLL = "identity_initial_enroll"
+IDENTITY_REPLACE = "identity_replace"
+ALLOWED_PURPOSES = frozenset(
+    {START_DRIVING_SESSION, IDENTITY_INITIAL_ENROLL, IDENTITY_REPLACE}
+)
 CHALLENGE_STATUSES = frozenset(
     {"pending", "approved", "rejected", "expired", "revoked"}
 )

@@ -1,12 +1,4 @@
-import React, { useEffect, useMemo } from "react";
-
-function toImageSrc(raw) {
-  if (!raw || typeof raw !== "string") return null;
-  const t = raw.trim();
-  if (!t) return null;
-  if (t.startsWith("data:")) return t;
-  return `data:image/jpeg;base64,${t}`;
-}
+import React, { useEffect } from "react";
 
 /**
  * Popup ~5s sau khi xác thực chủ xe thành công: tên, ảnh đăng ký, ID, độ khớp, v.v.
@@ -22,10 +14,8 @@ export default function DriverAuthenticatedWelcome({
     return () => clearTimeout(t);
   }, [profile, durationMs, onDismiss]);
 
-  const imgSrc = useMemo(
-    () => toImageSrc(profile?.profile_image_base64),
-    [profile?.profile_image_base64],
-  );
+  // Stored biometric images are intentionally never returned to this UI.
+  const imgSrc = null;
 
   if (!profile) return null;
 

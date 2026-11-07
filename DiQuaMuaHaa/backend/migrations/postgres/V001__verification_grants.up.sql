@@ -1,3 +1,11 @@
+CREATE TABLE IF NOT EXISTS driver_identity (
+    driver_id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(255) NULL,
+    embedding_json TEXT NOT NULL,
+    image_base64 TEXT NULL,
+    created_at TIMESTAMP NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS driver_telegram_owner (
     driver_id VARCHAR(64) PRIMARY KEY,
     telegram_chat_id BIGINT NOT NULL,

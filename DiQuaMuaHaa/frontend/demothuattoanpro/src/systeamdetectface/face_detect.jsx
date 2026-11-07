@@ -9,13 +9,18 @@ import {
   getDmsAuthToken,
   saveDmsAuthSession,
 } from "../utils/authApi";
+import {
+  createIdentityEnrollmentChallenge,
+  getAuthorizationChallenge,
+  getDriverIdentityProfile,
+  submitIdentityEnrollment,
+} from "../utils/identityEnrollmentApi.js";
 
 const API_BASE = getDmsApiBase();
 const API_INTERVAL_MS = 900;
 const BURST_GAP_MS = 120;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const DRIVER_ID_KEY = "driver_owner_id_v1";
-const DRIVER_IMAGE_KEY = "driver_owner_image_v1";
 const DEFAULT_DRIVER_ID = "driver_001";
 
 // Radar scan canvas overlay
@@ -337,6 +342,8 @@ export default function FaceDetect() {
   const [authLoading, setAuthLoading] = useState(false);
   const [telegramCommand, setTelegramCommand] = useState("");
   const [telegramLoading, setTelegramLoading] = useState(false);
+  const [profileStatus, setProfileStatus] = useState("idle");
+  const [enrollmentApprovalLoading, setEnrollmentApprovalLoading] = useState(false);
 
   const [isScanning, setIsScanning] = useState(false);
   const [registered, setRegistered] = useState(false);
@@ -344,20 +351,66 @@ export default function FaceDetect() {
   const similarityBufferRef = useRef([]);
   const lastDecisionRef = useRef(null);
   const ownerWelcomeSpokenRef = useRef(false);
+  const enrollmentGrantRef = useRef(null);
+  const enrollmentOperationRef = useRef(null);
+  const enrollmentPollGenerationRef = useRef(0);
 
-  // Load saved driver image & id from localStorage (just UI, not the signature)
+  // Driver ID may be remembered for convenience; biometric/profile truth comes from server.
   useEffect(() => {
     warmSpeechVoices();
     try {
       const savedId = window.localStorage.getItem(DRIVER_ID_KEY);
       if (savedId) setDriverId(savedId);
-      const savedImg = window.localStorage.getItem(DRIVER_IMAGE_KEY);
-      if (savedImg) {
-        setOwnerFaceImage(savedImg);
-        setHasRegistered(true);
-      }
-    } catch {}
+    } catch {
+      // Storage can be unavailable in privacy-focused browser contexts.
+    }
   }, []);
+
+  const refreshServerProfile = useCallback(
+    async (signal) => {
+      if (!hasAuthSession || !driverId) {
+        setProfileStatus("auth_required");
+        setHasRegistered(false);
+        return false;
+      }
+      setProfileStatus("loading");
+      const { ok, status: responseStatus, data } = await getDriverIdentityProfile(
+        API_BASE,
+        driverId,
+        { signal },
+      );
+      if (responseStatus === 404) {
+        setHasRegistered(false);
+        setProfileStatus("not_registered");
+        return false;
+      }
+      if (responseStatus === 401) {
+        clearDmsAuthSession();
+        setHasAuthSession(false);
+        setHasRegistered(false);
+        setProfileStatus("auth_required");
+        return false;
+      }
+      if (!ok) {
+        setProfileStatus("unavailable");
+        throw new Error(data.error || "Không thể tải hồ sơ sinh trắc học từ máy chủ");
+      }
+      setHasRegistered(Boolean(data.has_registered));
+      setProfileStatus(data.has_registered ? "registered" : "not_registered");
+      return Boolean(data.has_registered);
+    },
+    [driverId, hasAuthSession],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    refreshServerProfile(controller.signal).catch((error) => {
+      if (error?.name !== "AbortError") {
+        setApiError(error.message || "Không thể tải hồ sơ từ máy chủ");
+      }
+    });
+    return () => controller.abort();
+  }, [refreshServerProfile]);
 
   useEffect(() => {
     ownerWelcomeSpokenRef.current = false;
@@ -448,7 +501,12 @@ export default function FaceDetect() {
 
   useEffect(() => {
     startWebcam();
-    return () => stopWebcam();
+    return () => {
+      enrollmentPollGenerationRef.current += 1;
+      enrollmentGrantRef.current = null;
+      enrollmentOperationRef.current = null;
+      stopWebcam();
+    };
   }, []);
 
   const captureCurrentFrame = useCallback(() => {
@@ -597,7 +655,7 @@ export default function FaceDetect() {
     };
   }, [status, hasRegistered, driverId, captureBurstFrames, simThreshold, hasAuthSession]);
 
-  const handleRegisterOwner = () => {
+  const handleRegisterOwner = async () => {
     if (!hasAuthSession) {
       setApiError("Cần xác thực mã enrollment trước khi đăng ký khuôn mặt.");
       return;
@@ -606,7 +664,64 @@ export default function FaceDetect() {
       setApiError("Hãy bật webcam trước.");
       return;
     }
-    setIsScanning(true);
+    const operation = hasRegistered ? "replace" : "initial_enroll";
+    const generation = enrollmentPollGenerationRef.current + 1;
+    enrollmentPollGenerationRef.current = generation;
+    enrollmentGrantRef.current = null;
+    enrollmentOperationRef.current = null;
+    setEnrollmentApprovalLoading(true);
+    setApiError("");
+    setVerifyStatus("WAITING_APPROVAL");
+    try {
+      const challenge = await createIdentityEnrollmentChallenge(API_BASE, {
+        driverId,
+        operation,
+      });
+      if (!challenge.ok) {
+        throw new Error(challenge.data?.error || "Không thể tạo yêu cầu phê duyệt");
+      }
+      const challengeId = challenge.data?.challenge_id;
+      const verificationToken = challenge.data?.verification_token;
+      if (!challengeId || !verificationToken) {
+        throw new Error("Máy chủ không trả challenge hợp lệ");
+      }
+
+      const expiresAt = Date.parse(`${challenge.data.expires_at || ""}Z`);
+      const deadline = Number.isFinite(expiresAt)
+        ? expiresAt
+        : Date.now() + 180_000;
+      while (
+        enrollmentPollGenerationRef.current === generation &&
+        Date.now() < deadline
+      ) {
+        await sleep(1000);
+        const statusResult = await getAuthorizationChallenge(API_BASE, challengeId);
+        if (!statusResult.ok) {
+          throw new Error(statusResult.data?.error || "Không thể kiểm tra phê duyệt");
+        }
+        const decision = String(statusResult.data?.status || "pending").toLowerCase();
+        if (decision === "approved") {
+          enrollmentGrantRef.current = verificationToken;
+          enrollmentOperationRef.current = operation;
+          setVerifyStatus("APPROVED");
+          setIsScanning(true);
+          return;
+        }
+        if (["rejected", "expired", "revoked"].includes(decision)) {
+          throw new Error(`Yêu cầu đăng ký đã ${decision}`);
+        }
+      }
+      throw new Error("Yêu cầu phê duyệt đã hết hạn");
+    } catch (error) {
+      enrollmentGrantRef.current = null;
+      enrollmentOperationRef.current = null;
+      setVerifyStatus("APPROVAL_FAILED");
+      setApiError(error.message || "Không thể phê duyệt đăng ký sinh trắc học");
+    } finally {
+      if (enrollmentPollGenerationRef.current === generation) {
+        setEnrollmentApprovalLoading(false);
+      }
+    }
   };
 
   const handleScanComplete = useCallback(async () => {
@@ -624,33 +739,35 @@ export default function FaceDetect() {
     setRegisterLoading(true);
     setApiError("");
     try {
-      const res = await fetch(`${API_BASE}/api/identity/register`, {
-        method: "POST",
-        headers: dmsAuthHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          driver_id: driverId,
-          name: driverId,
-          images: frames,
-        }),
+      const enrollmentGrant = enrollmentGrantRef.current;
+      const operation = enrollmentOperationRef.current;
+      enrollmentGrantRef.current = null;
+      enrollmentOperationRef.current = null;
+      const result = await submitIdentityEnrollment(API_BASE, {
+        driverId,
+        name: driverId,
+        images: frames,
+        operation,
+        enrollmentGrant,
       });
-      const data = await res.json();
-      if (!res.ok || data.error)
-        throw new Error(data.error || "Đăng ký thất bại");
+      if (!result.ok || result.data?.error)
+        throw new Error(result.data?.error || "Đăng ký thất bại");
 
+      await refreshServerProfile();
       setOwnerFaceImage(imageBase64);
-      setHasRegistered(true);
-      setIsOwner(true);
-      setSimilarity(1);
-      setSmoothSimilarity(1);
+      setIsOwner(false);
+      setSimilarity(null);
+      setSmoothSimilarity(null);
       setFaceVisible(true);
-      setVerifyStatus("OWNER");
-      similarityBufferRef.current = [1];
-      lastDecisionRef.current = true;
+      setVerifyStatus("WAIT_VERIFY");
+      similarityBufferRef.current = [];
+      lastDecisionRef.current = null;
       setRegistered(true);
       try {
         window.localStorage.setItem(DRIVER_ID_KEY, driverId);
-        window.localStorage.setItem(DRIVER_IMAGE_KEY, imageBase64);
-      } catch {}
+      } catch {
+        // Remembering the non-biometric driver ID is optional.
+      }
       // Sau khi đăng ký xong → tự quay lại test3 để detect
       setTimeout(() => navigate("/test3"), 300);
 
@@ -660,22 +777,17 @@ export default function FaceDetect() {
     } finally {
       setRegisterLoading(false);
     }
-  }, [driverId, captureBurstFrames]);
+  }, [driverId, captureBurstFrames, navigate, refreshServerProfile]);
 
   const handleClearOwner = () => {
-    setHasRegistered(false);
     setIsOwner(false);
     setSimilarity(null);
     setSmoothSimilarity(null);
     setFaceVisible(true);
-    setVerifyStatus("WAIT_REGISTER");
+    setVerifyStatus(hasRegistered ? "WAIT_VERIFY" : "WAIT_REGISTER");
     similarityBufferRef.current = [];
     lastDecisionRef.current = null;
     setOwnerFaceImage(null);
-    try {
-      window.localStorage.removeItem(DRIVER_ID_KEY);
-      window.localStorage.removeItem(DRIVER_IMAGE_KEY);
-    } catch {}
   };
 
   return (
@@ -897,6 +1009,7 @@ export default function FaceDetect() {
                   ? `LAST UPDATE: ${lastUpdated}`
                   : "AWAITING FEED"}
             </div>
+            <div>PROFILE: {profileStatus.toUpperCase()}</div>
             <button
               type="button"
               onClick={() => navigate("/adas-simulation")}
@@ -1200,7 +1313,12 @@ export default function FaceDetect() {
                 <button
                   onClick={handleRegisterOwner}
                   disabled={
-                    status !== "active" || isScanning || registerLoading
+                    status !== "active" ||
+                    isScanning ||
+                    registerLoading ||
+                    enrollmentApprovalLoading ||
+                    profileStatus === "loading" ||
+                    profileStatus === "unavailable"
                   }
                   style={{
                     flex: 1,
@@ -1226,9 +1344,13 @@ export default function FaceDetect() {
                 >
                   {isScanning
                     ? "⟳ SCANNING..."
+                    : enrollmentApprovalLoading
+                      ? "⟳ WAITING APPROVAL..."
                     : registerLoading
                       ? "⟳ REGISTERING..."
-                      : "⊕ Register Owner Face"}
+                      : hasRegistered
+                        ? "↻ Request Face Replacement"
+                        : "⊕ Register Owner Face"}
                 </button>
                 {hasRegistered && (
                   <button
@@ -1245,7 +1367,7 @@ export default function FaceDetect() {
                       fontWeight: 700,
                     }}
                   >
-                    ✕ CLEAR
+                    ✕ CLEAR LOCAL PREVIEW
                   </button>
                 )}
               </div>
