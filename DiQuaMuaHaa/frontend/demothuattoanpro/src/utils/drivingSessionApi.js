@@ -1,15 +1,53 @@
 /**
  * Phiên lái / nhật ký cảnh báo — backend DMS (Flask :8000).
  */
-import { dmsAuthHeaders } from "./authApi";
+import { dmsAuthHeaders } from "./authApi.js";
 
-export async function startDrivingSession(apiBase, { driverId = null, label = null } = {}) {
+export async function createDrivingAuthorizationChallenge(
+  apiBase,
+  { driverId = null } = {},
+) {
+  const r = await fetch(`${apiBase}/api/driving/authorization/challenge`, {
+    method: "POST",
+    headers: dmsAuthHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      purpose: "start_driving_session",
+      ...(driverId ? { driver_id: String(driverId) } : {}),
+    }),
+  });
+  const data = await r.json().catch(() => ({}));
+  return { ok: r.ok, data };
+}
+
+export async function getDrivingAuthorizationChallenge(apiBase, challengeId) {
+  const r = await fetch(
+    `${apiBase}/api/driving/authorization/challenge/${encodeURIComponent(String(challengeId))}`,
+    { headers: dmsAuthHeaders() },
+  );
+  const data = await r.json().catch(() => ({}));
+  return { ok: r.ok, data };
+}
+
+export async function startDrivingSession(
+  apiBase,
+  { driverId = null, label = null, verificationGrant = null } = {},
+) {
+  if (!verificationGrant) {
+    return {
+      ok: false,
+      data: {
+        code: "verification_grant_required",
+        error: "Server-approved verification grant required",
+      },
+    };
+  }
   const r = await fetch(`${apiBase}/api/driving/session/start`, {
     method: "POST",
     headers: dmsAuthHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       ...(driverId ? { driver_id: String(driverId) } : {}),
       ...(label ? { label: String(label) } : {}),
+      verification_grant: String(verificationGrant),
     }),
   });
   const data = await r.json().catch(() => ({}));

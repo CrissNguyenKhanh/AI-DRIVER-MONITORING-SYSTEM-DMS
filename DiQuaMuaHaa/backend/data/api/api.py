@@ -55,6 +55,11 @@ from data.adas import ADASPipeline, load_adas_config
 from data.adas.frame_codec import decode_frame as decode_adas_frame
 from data.dms import AttentionRegistry, load_dms_attention_config
 from data.dms.attention import parse_landmark_payload
+from data.verification import (
+    START_DRIVING_SESSION,
+    challenge_expired,
+    validate_grant_row,
+)
 
 CORS_ORIGINS = cors_origins()
 CORS(app, origins=CORS_ORIGINS, supports_credentials=True)
@@ -127,6 +132,12 @@ AUTH_SESSION_TTL_HOURS = int(os.getenv("DMS_AUTH_SESSION_TTL_HOURS", "168"))
 ADMIN_SESSION_TTL_HOURS = int(os.getenv("DMS_ADMIN_SESSION_TTL_HOURS", "12"))
 ENROLLMENT_CODE_TTL_MINUTES = int(os.getenv("DMS_ENROLLMENT_CODE_TTL_MINUTES", "15"))
 TELEGRAM_BIND_CODE_TTL_MINUTES = int(os.getenv("DMS_TELEGRAM_BIND_CODE_TTL_MINUTES", "10"))
+DRIVING_CHALLENGE_TTL_SECONDS = max(
+    30, min(int(os.getenv("DMS_DRIVING_CHALLENGE_TTL_SECONDS", "180")), 600)
+)
+DRIVING_GRANT_TTL_SECONDS = max(
+    30, min(int(os.getenv("DMS_DRIVING_GRANT_TTL_SECONDS", "120")), 300)
+)
 ADAS_CONFIG = load_adas_config(BASE_DIR)
 adas_pipeline = ADASPipeline(ADAS_CONFIG)
 _adas_processing_lock = Lock()
@@ -235,6 +246,7 @@ def _authenticate_request() -> Principal | None:
     token = extract_bearer_token(request.headers.get("Authorization"))
     if token is None:
         return None
+    token_hash = hash_secret(token)
 
     conn = get_mysql_conn()
     try:
@@ -247,7 +259,7 @@ def _authenticate_request() -> Principal | None:
                 WHERE token_hash = %s
                 LIMIT 1
                 """,
-                (hash_secret(token),),
+                (token_hash,),
             )
             row = cur.fetchone()
     finally:
@@ -265,7 +277,7 @@ def _authenticate_request() -> Principal | None:
     driver_id = str(row.get("driver_id") or "").strip() or None
     if role not in ("admin", "driver") or (role == "driver" and not driver_id):
         return None
-    return Principal(role=role, driver_id=driver_id)
+    return Principal(role=role, driver_id=driver_id, session_id=token_hash)
 
 
 def require_auth(*, admin: bool = False):
@@ -657,6 +669,42 @@ def _telegram_send_decision_message(
             [
                 {"text": "Accept", "callback_data": f"idr:accept:{request_id}"},
                 {"text": "Reject", "callback_data": f"idr:reject:{request_id}"},
+            ]
+        ]
+    }
+    data = _telegram_call(
+        "sendMessage",
+        {
+            "chat_id": str(chat_id),
+            "text": text,
+            "reply_markup": json.dumps(keyboard, ensure_ascii=True),
+        },
+    )
+    msg = data.get("result") or {}
+    msg_id = msg.get("message_id")
+    if not isinstance(msg_id, int):
+        raise RuntimeError("Telegram response missing message_id")
+    return msg_id
+
+
+def _telegram_send_verification_challenge(
+    chat_id: int,
+    driver_id: str,
+    challenge_id: str,
+    timeout_sec: int,
+) -> int:
+    text = (
+        "YEU CAU BAT DAU PHIEN LAI XE\n"
+        f"Driver ID: {driver_id}\n"
+        f"Challenge: {challenge_id}\n"
+        f"Het han sau: {timeout_sec}s\n\n"
+        "Chi chap nhan neu ban dang cho phep tai xe bat dau phien."
+    )
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "Approve", "callback_data": f"dvg:approve:{challenge_id}"},
+                {"text": "Reject", "callback_data": f"dvg:reject:{challenge_id}"},
             ]
         ]
     }
@@ -2566,6 +2614,403 @@ def identity_decision_status() -> Any:
         conn.close()
 
 
+def _security_audit(
+    cur,
+    *,
+    event_type: str,
+    challenge_id: str | None,
+    driver_id: str | None,
+    auth_session_hash: str | None,
+    actor_type: str,
+    actor_id: str | None,
+    outcome: str,
+    reason_code: str | None = None,
+    created_at: str | None = None,
+) -> None:
+    cur.execute(
+        """
+        INSERT INTO dms_security_audit
+            (event_type, challenge_id, driver_id, auth_session_hash,
+             actor_type, actor_id, outcome, reason_code, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            event_type,
+            challenge_id,
+            driver_id,
+            auth_session_hash,
+            actor_type,
+            actor_id,
+            outcome,
+            reason_code,
+            created_at or _utc_string(),
+        ),
+    )
+
+
+def _decide_verification_challenge(
+    cur,
+    *,
+    challenge_id: str,
+    decision: str,
+    actor_type: str,
+    actor_id: str,
+    telegram_chat_id: int | None = None,
+    telegram_user_id: int | None = None,
+    now_dt: datetime | None = None,
+) -> tuple[bool, str, Dict[str, Any] | None]:
+    """Lock and decide one challenge; grant creation remains in this transaction."""
+    now_dt = now_dt or datetime.utcnow()
+    now = _utc_string(now_dt)
+    cur.execute(
+        """
+        SELECT challenge_id, secret_hash, driver_id, auth_session_hash, purpose,
+               status, expires_at, telegram_chat_id, telegram_user_id
+        FROM dms_verification_challenges
+        WHERE challenge_id = %s
+        FOR UPDATE
+        """,
+        (challenge_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return False, "challenge_not_found", None
+    if str(row.get("status") or "") != "pending":
+        return False, "challenge_already_decided", row
+    if challenge_expired(row, now=now_dt):
+        cur.execute(
+            """
+            UPDATE dms_verification_challenges
+            SET status = 'expired', decided_at = %s,
+                decided_by_type = %s, decided_by_id = %s
+            WHERE challenge_id = %s AND status = 'pending'
+            """,
+            (now, actor_type, actor_id, challenge_id),
+        )
+        _security_audit(
+            cur,
+            event_type="verification_challenge_expired",
+            challenge_id=challenge_id,
+            driver_id=str(row.get("driver_id") or ""),
+            auth_session_hash=str(row.get("auth_session_hash") or ""),
+            actor_type=actor_type,
+            actor_id=actor_id,
+            outcome="denied",
+            reason_code="challenge_expired",
+            created_at=now,
+        )
+        return False, "challenge_expired", row
+
+    if actor_type == "telegram_owner":
+        expected_chat = int(row.get("telegram_chat_id") or 0)
+        expected_user = int(row.get("telegram_user_id") or 0)
+        if expected_chat <= 0 or expected_chat != int(telegram_chat_id or 0):
+            return False, "telegram_owner_mismatch", row
+        if expected_user > 0 and expected_user != int(telegram_user_id or 0):
+            return False, "telegram_owner_mismatch", row
+
+    approved = decision == "approve"
+    new_status = "approved" if approved else "rejected"
+    cur.execute(
+        """
+        UPDATE dms_verification_challenges
+        SET status = %s, decided_at = %s,
+            decided_by_type = %s, decided_by_id = %s
+        WHERE challenge_id = %s AND status = 'pending'
+        """,
+        (new_status, now, actor_type, actor_id, challenge_id),
+    )
+    if cur.rowcount != 1:
+        return False, "challenge_already_decided", row
+
+    if approved:
+        challenge_expiry = parse_database_datetime(row.get("expires_at"))
+        grant_expiry = min(
+            challenge_expiry,
+            now_dt + timedelta(seconds=DRIVING_GRANT_TTL_SECONDS),
+        )
+        cur.execute(
+            """
+            INSERT INTO dms_authorization_grants
+                (grant_hash, challenge_id, driver_id, auth_session_hash, purpose,
+                 created_at, expires_at, consumed_at, revoked_at,
+                 approved_by_type, approved_by_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, NULL, %s, %s)
+            """,
+            (
+                row["secret_hash"],
+                challenge_id,
+                row["driver_id"],
+                row["auth_session_hash"],
+                row["purpose"],
+                now,
+                _utc_string(grant_expiry),
+                actor_type,
+                actor_id,
+            ),
+        )
+
+    _security_audit(
+        cur,
+        event_type="verification_challenge_decided",
+        challenge_id=challenge_id,
+        driver_id=str(row.get("driver_id") or ""),
+        auth_session_hash=str(row.get("auth_session_hash") or ""),
+        actor_type=actor_type,
+        actor_id=actor_id,
+        outcome=new_status,
+        reason_code=None,
+        created_at=now,
+    )
+    return True, new_status, row
+
+
+@app.post("/api/driving/authorization/challenge")
+@require_auth()
+def create_driving_authorization_challenge() -> Any:
+    payload = request.get_json(silent=True) or {}
+    principal: Principal = g.auth_principal
+    requested_driver_id = str(payload.get("driver_id") or "").strip() or None
+    if not principal.is_admin and requested_driver_id not in (None, principal.driver_id):
+        return jsonify({"code": "driver_mismatch", "error": "Access denied"}), 403
+    driver_id = requested_driver_id if principal.is_admin else principal.driver_id
+    if not driver_id:
+        return jsonify({"code": "missing_driver_id", "error": "Missing driver_id"}), 400
+    if not principal.session_id:
+        return jsonify({"code": "auth_session_required", "error": "Authentication session unavailable"}), 401
+    requested_purpose = str(payload.get("purpose") or START_DRIVING_SESSION)
+    if requested_purpose != START_DRIVING_SESSION:
+        return jsonify({"code": "invalid_purpose", "error": "Unsupported authorization purpose"}), 400
+
+    challenge_id = generate_secret()[:32]
+    verification_token = generate_secret()
+    now_dt = datetime.utcnow()
+    now = _utc_string(now_dt)
+    expires_at = _utc_string(now_dt + timedelta(seconds=DRIVING_CHALLENGE_TTL_SECONDS))
+    owner_row = None
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT telegram_chat_id, telegram_user_id
+                FROM driver_telegram_owner WHERE driver_id = %s LIMIT 1
+                """,
+                (driver_id,),
+            )
+            owner_row = cur.fetchone()
+            chat_id = int(owner_row.get("telegram_chat_id") or 0) if owner_row else None
+            user_id = int(owner_row.get("telegram_user_id") or 0) if owner_row else None
+            cur.execute(
+                """
+                INSERT INTO dms_verification_challenges
+                    (challenge_id, secret_hash, driver_id, auth_session_hash, purpose,
+                     status, requested_at, expires_at, decided_at,
+                     decided_by_type, decided_by_id, telegram_chat_id,
+                     telegram_user_id, telegram_message_id)
+                VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s,
+                        NULL, NULL, NULL, %s, %s, NULL)
+                """,
+                (
+                    challenge_id,
+                    hash_secret(verification_token),
+                    driver_id,
+                    principal.session_id,
+                    START_DRIVING_SESSION,
+                    now,
+                    expires_at,
+                    chat_id,
+                    user_id,
+                ),
+            )
+            _security_audit(
+                cur,
+                event_type="verification_challenge_created",
+                challenge_id=challenge_id,
+                driver_id=driver_id,
+                auth_session_hash=principal.session_id,
+                actor_type=principal.role,
+                actor_id=principal.driver_id or principal.session_id,
+                outcome="pending",
+                created_at=now,
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        return _api_error()
+    finally:
+        conn.close()
+
+    delivery = "admin_approval_required"
+    if owner_row and TELEGRAM_BOT_TOKEN:
+        try:
+            chat_id = int(owner_row["telegram_chat_id"])
+            message_id = _telegram_send_verification_challenge(
+                chat_id, driver_id, challenge_id, DRIVING_CHALLENGE_TTL_SECONDS
+            )
+            conn = get_mysql_conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE dms_verification_challenges
+                        SET telegram_message_id = %s
+                        WHERE challenge_id = %s AND status = 'pending'
+                        """,
+                        (message_id, challenge_id),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+            delivery = "telegram_owner"
+        except Exception:
+            app.logger.warning("Verification challenge Telegram delivery failed")
+            delivery = "telegram_failed_admin_fallback"
+
+    return (
+        jsonify(
+            {
+                "challenge_id": challenge_id,
+                "verification_token": verification_token,
+                "purpose": START_DRIVING_SESSION,
+                "status": "pending",
+                "expires_at": expires_at,
+                "delivery": delivery,
+            }
+        ),
+        202,
+    )
+
+
+@app.get("/api/driving/authorization/challenge/<challenge_id>")
+@require_auth()
+def driving_authorization_challenge_status(challenge_id: str) -> Any:
+    principal: Principal = g.auth_principal
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT challenge_id, driver_id, auth_session_hash, purpose,
+                       status, requested_at, expires_at, decided_at
+                FROM dms_verification_challenges
+                WHERE challenge_id = %s
+                LIMIT 1
+                """,
+                (challenge_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return jsonify({"code": "challenge_not_found", "error": "Challenge not found"}), 404
+            if (
+                str(row.get("auth_session_hash") or "") != str(principal.session_id or "")
+                or (not principal.is_admin and str(row.get("driver_id") or "") != principal.driver_id)
+            ):
+                return jsonify({"code": "challenge_session_mismatch", "error": "Access denied"}), 403
+            status = str(row.get("status") or "")
+            if status == "pending" and challenge_expired(row):
+                status = "expired"
+                cur.execute(
+                    """
+                    UPDATE dms_verification_challenges
+                    SET status = 'expired', decided_at = %s
+                    WHERE challenge_id = %s AND status = 'pending'
+                    """,
+                    (_utc_string(), challenge_id),
+                )
+                conn.commit()
+        return jsonify(
+            {
+                "challenge_id": challenge_id,
+                "driver_id": row.get("driver_id"),
+                "purpose": row.get("purpose"),
+                "status": status,
+                "expires_at": _session_dt_iso(row.get("expires_at")),
+            }
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/api/admin/driving/authorization/challenge/<challenge_id>/decision")
+@require_auth(admin=True)
+def decide_driving_authorization_challenge(challenge_id: str) -> Any:
+    payload = request.get_json(silent=True) or {}
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision not in {"approve", "reject"}:
+        return jsonify({"code": "invalid_decision", "error": "decision must be approve or reject"}), 400
+    principal: Principal = g.auth_principal
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            ok, code, _row = _decide_verification_challenge(
+                cur,
+                challenge_id=challenge_id,
+                decision=decision,
+                actor_type="admin",
+                actor_id=principal.session_id or "admin",
+            )
+        if not ok:
+            conn.rollback()
+            status = 404 if code == "challenge_not_found" else 409
+            return jsonify({"code": code, "error": "Challenge cannot be decided"}), status
+        conn.commit()
+        return jsonify({"challenge_id": challenge_id, "status": code})
+    except Exception:
+        conn.rollback()
+        return _api_error()
+    finally:
+        conn.close()
+
+
+@app.post("/api/admin/driving/authorization/challenge/<challenge_id>/revoke")
+@require_auth(admin=True)
+def revoke_driving_authorization_grant(challenge_id: str) -> Any:
+    principal: Principal = g.auth_principal
+    now = _utc_string()
+    conn = get_mysql_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE dms_authorization_grants
+                SET revoked_at = %s
+                WHERE challenge_id = %s AND consumed_at IS NULL AND revoked_at IS NULL
+                """,
+                (now, challenge_id),
+            )
+            if cur.rowcount != 1:
+                conn.rollback()
+                return jsonify({"code": "grant_not_revocable", "error": "Grant not found or already used"}), 409
+            cur.execute(
+                """
+                UPDATE dms_verification_challenges
+                SET status = 'revoked', decided_at = %s,
+                    decided_by_type = 'admin', decided_by_id = %s
+                WHERE challenge_id = %s
+                """,
+                (now, principal.session_id or "admin", challenge_id),
+            )
+            _security_audit(
+                cur,
+                event_type="authorization_grant_revoked",
+                challenge_id=challenge_id,
+                driver_id=None,
+                auth_session_hash=None,
+                actor_type="admin",
+                actor_id=principal.session_id or "admin",
+                outcome="revoked",
+                created_at=now,
+            )
+        conn.commit()
+        return jsonify({"challenge_id": challenge_id, "status": "revoked"})
+    except Exception:
+        conn.rollback()
+        return _api_error()
+    finally:
+        conn.close()
+
+
 @app.post("/api/telegram/webhook")
 def telegram_webhook() -> Any:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_WEBHOOK_SECRET:
@@ -2584,8 +3029,46 @@ def telegram_webhook() -> Any:
         message = callback.get("message") or {}
         chat = message.get("chat") or {}
         chat_id = int(chat.get("id") or 0)
+        callback_user = callback.get("from") or {}
+        callback_user_id = int(callback_user.get("id") or 0)
 
         parts = data.split(":")
+        if len(parts) == 3 and parts[0] == "dvg" and parts[1] in ("approve", "reject"):
+            action = parts[1]
+            challenge_id = str(parts[2] or "")
+            if not challenge_id:
+                _telegram_answer_callback(callback_id, "Yeu cau khong hop le.")
+                return jsonify({"ok": True, "processed": False, "code": "invalid_challenge"})
+
+            conn = get_mysql_conn()
+            try:
+                with conn.cursor() as cur:
+                    ok, code, _row = _decide_verification_challenge(
+                        cur,
+                        challenge_id=challenge_id,
+                        decision=action,
+                        actor_type="telegram_owner",
+                        actor_id=str(callback_user_id or chat_id),
+                        telegram_chat_id=chat_id,
+                        telegram_user_id=callback_user_id,
+                    )
+                if ok:
+                    conn.commit()
+                else:
+                    conn.rollback()
+            except Exception:
+                conn.rollback()
+                _telegram_answer_callback(callback_id, "Khong the xu ly yeu cau.")
+                return jsonify({"ok": True, "processed": False, "code": "decision_failed"})
+            finally:
+                conn.close()
+
+            if not ok:
+                _telegram_answer_callback(callback_id, "Yeu cau khong hop le, da het han hoac da xu ly.")
+                return jsonify({"ok": True, "processed": False, "code": code})
+            _telegram_answer_callback(callback_id, "Da ghi nhan lua chon.")
+            return jsonify({"ok": True, "processed": True, "status": code})
+
         if len(parts) == 3 and parts[0] == "idr" and parts[1] in ("accept", "reject"):
             action = parts[1]
             try:
@@ -2736,7 +3219,7 @@ def telegram_webhook() -> Any:
 @app.post("/api/driving/session/start")
 @require_auth()
 def driving_session_start() -> Any:
-    """Bắt đầu phiên lái (sau khi tài xế đã active)."""
+    """Bắt đầu phiên lái bằng grant ngắn hạn, đúng session và chỉ dùng một lần."""
     payload = request.get_json(silent=True) or {}
     requested_driver_id = str(payload.get("driver_id") or "").strip() or None
     principal: Principal = g.auth_principal
@@ -2745,19 +3228,95 @@ def driving_session_start() -> Any:
     driver_id = requested_driver_id if principal.is_admin else principal.driver_id
     if not driver_id:
         return jsonify({"error": "Missing driver_id"}), 400
+    if not principal.session_id:
+        return jsonify({"code": "auth_session_required", "error": "Authentication session unavailable"}), 401
+    verification_grant = str(payload.get("verification_grant") or "").strip()
+    if not verification_grant:
+        return (
+            jsonify(
+                {
+                    "code": "verification_grant_required",
+                    "error": "Server-approved verification grant required",
+                }
+            ),
+            403,
+        )
+    if len(verification_grant) > 512:
+        return jsonify({"code": "invalid_grant", "error": "Invalid verification grant"}), 403
+
     label = (payload.get("label") or "").strip() or None
-    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    now_dt = datetime.utcnow()
+    now = _utc_string(now_dt)
+    grant_hash = hash_secret(verification_grant)
     conn = get_mysql_conn()
     try:
         with conn.cursor() as cur:
-            _ensure_driving_session_tables(cur)
+            cur.execute(
+                """
+                SELECT grant_hash, challenge_id, driver_id, auth_session_hash,
+                       purpose, expires_at, consumed_at, revoked_at
+                FROM dms_authorization_grants
+                WHERE grant_hash = %s
+                FOR UPDATE
+                """,
+                (grant_hash,),
+            )
+            grant_row = cur.fetchone()
+            denial = validate_grant_row(
+                grant_row,
+                driver_id=driver_id,
+                auth_session_hash=principal.session_id,
+                purpose=START_DRIVING_SESSION,
+                now=now_dt,
+            )
+            if denial:
+                conn.rollback()
+                return jsonify({"code": denial, "error": "Verification grant rejected"}), 403
+
+            cur.execute(
+                """
+                UPDATE dms_authorization_grants
+                SET consumed_at = %s
+                WHERE grant_hash = %s
+                  AND driver_id = %s
+                  AND auth_session_hash = %s
+                  AND purpose = %s
+                  AND consumed_at IS NULL
+                  AND revoked_at IS NULL
+                  AND expires_at > %s
+                """,
+                (
+                    now,
+                    grant_hash,
+                    driver_id,
+                    principal.session_id,
+                    START_DRIVING_SESSION,
+                    now,
+                ),
+            )
+            if cur.rowcount != 1:
+                conn.rollback()
+                return jsonify({"code": "grant_replayed", "error": "Verification grant rejected"}), 403
+
             sid = insert_id(
                 cur,
                 "INSERT INTO driving_sessions (driver_id, label, started_at, ended_at) VALUES (%s, %s, %s, NULL)",
                 (driver_id, label, now), "id", postgres=POSTGRES_ACTIVE,
             )
+            _security_audit(
+                cur,
+                event_type="driving_session_started",
+                challenge_id=str(grant_row.get("challenge_id") or ""),
+                driver_id=driver_id,
+                auth_session_hash=principal.session_id,
+                actor_type=principal.role,
+                actor_id=principal.driver_id or principal.session_id,
+                outcome="consumed",
+                created_at=now,
+            )
         conn.commit()
-    except Exception as exc:
+    except Exception:
+        conn.rollback()
         return _api_error()
     finally:
         conn.close()

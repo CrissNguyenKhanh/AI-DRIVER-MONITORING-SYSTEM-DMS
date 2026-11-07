@@ -1269,6 +1269,7 @@ export default function DriverMonitorDMS() {
   const wsSmokLastSentRef = useRef(0);
 
   const drivingSessionIdRef = useRef(null);
+  const drivingVerificationGrantRef = useRef(null);
   const prevPhoneAlertRef = useRef(null);
   const prevSmokingAlertRef = useRef(null);
   const prevDrowsyAlertRef = useRef(null);
@@ -1388,7 +1389,12 @@ export default function DriverMonitorDMS() {
     }
     let cancelled = false;
     (async () => {
-      const { ok, data } = await startDrivingSession(API_BASE, { driverId });
+      const verificationGrant = drivingVerificationGrantRef.current;
+      drivingVerificationGrantRef.current = null;
+      const { ok, data } = await startDrivingSession(API_BASE, {
+        driverId,
+        verificationGrant,
+      });
       if (cancelled) {
         if (ok && data?.session_id) {
           await endDrivingSession(API_BASE, data.session_id).catch(() => {});
@@ -1399,6 +1405,12 @@ export default function DriverMonitorDMS() {
         drivingSessionIdRef.current = data.session_id;
         setDrivingSessionId(data.session_id);
         setDrivingSessionStartedAt(data.started_at || "");
+      } else {
+        setIdentityError(
+          data?.error || "Không thể bắt đầu phiên lái được máy chủ xác thực.",
+        );
+        setIdentityLockCause("generic");
+        setStatus("locked");
       }
     })();
     return () => {
@@ -1547,6 +1559,14 @@ export default function DriverMonitorDMS() {
   // ── Owner identity gate callbacks (tách riêng khỏi thucmuctest) ──
   const handleIdentityUnlock = useCallback(
     async (detail) => {
+      const verificationGrant = detail?.verification_grant;
+      if (!verificationGrant) {
+        setIdentityError("SERVER AUTHORIZATION GRANT REQUIRED");
+        setIdentityLockCause("generic");
+        setStatus("locked");
+        return;
+      }
+      drivingVerificationGrantRef.current = verificationGrant;
       setIdentityError("");
       setIdentityLockCause(null);
       setIdentityRejectLockedAt("");
