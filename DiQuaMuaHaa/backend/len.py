@@ -939,6 +939,8 @@ def health_check():
         {
             "status": "healthy" if db_status else "unhealthy",
             "model_loaded": model is not None,
+            "image_model_status": image_model_status,
+            "image_model_error": image_model_error,
             "database_connected": db_status,
         }
     )
@@ -947,16 +949,44 @@ def health_check():
 # --- LOAD MODEL HÌNH ẢNH (SCIKIT-LEARN) ---
 image_model = None
 image_classes = []
+image_model_status = "UNAVAILABLE"
+image_model_error = "model_files_missing"
 
 try:
-    if os.path.exists("simple_image_model.pkl"):
+    if os.path.exists("simple_image_model.pkl") and os.path.exists("class_names.pkl"):
         image_model = joblib.load("simple_image_model.pkl")
         image_classes = joblib.load("class_names.pkl")
+        if not image_classes:
+            raise ValueError("Medical image class mapping is empty")
+        image_model_status = "AVAILABLE"
+        image_model_error = None
         app.logger.info("Loaded medical image model")
     else:
-        app.logger.warning("Medical image model unavailable; demo fallback remains active")
+        app.logger.warning("Medical image model unavailable; image diagnosis is disabled")
 except Exception:
+    image_model = None
+    image_classes = []
+    image_model_status = "UNAVAILABLE"
+    image_model_error = "model_load_failed"
     app.logger.exception("Failed to load medical image model")
+
+
+def _image_model_unavailable(reason=None):
+    """Return a stable fail-closed response without a fabricated diagnosis."""
+    return (
+        jsonify(
+            {
+                "success": False,
+                "code": "model_unavailable",
+                "error": "Mô hình phân tích ảnh hiện không khả dụng.",
+                "model": {
+                    "status": "UNAVAILABLE",
+                    "reason": reason or image_model_error or "model_unavailable",
+                },
+            }
+        ),
+        503,
+    )
 
 # =======================================================
 # 1. API CHATBOT (GEMINI) - BẮT BUỘC PHẢI CÓ
@@ -975,8 +1005,11 @@ def predict_image():
 
         file = request.files["image"]
 
+        if image_model is None or not image_classes:
+            return _image_model_unavailable()
+
         # --- NẾU CÓ MODEL THẬT (SCIKIT-LEARN) ---
-        if image_model:
+        try:
             # 1. Xử lý ảnh giống hệt lúc Train (Resize 64x64, Đen trắng, Flatten)
             img = Image.open(file).convert("L")
             img = img.resize((64, 64))
@@ -991,6 +1024,10 @@ def predict_image():
             probabilities = image_model.predict_proba(input_data)[0]
             confidence = float(max(probabilities))
 
+            if not isinstance(prediction_idx, (int, np.integer)):
+                raise ValueError("Medical image model returned a non-integer class index")
+            if prediction_idx < 0 or prediction_idx >= len(image_classes):
+                raise ValueError("Medical image model returned an unknown class index")
             diagnosis_name = image_classes[prediction_idx]
 
             # Logic lời khuyên
@@ -1015,31 +1052,9 @@ def predict_image():
                 "confidence": confidence,
                 "recommendations": recommendations,
             }
-
-        # --- NẾU KHÔNG CÓ MODEL (Dùng Random giả lập) ---
-        else:
-            # ... (Giữ nguyên code Random cũ ở đây) ...
-            mock_diseases = [
-                {
-                    "diagnosis": "Giả lập: Viêm phổi",
-                    "severity": "Nặng",
-                    "recommendations": ["Đi khám gấp"],
-                },
-                {
-                    "diagnosis": "Giả lập: Bình thường",
-                    "severity": "Nhẹ",
-                    "recommendations": ["Tốt"],
-                },
-            ]
-            import random
-
-            temp = random.choice(mock_diseases)
-            result = {
-                "diagnosis": temp["diagnosis"],
-                "severity": temp["severity"],
-                "confidence": 0.85,
-                "recommendations": temp["recommendations"],
-            }
+        except Exception:
+            app.logger.exception("Medical image inference failed closed")
+            return _image_model_unavailable("inference_failed")
 
         # Lưu Database (Giữ nguyên code cũ)
         record = MedicalRecord(

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { getMedicalApiBase } from "../config/apiEndpoints";
 import { medicalAuthHeaders } from "../utils/authApi";
+import { normalizeImagePredictionResponse } from "../utils/medicalPrediction";
 import {
   Activity,
   AlertCircle,
@@ -121,16 +122,8 @@ const MedicalDiagnosisAI = () => {
         body: formDataImage,
       });
 
-      const data = await response.json();
-
-      if (data.success || data.prediction) {
-        setResult({
-          success: true, // QUAN TRỌNG: Flag để hiển thị UI
-          ...data.prediction,
-          record_id: data.record_id,
-          type: 'image'
-        });
-      }
+      const data = await response.json().catch(() => ({}));
+      setResult(normalizeImagePredictionResponse(response, data));
     } catch (error) {
       console.error("Lỗi phân tích:", error);
       if (!isAuto) {
@@ -158,7 +151,7 @@ const MedicalDiagnosisAI = () => {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
-    } catch (err) {
+    } catch {
       alert("Không thể truy cập camera. Vui lòng cấp quyền!");
       setIsCameraOpen(false);
     }
@@ -524,7 +517,12 @@ const MedicalDiagnosisAI = () => {
             ) : (
               <div style={styles.errorBox}>
                 <AlertCircle size={32} color="#dc2626" />
-                <p style={styles.errorText}>{result.error || "Đã xảy ra lỗi"}</p>
+                <div>
+                  <p style={styles.errorText}>
+                    {result.unavailable ? "Tính năng tạm thời không khả dụng" : "Không thể phân tích ảnh"}
+                  </p>
+                  <p style={styles.errorText}>{result.error || "Đã xảy ra lỗi"}</p>
+                </div>
               </div>
             )}
           </div>
