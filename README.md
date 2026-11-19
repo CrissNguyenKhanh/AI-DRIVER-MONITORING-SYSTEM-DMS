@@ -15,9 +15,17 @@
 
 ---
 
-This README focuses on the DMS runtime plus its separate, visualization-only **ADAS Road Simulation**: backend `api.py` on port **8000**, frontend under `DiQuaMuaHaa/frontend/demothuattoanpro/`, and the ML training pipeline in `driver_training/`.
+This README focuses on the DMS runtime plus its separate, visualization-only **ADAS Road Simulation**: backend entrypoint `app.py` on port **8000**, frontend under `DiQuaMuaHaa/frontend/demothuattoanpro/`, and the ML training pipeline in `driver_training/`.
 
 > **ADAS safety boundary:** the road feature is a prerecorded-video simulation. It has no CAN bus or vehicle actuator integration and produces no steering, brake, or throttle commands. See [ADAS_SIMULATION.md](ADAS_SIMULATION.md).
+
+Operational and audit documentation:
+
+- [Windows setup and runbook](docs/RUN_PROJECT.md)
+- [Actual system/runtime flows](docs/SYSTEM_RUNTIME_FLOW.md)
+- [Repository cleanup evidence](docs/REPOSITORY_CLEANUP_REPORT.md)
+- [Current feature/test/readiness status](docs/PROJECT_STATUS.md)
+- [Detailed 2026-11-19 project audit](docs/project-audit/FULL_PROJECT_AUDIT_2026-11-19.md)
 
 ---
 
@@ -214,7 +222,7 @@ docs/
 ## Requirements
 
 - Python **3.10+**
-- Node.js **18+** and npm
+- Node.js **22 LTS** and npm
 - MySQL
 - Webcam device for live testing
 
@@ -222,28 +230,31 @@ docs/
 
 ## Quick Start
 
+The complete Windows setup, environment, migration, model and troubleshooting instructions are in
+[docs/RUN_PROJECT.md](docs/RUN_PROJECT.md). The minimal supported development path is:
+
 ### 1) Backend DMS (port 8000)
 
-```bash
+```powershell
 cd DiQuaMuaHaa/backend
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-pip install flask-socketio ultralytics
-cd data/api
-python api.py
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+# Configure the local .env, then start from the repository root with the script below.
 ```
 
 ### 2) Frontend
 
-```bash
+```powershell
 cd DiQuaMuaHaa/frontend/demothuattoanpro
-npm install
-npm run dev
+npm ci
+cd ..\..\..
+powershell -ExecutionPolicy Bypass -File scripts\Start-DmsDevelopment.ps1
 ```
 
-Open the Vite URL (usually `http://localhost:5173`).
+Open `https://127.0.0.1:5173` and accept the development certificate if prompted. Stop with
+`powershell -ExecutionPolicy Bypass -File scripts\Stop-DmsDevelopment.ps1`.
 
 ---
 
@@ -255,7 +266,7 @@ Open the Vite URL (usually `http://localhost:5173`).
 |----------|---------|
 | `VITE_API_BASE` | DMS API base URL, e.g. `http://192.168.1.10:8000` or ngrok URL |
 
-### Backend (system env for `api.py`)
+### Backend (system env for `app.py` / `data/api/api.py`)
 
 | Variable | Purpose |
 |----------|---------|

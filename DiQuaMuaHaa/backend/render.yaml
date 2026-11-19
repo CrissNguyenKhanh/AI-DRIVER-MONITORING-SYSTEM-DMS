@@ -18,6 +18,14 @@ services:
         value: diquamuaha
       - key: DB_BACKEND
         value: "postgres"
+      - key: DATABASE_URL
+        sync: false
+      - key: DMS_ADMIN_BOOTSTRAP_SECRET
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_WEBHOOK_SECRET

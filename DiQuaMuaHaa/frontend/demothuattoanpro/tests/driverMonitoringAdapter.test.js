@@ -71,10 +71,22 @@ test("metrics channel copies metrics only and closes cleanly", () => {
     close() { closed = true; }
   }
   const channel = createDmsMetricsChannel({ channelFactory: FakeChannel });
-  channel.publish({ attention_state: "DROWSY", perclos: 0.55, raw_image: "must-not-be-copied" });
+  channel.publish({
+    attention_state: "DROWSY",
+    perclos: 0.55,
+    phone_usage: true,
+    hand_gesture: "one_hand",
+    raw_image: "must-not-be-copied",
+    landmarks: [1, 2, 3],
+    token: "must-not-be-copied",
+  });
   assert.equal(messages[0].attention_state, "DROWSY");
   assert.equal(messages[0].perclos, 0.55);
+  assert.equal(messages[0].phone_usage, true);
+  assert.equal(messages[0].hand_gesture, "one_hand");
   assert.equal("raw_image" in messages[0], false);
+  assert.equal("landmarks" in messages[0], false);
+  assert.equal("token" in messages[0], false);
   channel.close();
   assert.equal(closed, true);
 });

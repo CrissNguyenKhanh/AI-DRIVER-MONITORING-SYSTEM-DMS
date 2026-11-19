@@ -142,6 +142,8 @@ export function createDmsMetricsChannel({ onResult, channelFactory } = {}) {
         ear: metrics?.ear || null,
         perclos: finiteOrNull(metrics?.perclos),
         head_pose: metrics?.head_pose || null,
+        phone_usage: metrics?.phone_usage === true,
+        hand_gesture: metrics?.hand_gesture || null,
         reason: metrics?.reason || null,
         model_status: metrics?.model_status || null,
         occurred_at: new Date().toISOString(),

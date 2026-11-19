@@ -6,9 +6,13 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
-import eventlet  # noqa: E402
+# Flask-SocketIO uses its threading transport on Windows. Importing/patching
+# eventlet there is unnecessary and can prevent startup when a platform wheel
+# is unavailable. Linux deployment keeps the eventlet worker used by Render.
+if os.name != "nt":
+    import eventlet  # noqa: E402
 
-eventlet.monkey_patch()  # PHẢI gọi trước import Flask/SocketIO
+    eventlet.monkey_patch()  # Must run before importing Flask/SocketIO.
 
 from data.api.api import app, socketio  # noqa: E402
 

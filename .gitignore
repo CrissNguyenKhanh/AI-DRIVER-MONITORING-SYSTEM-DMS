@@ -20,3 +20,4 @@ DiQuaMuaHaa/backend/driver_training/collect/data/landmarks_kaggle.csv
 __pycache__/
 *.py[cod]
 *.pt
+.runtime/
