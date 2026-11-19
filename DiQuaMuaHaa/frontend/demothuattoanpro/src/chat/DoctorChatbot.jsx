@@ -126,7 +126,7 @@ const DoctorChatbot = () => {
     let matchedCategory = null;
     let maxMatches = 0;
 
-    for (const [category, data] of Object.entries(medicalKnowledge)) {
+    for (const data of Object.values(medicalKnowledge)) {
       const matches = data.keywords.filter((keyword) =>
         msg.includes(keyword)
       ).length;

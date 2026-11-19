@@ -14,6 +14,8 @@ import Khanhregister from "./Khanhregister";
 
 import FaceDetect from "./systeamdetectface/face_detect";
 import ADASSimulation from "./adas/ADASSimulation";
+import DmsAdminEnrollment from "./auth/DmsAdminEnrollment";
+import DmsProtectedRoute from "./auth/DmsProtectedRoute";
 import { getStoredMedicalUser } from "./utils/authApi";
 
 const RoadDrivingDemo = lazy(() => import("./simulation/RoadDrivingDemo"));
@@ -39,14 +41,15 @@ function App() {
         {/* Trang Spam Detector */}
         <Route path="/test2" element={<EnhancedPatientStatistics />} />
         {/* Trang Test 3 */}
-        <Route path="/test3" element={<Thumuctest />} />
+        <Route path="/test3" element={<DmsProtectedRoute><Thumuctest /></DmsProtectedRoute>} />
         {/* Trang Test 4 */}
-        <Route path="/test4" element={<DectionHand />} />
+        <Route path="/test4" element={<DmsProtectedRoute><DectionHand /></DmsProtectedRoute>} />
        {/* trang tesst cua verify pro */}
         <Route path="/verifypro" element={<VerifyPro />} />
 
-        <Route path="/test5" element={<FaceDetect />} />
-        <Route path="/adas-simulation" element={<ADASSimulation />} />
+        <Route path="/test5" element={<DmsProtectedRoute><FaceDetect /></DmsProtectedRoute>} />
+        <Route path="/adas-simulation" element={<DmsProtectedRoute><ADASSimulation /></DmsProtectedRoute>} />
+        <Route path="/dms/admin/enrollment" element={<DmsAdminEnrollment />} />
         <Route
           path="/demo/road-driving"
           element={(

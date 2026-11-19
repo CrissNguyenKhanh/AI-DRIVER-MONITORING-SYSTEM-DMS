@@ -140,10 +140,20 @@ test("timeline is bounded, deduplicated and report export contains no biometric 
   timeline.append(event({ eventId: "evt-3", eventType: "SAFE_STOP", severity: "CRITICAL" }));
   assert.deepEqual(timeline.list().map((item) => item.eventId), ["evt-2", "evt-3"]);
   const state = simulateScenario("S18", { seed: 20261105 });
-  const report = buildSimulationReport(state, timeline.list(), { inputMode: "OFFLINE_DEMO" });
+  const report = buildSimulationReport(state, timeline.list(), { inputMode: "OFFLINE_SIMULATION" });
   assert.equal(report.provenance.containsBiometricImages, false);
   assert.equal(report.provenance.productionControlOutput, null);
-  assert.equal(report.protectedSession.status, "BLOCKED");
+  assert.equal(report.protectedSession.status, "NOT_APPLICABLE");
+  assert.equal(report.protectedSession.reason, "EPHEMERAL_LOCAL_SESSION");
+
+  const liveReport = buildSimulationReport(state, timeline.list(), { inputMode: "LIVE_DMS_VIRTUAL_ROAD" });
+  assert.equal(liveReport.protectedSession.status, "NOT_STARTED");
+  assert.equal(liveReport.protectedSession.reason, "START_FROM_DMS_WORKFLOW_WITH_ONE_TIME_SERVER_GRANT");
+
+  const roadVideoReport = buildSimulationReport(state, timeline.list(), { inputMode: "ROAD_VIDEO_ANALYSIS" });
+  assert.equal(roadVideoReport.provenance.driverInput, "NOT_USED_ROAD_VIDEO_STREAM");
+  assert.equal(roadVideoReport.provenance.roadCoordinates, "NOT_USED_ROAD_VIDEO_ONLY");
+  assert.equal(roadVideoReport.protectedSession.status, "NOT_APPLICABLE");
   assert.match(timelineToCsv(timeline.list()), /eventType,severity/);
 });
 

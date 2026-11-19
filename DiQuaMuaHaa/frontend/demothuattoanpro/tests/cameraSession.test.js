@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createCameraSession } from "../src/utils/cameraSession.js";
+import { cameraErrorMessage, createCameraSession } from "../src/utils/cameraSession.js";
 
 function fixture() {
   let resolvePermission;
@@ -121,4 +121,43 @@ test("custom constraints and ready status are forwarded", async () => {
   assert.deepEqual(received, { video: { width: 640 }, audio: false });
   assert.equal(statuses.at(-1), "auth");
   session.dispose();
+});
+
+test("permission and device failures have actionable messages", () => {
+  assert.match(cameraErrorMessage({ name: "NotAllowedError" }), /từ chối/i);
+  assert.match(cameraErrorMessage({ name: "NotFoundError" }), /không tìm thấy camera/i);
+  assert.match(cameraErrorMessage({ name: "NotReadableError" }), /ứng dụng khác/i);
+});
+
+test("unexpected camera disconnect clears video and reports retryable error", async () => {
+  let ended;
+  let stops = 0;
+  const track = {
+    addEventListener: (name, callback) => {
+      if (name === "ended") ended = callback;
+    },
+    stop: () => { stops += 1; },
+  };
+  const stream = {
+    getTracks: () => [track],
+    getVideoTracks: () => [track],
+  };
+  const video = { srcObject: null };
+  const statuses = [];
+  const errors = [];
+  const session = createCameraSession({
+    getUserMedia: async () => stream,
+    getVideo: () => video,
+    checkSupport: () => "",
+    onStatus: (value) => statuses.push(value),
+    onError: (value) => errors.push(value),
+  });
+  await session.start();
+  assert.equal(video.srcObject, stream);
+  ended();
+  assert.equal(video.srcObject, null);
+  assert.equal(statuses.at(-1), "error");
+  assert.match(errors.at(-1), /bị ngắt/i);
+  session.dispose();
+  assert.equal(stops, 0);
 });

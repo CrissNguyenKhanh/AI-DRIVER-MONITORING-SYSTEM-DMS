@@ -6,6 +6,7 @@ import { dmsAuthHeaders } from "./authApi.js";
 export async function createDrivingAuthorizationChallenge(
   apiBase,
   { driverId = null } = {},
+  { signal } = {},
 ) {
   const r = await fetch(`${apiBase}/api/driving/authorization/challenge`, {
     method: "POST",
@@ -14,18 +15,23 @@ export async function createDrivingAuthorizationChallenge(
       purpose: "start_driving_session",
       ...(driverId ? { driver_id: String(driverId) } : {}),
     }),
+    signal,
   });
   const data = await r.json().catch(() => ({}));
-  return { ok: r.ok, data };
+  return { ok: r.ok, status: r.status, data };
 }
 
-export async function getDrivingAuthorizationChallenge(apiBase, challengeId) {
+export async function getDrivingAuthorizationChallenge(
+  apiBase,
+  challengeId,
+  { signal } = {},
+) {
   const r = await fetch(
     `${apiBase}/api/driving/authorization/challenge/${encodeURIComponent(String(challengeId))}`,
-    { headers: dmsAuthHeaders() },
+    { headers: dmsAuthHeaders(), signal },
   );
   const data = await r.json().catch(() => ({}));
-  return { ok: r.ok, data };
+  return { ok: r.ok, status: r.status, data };
 }
 
 export async function startDrivingSession(

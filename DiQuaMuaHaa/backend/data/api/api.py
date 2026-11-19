@@ -198,6 +198,16 @@ def _utc_string(value: datetime | None = None) -> str:
     return (value or datetime.utcnow()).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _valid_driver_id(value: str) -> bool:
+    """Keep identifiers URL/DB friendly without silently rewriting user input."""
+    return bool(
+        value
+        and len(value) <= 64
+        and value[0].isalnum()
+        and all(char.isalnum() or char in "._-" for char in value)
+    )
+
+
 def _insert_session(cur, principal: Principal, ttl_hours: int) -> tuple[str, str]:
     token = generate_secret()
     now_dt = datetime.utcnow()
@@ -274,7 +284,8 @@ def _authenticate_request() -> Principal | None:
     if not row or row.get("revoked_at") is not None:
         return None
     try:
-        if parse_database_datetime(row["expires_at"]) <= datetime.utcnow():
+        expires_at = parse_database_datetime(row["expires_at"])
+        if expires_at <= datetime.utcnow():
             return None
     except (KeyError, TypeError, ValueError):
         return None
@@ -283,7 +294,12 @@ def _authenticate_request() -> Principal | None:
     driver_id = str(row.get("driver_id") or "").strip() or None
     if role not in ("admin", "driver") or (role == "driver" and not driver_id):
         return None
-    return Principal(role=role, driver_id=driver_id, session_id=token_hash)
+    return Principal(
+        role=role,
+        driver_id=driver_id,
+        session_id=token_hash,
+        expires_at=_utc_string(expires_at),
+    )
 
 
 def require_auth(*, admin: bool = False):
@@ -326,11 +342,17 @@ def _authorize_session_row(cur, session_id: int) -> tuple[Dict[str, Any] | None,
 def create_admin_session() -> Any:
     configured_secret = os.getenv("DMS_ADMIN_BOOTSTRAP_SECRET", "").strip()
     if not configured_secret:
-        return jsonify({"error": "Admin authentication unavailable"}), 503
+        return jsonify({
+            "code": "admin_auth_unavailable",
+            "error": "Admin authentication unavailable",
+        }), 503
     payload = request.get_json(silent=True) or {}
     supplied_secret = str(payload.get("bootstrap_secret") or "")
     if not supplied_secret or not hmac.compare_digest(supplied_secret, configured_secret):
-        return jsonify({"error": "Invalid credentials"}), 401
+        return jsonify({
+            "code": "invalid_admin_credentials",
+            "error": "Invalid credentials",
+        }), 401
 
     conn = get_mysql_conn()
     try:
@@ -350,8 +372,11 @@ def create_admin_session() -> Any:
 def create_enrollment_code() -> Any:
     payload = request.get_json(silent=True) or {}
     driver_id = str(payload.get("driver_id") or "").strip()
-    if not driver_id:
-        return jsonify({"error": "Missing driver_id"}), 400
+    if not _valid_driver_id(driver_id):
+        return jsonify({
+            "code": "invalid_driver_id",
+            "error": "driver_id must be 1-64 letters, numbers, dots, underscores or hyphens",
+        }), 400
 
     conn = get_mysql_conn()
     try:
@@ -371,8 +396,16 @@ def enroll_driver_session() -> Any:
     payload = request.get_json(silent=True) or {}
     driver_id = str(payload.get("driver_id") or "").strip()
     code = str(payload.get("enrollment_code") or "").strip()
-    if not driver_id or not code:
-        return jsonify({"error": "driver_id and enrollment_code are required"}), 400
+    if not _valid_driver_id(driver_id) or not code:
+        return jsonify({
+            "code": "invalid_enrollment_input",
+            "error": "driver_id and enrollment_code are required",
+        }), 400
+    if len(code) > 512:
+        return jsonify({
+            "code": "invalid_enrollment_code",
+            "error": "Invalid enrollment code",
+        }), 401
 
     now_dt = datetime.utcnow()
     now = _utc_string(now_dt)
@@ -390,18 +423,30 @@ def enroll_driver_session() -> Any:
                 (hash_secret(code),),
             )
             row = cur.fetchone()
+            if not row or str(row.get("purpose")) != "driver_enrollment":
+                return jsonify({
+                    "code": "invalid_enrollment_code",
+                    "error": "Invalid enrollment code",
+                }), 401
+            if str(row.get("driver_id")) != driver_id:
+                return jsonify({
+                    "code": "driver_id_mismatch",
+                    "error": "Enrollment code does not match driver_id",
+                }), 403
+            if row.get("used_at") is not None:
+                return jsonify({
+                    "code": "enrollment_code_used",
+                    "error": "Enrollment code has already been used",
+                }), 409
             try:
-                valid = bool(
-                    row
-                    and row.get("used_at") is None
-                    and str(row.get("purpose")) == "driver_enrollment"
-                    and str(row.get("driver_id")) == driver_id
-                    and parse_database_datetime(row.get("expires_at")) > now_dt
-                )
+                code_expired = parse_database_datetime(row.get("expires_at")) <= now_dt
             except (TypeError, ValueError):
-                valid = False
-            if not valid:
-                return jsonify({"error": "Invalid or expired enrollment code"}), 401
+                code_expired = True
+            if code_expired:
+                return jsonify({
+                    "code": "enrollment_code_expired",
+                    "error": "Enrollment code has expired",
+                }), 410
             cur.execute(
                 """
                 UPDATE dms_one_time_codes
@@ -411,7 +456,10 @@ def enroll_driver_session() -> Any:
                 (now, hash_secret(code), now),
             )
             if cur.rowcount != 1:
-                return jsonify({"error": "Invalid or expired enrollment code"}), 401
+                return jsonify({
+                    "code": "enrollment_code_replayed",
+                    "error": "Enrollment code was already used or expired",
+                }), 409
             token, expires_at = _insert_session(
                 cur, Principal(role="driver", driver_id=driver_id), AUTH_SESSION_TTL_HOURS
             )
@@ -432,7 +480,11 @@ def enroll_driver_session() -> Any:
 @require_auth()
 def auth_me() -> Any:
     principal: Principal = g.auth_principal
-    return jsonify({"role": principal.role, "driver_id": principal.driver_id})
+    return jsonify({
+        "role": principal.role,
+        "driver_id": principal.driver_id,
+        "expires_at": principal.expires_at,
+    })
 
 
 @app.post("/api/auth/logout")
@@ -1007,7 +1059,7 @@ def _ensure_face_mesh_loaded() -> None:
     import mediapipe as mp  # noqa: PLC0415
 
     _face_mesh = mp.solutions.face_mesh.FaceMesh(
-        max_num_faces=1,
+        max_num_faces=2,
         refine_landmarks=True,
         min_detection_confidence=0.55,
         min_tracking_confidence=0.55,
@@ -1154,6 +1206,10 @@ def _hands_to_feature_vector(multi_hand_landmarks, multi_handedness) -> List[flo
     return _hands_to_vector(multi_hand_landmarks, multi_handedness)
 
 
+class MultipleFacesError(ValueError):
+    """Identity enrollment/verification requires exactly one visible face."""
+
+
 def _image_base64_to_landmarks(image_b64: str) -> List[float] | None:
     """
     Decode base64 → MediaPipe Face Mesh → vector 1434 số.
@@ -1169,6 +1225,8 @@ def _image_base64_to_landmarks(image_b64: str) -> List[float] | None:
     results = _face_mesh.process(rgb)
     if results.multi_face_landmarks is None or len(results.multi_face_landmarks) == 0:
         return None
+    if len(results.multi_face_landmarks) > 1:
+        raise MultipleFacesError("Multiple faces detected")
     lms = results.multi_face_landmarks[0]
     coords = []
     for lm in lms.landmark:
@@ -2305,7 +2363,12 @@ def identity_register() -> Any:
 
     try:
         embeddings = _collect_face_embeddings(images)
-    except ValueError as exc:
+    except MultipleFacesError:
+        return jsonify({
+            "code": "multiple_faces",
+            "error": "Chỉ được có một khuôn mặt trong khung hình.",
+        }), 400
+    except ValueError:
         return jsonify({"error": "Invalid request data"}), 400
 
     if len(embeddings) < IDENTITY_MIN_REGISTER_SAMPLES:
@@ -2483,7 +2546,12 @@ def identity_verify() -> Any:
 
     try:
         current_embeddings = _collect_face_embeddings(images)
-    except ValueError as exc:
+    except MultipleFacesError:
+        return jsonify({
+            "code": "multiple_faces",
+            "error": "Chỉ được có một khuôn mặt trong khung hình.",
+        }), 400
+    except ValueError:
         return jsonify({"error": "Invalid request data"}), 400
 
     if len(current_embeddings) < IDENTITY_MIN_VERIFY_SAMPLES:

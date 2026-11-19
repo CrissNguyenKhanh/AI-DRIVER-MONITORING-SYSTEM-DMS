@@ -13,7 +13,6 @@ const MedicalDiagnosisAI = () => {
   });
   const [result, setResult] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [availableSymptoms, setAvailableSymptoms] = useState([]);
   const [statistics, setStatistics] = useState(null);

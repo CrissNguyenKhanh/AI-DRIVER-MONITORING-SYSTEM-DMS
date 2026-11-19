@@ -76,6 +76,29 @@ test("ordinary bearer flow cannot submit enrollment without an approval grant", 
   }
 });
 
+test("identity requests time out and abort instead of updating a stale flow", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (_url, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener("abort", () => {
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      reject(error);
+    }, { once: true });
+  });
+  try {
+    await assert.rejects(
+      getDriverIdentityProfile(
+        "https://dms.example",
+        "driver-a",
+        { timeoutMs: 5 },
+      ),
+      /phản hồi quá chậm/i,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("face enrollment UI has no face-image localStorage dependency", async () => {
   const source = await readFile(
     new URL("../src/systeamdetectface/face_detect.jsx", import.meta.url),
@@ -84,6 +107,18 @@ test("face enrollment UI has no face-image localStorage dependency", async () =>
   assert.doesNotMatch(source, /driver_owner_image_v1/);
   assert.doesNotMatch(source, /localStorage\.setItem\([^\n]*image/i);
   assert.match(source, /refreshServerProfile/);
+  assert.doesNotMatch(source, /ownerFaceImage/);
+});
+
+test("successful face registration remains REGISTERED until backend verification", async () => {
+  const source = await readFile(
+    new URL("../src/systeamdetectface/face_detect.jsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /setVerifyStatus\("REGISTERED"\)/);
+  assert.match(source, /Boolean\(vData\.is_owner\)/);
+  assert.match(source, /CONTINUE TO DMS/);
+  assert.doesNotMatch(source, /setTimeout\([\s\S]{0,120}navigate\("\/test3"\)/);
 });
 
 test("authenticated UI consumes identity metadata without stored biometric images", async () => {
@@ -96,5 +131,20 @@ test("authenticated UI consumes identity metadata without stored biometric image
   );
   for (const source of sources) {
     assert.doesNotMatch(source, /profile_image_base64/);
+  }
+});
+
+test("DMS camera routes require explicit start and do not request microphone", async () => {
+  const paths = [
+    "../src/systeamdetectface/face_detect.jsx",
+    "../src/testdata/thucmuctest.jsx",
+    "../src/hand-dection/dectionhand.jsx",
+  ];
+  const sources = await Promise.all(
+    paths.map((path) => readFile(new URL(path, import.meta.url), "utf8")),
+  );
+  for (const source of sources) {
+    assert.doesNotMatch(source, /camera\.start\(\);/);
+    assert.match(source, /audio:\s*false|createCameraSession/);
   }
 });

@@ -81,6 +81,24 @@ export const SCENARIO_PRESENTATION = Object.freeze({
   },
 });
 
+export const SHOWCASE_GUIDE = Object.freeze([
+  "Khởi động mô phỏng với tài xế tỉnh táo.",
+  "Xe ảo di chuyển bình thường trong làn.",
+  "Tài xế nhìn lệch khỏi đường.",
+  "DMS phát trạng thái DISTRACTED.",
+  "HUD và âm thanh ưu tiên cảnh báo tài xế.",
+  "Vật cản xuất hiện phía trước trong thế giới ảo.",
+  "Bộ đánh giá rủi ro ảo chọn phanh có giới hạn.",
+  "Engine kiểm tra khoảng hở từng làn bằng tọa độ ảo.",
+  "Một hành lang né tránh hợp lệ được chọn.",
+  "Xe ảo bắt đầu chuyển làn liên tục, không teleport.",
+  "Xe ảo vượt qua vật cản.",
+  "Tài xế trở lại NORMAL.",
+  "Maneuver hoàn tất nhất quán và cảnh báo được phục hồi.",
+  "Phiên mô phỏng kết thúc.",
+  "Báo cáo, timeline và provenance được hiển thị.",
+]);
+
 const DMS_FIXTURES = Object.freeze({
   NORMAL: { ear: 0.31, perclos: 0.07, headPose: "CENTER" },
   DROWSY: { ear: 0.16, perclos: 0.68, headPose: "CENTER" },

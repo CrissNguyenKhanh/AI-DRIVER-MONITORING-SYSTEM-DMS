@@ -7,6 +7,7 @@ import {
   Download,
   Film,
   Gauge,
+  Maximize2,
   MonitorCog,
   RotateCcw,
   ShieldAlert,
@@ -28,7 +29,7 @@ import { SCENARIO_CATALOG, SCENARIO_IDS } from "./scenarios.js";
 import { SimulationController } from "./roadSimulation.js";
 import { SimulationSessionManager } from "./SimulationSessionManager.js";
 import { buildSimulationReport, downloadTextFile, timelineToCsv } from "./SimulationReport.js";
-import { SCENARIO_PRESENTATION, laneAvailability, syntheticDmsMetrics } from "./presentation.js";
+import { SCENARIO_PRESENTATION, SHOWCASE_GUIDE, laneAvailability, syntheticDmsMetrics } from "./presentation.js";
 import {
   MAX_LOCAL_RECORDING_BYTES,
   MAX_LOCAL_RECORDING_MS,
@@ -44,7 +45,11 @@ import "./RoadDrivingDemo.css";
 const DEMO_SEED = 20261105;
 const CAMERA_MODES = ["CHASE", "DRIVER", "REAR", "CINEMATIC"];
 const VIEW_MODES = ["SPLIT", "VIRTUAL", "VIDEO"];
-const INPUT_MODES = Object.freeze({ OFFLINE_DEMO: "OFFLINE_DEMO", LIVE_DMS: "LIVE_DMS" });
+const INPUT_MODES = Object.freeze({
+  OFFLINE_DEMO: "OFFLINE_SIMULATION",
+  LIVE_DMS: "LIVE_DMS_VIRTUAL_ROAD",
+  ROAD_VIDEO: "ROAD_VIDEO_ANALYSIS",
+});
 
 function createPausedController(scenarioId) {
   const controller = new SimulationController(scenarioId, { seed: DEMO_SEED });
@@ -67,6 +72,7 @@ function eventTime(event) {
 }
 
 export default function RoadDrivingDemo() {
+  const pageRef = useRef(null);
   const controllerRef = useRef(createPausedController("S01"));
   const loopRef = useRef(null);
   const videoRef = useRef(null);
@@ -107,6 +113,9 @@ export default function RoadDrivingDemo() {
   const [liveDmsEvent, setLiveDmsEvent] = useState(null);
   const [rendererStatus, setRendererStatus] = useState("STARTING");
   const [dmsBridgeStatus, setDmsBridgeStatus] = useState("UNAVAILABLE");
+  const [timelineSeverity, setTimelineSeverity] = useState("ALL");
+  const [timelineWindow, setTimelineWindow] = useState("ALL");
+  const [showcaseStep, setShowcaseStep] = useState(0);
 
   const processNormalizedEvent = useCallback((event, currentSnapshot) => {
     timelineRef.current.append(event, {
@@ -175,8 +184,13 @@ export default function RoadDrivingDemo() {
 
   useEffect(() => {
     if (playing) {
-      controllerRef.current.resume();
-      loopRef.current?.start();
+      if (inputModeRef.current === INPUT_MODES.ROAD_VIDEO) {
+        controllerRef.current.pause();
+        loopRef.current?.stop();
+      } else {
+        controllerRef.current.resume();
+        loopRef.current?.start();
+      }
     } else {
       controllerRef.current.pause();
       loopRef.current?.stop();
@@ -227,11 +241,20 @@ export default function RoadDrivingDemo() {
           ? JSON.stringify(liveDmsEvent.payload.headPose)
           : "UNKNOWN",
       }
-    : syntheticMetrics;
+    : inputMode === INPUT_MODES.OFFLINE_DEMO
+      ? syntheticMetrics
+      : { ear: null, perclos: null, headPose: "NOT_USED" };
   const lanes = useMemo(() => laneAvailability(snapshot), [snapshot]);
   const roadStatus = useMemo(() => virtualRoadStatus(snapshot), [snapshot]);
   const speedKph = Math.round(snapshot.ego.speed * 3.6);
-  const recentTimeline = timeline.slice(-12).reverse();
+  const recentTimeline = timeline
+    .filter((event) => timelineSeverity === "ALL" || event.severity === timelineSeverity)
+    .filter((event) => {
+      if (timelineWindow === "ALL" || !Number.isFinite(event.occurredAt)) return true;
+      return event.occurredAt >= Math.max(0, snapshot.time - Number(timelineWindow));
+    })
+    .slice(-12)
+    .reverse();
   const health = [
     ["Renderer", rendererStatus],
     ["Mô phỏng", playing ? "RUNNING" : "READY"],
@@ -245,7 +268,7 @@ export default function RoadDrivingDemo() {
     ["Hand model", "UNAVAILABLE"],
     ["Smoking model", "UNAVAILABLE"],
     ["Virtual planner", "READY"],
-    ["Protected session", "BLOCKED"],
+    ["Protected session", inputMode === INPUT_MODES.LIVE_DMS ? "DEGRADED" : "UNAVAILABLE"],
   ];
 
   const handleSceneCanvas = useCallback((canvas) => { sceneCanvasRef.current = canvas; }, []);
@@ -260,6 +283,10 @@ export default function RoadDrivingDemo() {
   }, []);
 
   const start = useCallback(async () => {
+    if (inputModeRef.current === INPUT_MODES.ROAD_VIDEO && !videoSource) {
+      setRecordingMessage("Hãy chọn road video hoặc mở route ADAS analysis trước khi chạy chế độ này.");
+      return;
+    }
     if (snapshotRef.current.runState === RUN_STATES.COMPLETE) {
       controllerRef.current.reset();
       controllerRef.current.setPlaybackRate(playbackRate);
@@ -273,7 +300,12 @@ export default function RoadDrivingDemo() {
       try {
         await videoRef.current.play();
       } catch {
-        setRecordingMessage("Trình duyệt không phát được video; thế giới ảo vẫn chạy độc lập.");
+        if (inputModeRef.current === INPUT_MODES.ROAD_VIDEO) {
+          setPlaying(false);
+          setRecordingMessage("Trình duyệt không phát được road video; chế độ video đã được đưa về tạm dừng.");
+        } else {
+          setRecordingMessage("Trình duyệt không phát được video; thế giới ảo vẫn chạy độc lập.");
+        }
       }
     }
   }, [clearSessionArtifacts, installSnapshot, playbackRate, videoSource]);
@@ -285,6 +317,7 @@ export default function RoadDrivingDemo() {
     controllerRef.current.setPlaybackRate(playbackRate);
     installSnapshot(controllerRef.current.pause());
     if (videoRef.current) videoRef.current.currentTime = 0;
+    setShowcaseStep(0);
   }, [clearSessionArtifacts, installSnapshot, playbackRate]);
 
   const selectScenario = useCallback((nextScenarioId) => {
@@ -295,6 +328,7 @@ export default function RoadDrivingDemo() {
     controllerRef.current.setPlaybackRate(playbackRate);
     installSnapshot(controllerRef.current.pause());
     if (videoRef.current) videoRef.current.currentTime = 0;
+    setShowcaseStep(0);
   }, [clearSessionArtifacts, installSnapshot, playbackRate]);
 
   const switchInputMode = useCallback((mode) => {
@@ -311,13 +345,32 @@ export default function RoadDrivingDemo() {
       setTimeline(timelineRef.current.list());
       setPrimaryAlert(alertEngineRef.current.getPrimary());
       processSnapshot(controllerRef.current.setDriverState(DMS_STATES.UNKNOWN));
+      setViewMode("VIRTUAL");
     } else {
       dmsAdapterRef.current.reset();
       setLiveDmsEvent(null);
       controllerRef.current.loadScenario(scenarioId, { seed: DEMO_SEED });
       installSnapshot(controllerRef.current.pause());
+      setViewMode(mode === INPUT_MODES.ROAD_VIDEO ? "VIDEO" : "VIRTUAL");
     }
   }, [clearSessionArtifacts, installSnapshot, processNormalizedEvent, processSnapshot, scenarioId]);
+
+  const replayScenario = useCallback(() => {
+    selectScenario(scenarioId);
+    setRecordingMessage(`Đã nạp lại ${scenarioId} với seed cố định ${DEMO_SEED}.`);
+  }, [scenarioId, selectScenario]);
+
+  const enterFullscreen = useCallback(async () => {
+    if (!pageRef.current?.requestFullscreen) {
+      setRecordingMessage("Fullscreen API không khả dụng trên trình duyệt này.");
+      return;
+    }
+    try {
+      await pageRef.current.requestFullscreen();
+    } catch {
+      setRecordingMessage("Trình duyệt từ chối chế độ toàn màn hình.");
+    }
+  }, []);
 
   const changePlaybackRate = useCallback((value) => {
     const rate = Number(value);
@@ -492,11 +545,11 @@ export default function RoadDrivingDemo() {
   }, []);
 
   return (
-    <main className="road-sim-page">
+    <main ref={pageRef} className="road-sim-page">
       <header className="road-sim-header">
         <div>
           <div className="road-sim-eyebrow">AI DRIVER SAFETY MONITORING & ASSISTANCE SIMULATOR</div>
-          <h1>DMS + ADAS Integrated Cockpit V2</h1>
+          <h1>DMS + ADAS Integrated Cockpit V3</h1>
           <p>DMS quan sát tài xế; ADAS và mọi phản ứng xe chỉ chạy trong thế giới ảo deterministic.</p>
         </div>
         <div className="road-sim-header-state">
@@ -508,13 +561,14 @@ export default function RoadDrivingDemo() {
 
       <section className="road-sim-gate">
         <AlertTriangle size={18} />
-        <span>Phiên bảo vệ: <strong>BLOCKED</strong> — chưa có grant xác minh phía server từ PR B. Không có bearer-only fallback và không có lệnh điều khiển xe thật.</span>
+        <span>Phiên bảo vệ: <strong>SERVER GRANT REQUIRED</strong> — bắt đầu từ DMS workflow với one-time grant. Cockpit offline không ghi server và không có lệnh điều khiển xe thật.</span>
       </section>
 
       <section className="road-sim-modebar" aria-label="Chế độ đầu vào">
         <div className="road-sim-segmented">
           <button type="button" className={inputMode === INPUT_MODES.OFFLINE_DEMO ? "is-active" : ""} onClick={() => switchInputMode(INPUT_MODES.OFFLINE_DEMO)}>OFFLINE DEMO</button>
           <button type="button" className={inputMode === INPUT_MODES.LIVE_DMS ? "is-active" : ""} onClick={() => switchInputMode(INPUT_MODES.LIVE_DMS)}>LIVE DMS + VIRTUAL ROAD</button>
+          <button type="button" className={inputMode === INPUT_MODES.ROAD_VIDEO ? "is-active" : ""} onClick={() => switchInputMode(INPUT_MODES.ROAD_VIDEO)}>ROAD VIDEO ANALYSIS</button>
         </div>
         <div className="road-sim-health-strip">
           {health.slice(0, 4).map(([label, status]) => <span key={label} className={statusClass(status)}><i />{label}: {status}</span>)}
@@ -538,8 +592,10 @@ export default function RoadDrivingDemo() {
               <Link className="road-link-button" to="/test3" target="_blank">Mở DMS thật trong tab mới</Link>
               <small>Metrics được truyền nội bộ qua BroadcastChannel; token, landmark và ảnh không được gửi.</small>
             </div>
-          ) : (
+          ) : inputMode === INPUT_MODES.OFFLINE_DEMO ? (
             <div className="camera-placeholder synthetic"><MonitorCog size={42} /><strong>SYNTHETIC FIXTURE</strong><span>Không dùng webcam, backend hoặc dữ liệu khuôn mặt.</span></div>
+          ) : (
+            <div className="camera-placeholder"><Video size={42} /><strong>ROAD VIDEO STREAM</strong><span>Không dùng DMS driver metrics; phân tích ảnh đường là perception stream riêng.</span><Link className="road-link-button" to="/adas-simulation">Mở ADAS pipeline</Link></div>
           )}
           <label className="road-sim-field">Trạng thái DMS
             <select value={snapshot.driver.attention} disabled={inputMode !== INPUT_MODES.OFFLINE_DEMO} onChange={(event) => setSyntheticDriverState(event.target.value)}>
@@ -551,7 +607,7 @@ export default function RoadDrivingDemo() {
             <div><dt>EAR</dt><dd>{numberOrDash(dmsMetrics.ear, 2)}</dd></div>
             <div><dt>PERCLOS</dt><dd>{dmsMetrics.perclos == null ? "—" : `${Math.round(dmsMetrics.perclos * 100)}%`}</dd></div>
             <div><dt>Head pose</dt><dd>{dmsMetrics.headPose}</dd></div>
-            <div><dt>Điện thoại</dt><dd>{snapshot.driver.phoneUsage ? "DETECTED" : inputMode === INPUT_MODES.LIVE_DMS ? (liveDmsEvent?.payload?.phoneUsage ? "DETECTED" : "NOT REPORTED") : "CLEAR"}</dd></div>
+            <div><dt>Điện thoại</dt><dd>{inputMode === INPUT_MODES.ROAD_VIDEO ? "NOT USED" : snapshot.driver.phoneUsage ? "DETECTED" : inputMode === INPUT_MODES.LIVE_DMS ? (liveDmsEvent?.payload?.phoneUsage ? "DETECTED" : "NOT REPORTED") : "CLEAR"}</dd></div>
             <div><dt>Hand model</dt><dd>UNAVAILABLE</dd></div>
             <div><dt>Face match</dt><dd>EXPERIMENTAL / NOT AUTH</dd></div>
             <div><dt>Smoking</dt><dd>UNAVAILABLE</dd></div>
@@ -579,11 +635,13 @@ export default function RoadDrivingDemo() {
             <button type="button" onClick={start} disabled={playing}><CirclePlay size={18} /> Chạy</button>
             <button type="button" onClick={() => setPlaying(false)} disabled={!playing}><CirclePause size={18} /> Tạm dừng</button>
             <button type="button" onClick={reset}><RotateCcw size={18} /> Reset</button>
+            <button type="button" onClick={replayScenario}><RotateCcw size={18} /> Replay seed</button>
+            <button type="button" onClick={enterFullscreen}><Maximize2 size={18} /> Toàn màn hình</button>
             <label>Tốc độ<select value={playbackRate} onChange={(event) => changePlaybackRate(event.target.value)}>{[0.5, 1, 2, 4].map((rate) => <option key={rate} value={rate}>{rate}×</option>)}</select></label>
-            <div className="road-sim-segmented">{VIEW_MODES.map((mode) => <button type="button" key={mode} className={viewMode === mode ? "is-active" : ""} onClick={() => setViewMode(mode)}>{mode}</button>)}</div>
+            <div className="road-sim-segmented">{VIEW_MODES.map((mode) => <button type="button" key={mode} disabled={inputMode === INPUT_MODES.ROAD_VIDEO && mode !== "VIDEO"} className={viewMode === mode ? "is-active" : ""} onClick={() => setViewMode(mode)}>{mode}</button>)}</div>
             <button type="button" onClick={toggleAudio}>{audioEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}{audioEnabled ? "Âm thanh bật" : "Bật âm thanh"}</button>
             <button type="button" disabled={!audioEnabled} onClick={() => audioManagerRef.current.test()}>Test âm</button>
-            <button type="button" onClick={recording ? () => stopRecording(true) : startRecording} className={recording ? "is-recording" : ""}><Film size={18} />{recording ? "Dừng & tải" : "Ghi demo"}</button>
+            <button type="button" disabled={inputMode === INPUT_MODES.ROAD_VIDEO} onClick={recording ? () => stopRecording(true) : startRecording} className={recording ? "is-recording" : ""}><Film size={18} />{recording ? "Dừng & tải" : "Ghi demo"}</button>
           </div>
           <div className="audio-settings">
             <label>Âm lượng <input type="range" min="0" max="1" step="0.05" value={volume} onChange={(event) => changeVolume(event.target.value)} /></label>
@@ -593,15 +651,25 @@ export default function RoadDrivingDemo() {
 
         <aside className="road-sim-side">
           <div className="panel-title"><ShieldAlert size={18} /><span>ADAS / VIRTUAL RESPONSE</span></div>
-          <label className="road-sim-field">Kịch bản deterministic<select value={scenarioId} onChange={(event) => selectScenario(event.target.value)}>{SCENARIO_IDS.map((id) => <option key={id} value={id}>{SCENARIO_PRESENTATION[id].label}</option>)}</select></label>
+          <label className="road-sim-field">Kịch bản deterministic<select value={scenarioId} disabled={inputMode === INPUT_MODES.ROAD_VIDEO} onChange={(event) => selectScenario(event.target.value)}>{SCENARIO_IDS.map((id) => <option key={id} value={id}>{SCENARIO_PRESENTATION[id].label}</option>)}</select></label>
           <p className="road-sim-scenario-description">{scenarioCopy.description}</p>
           <div className="road-sim-expected"><span>Kết quả mong đợi</span><strong>{SCENARIO_CATALOG[scenarioId].expected}</strong></div>
+          {scenarioId === "S20" && (
+            <div className="showcase-guide" aria-label="Kịch bản trình diễn có hướng dẫn">
+              <span>SHOWCASE {showcaseStep + 1}/{SHOWCASE_GUIDE.length}</span>
+              <strong>{SHOWCASE_GUIDE[showcaseStep]}</strong>
+              <div>
+                <button type="button" disabled={showcaseStep === 0} onClick={() => setShowcaseStep((step) => Math.max(0, step - 1))}>Bước trước</button>
+                <button type="button" disabled={showcaseStep === SHOWCASE_GUIDE.length - 1} onClick={() => setShowcaseStep((step) => Math.min(SHOWCASE_GUIDE.length - 1, step + 1))}>Bước sau</button>
+              </div>
+            </div>
+          )}
           <div className="road-sim-status-card"><span>Risk / vật cản trước</span><strong>{snapshot.risk.level}</strong><small>{snapshot.risk.frontHazard?.obstacleId || "Không có"}</small></div>
           <div className="road-sim-status-card"><span>Assistance mode</span><strong>{snapshot.orchestrator.mode}</strong><small>{snapshot.orchestrator.reason}</small></div>
           <div className="road-sim-status-card"><span>Quyết định mô phỏng</span><strong>{snapshot.orchestrator.decision}</strong><small>productionControlOutput: null</small></div>
           <div className="road-sim-status-card"><span>Phản ứng xe ảo</span><strong>{snapshot.maneuver.phase}</strong><small>Tiến độ {Math.round(snapshot.maneuver.progress * 100)}%</small></div>
           <div className="road-sim-lanes">{lanes.map((lane) => <div key={lane.lane} className={lane.available ? "is-clear" : "is-blocked"}><span>Làn {lane.lane + 1}</span><strong>{lane.available ? "ĐỦ KHOẢNG HỞ" : "BỊ CHIẾM"}</strong></div>)}</div>
-          <div className="compact-timeline"><h2>Event timeline</h2>{recentTimeline.length ? <ol>{recentTimeline.map((event) => <li key={event.eventId}><time>{eventTime(event)}</time><div><strong>{event.eventType}</strong><span>{event.severity} · {event.sourceMode}</span><small>{event.adasDecision} → {event.vehicleResponse}</small></div></li>)}</ol> : <p>Chưa có chuyển trạng thái đáng kể.</p>}</div>
+          <div className="compact-timeline"><h2>Event timeline</h2><div className="timeline-filters"><label>Mức<select value={timelineSeverity} onChange={(event) => setTimelineSeverity(event.target.value)}><option>ALL</option><option>INFO</option><option>CAUTION</option><option>WARNING</option><option>CRITICAL</option><option>UNAVAILABLE</option></select></label><label>Thời gian<select value={timelineWindow} onChange={(event) => setTimelineWindow(event.target.value)}><option value="ALL">Tất cả</option><option value="10">10 giây gần nhất</option><option value="30">30 giây gần nhất</option></select></label></div>{recentTimeline.length ? <ol>{recentTimeline.map((event) => <li key={event.eventId}><time>{eventTime(event)}</time><div><strong>{event.eventType}</strong><span>{event.severity} · {event.sourceMode}</span><small>{event.adasDecision} → {event.vehicleResponse}</small></div></li>)}</ol> : <p>Không có sự kiện phù hợp bộ lọc.</p>}</div>
         </aside>
       </section>
 

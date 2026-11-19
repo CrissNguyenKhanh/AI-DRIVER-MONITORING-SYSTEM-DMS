@@ -155,7 +155,7 @@ const Khanhregister = () => {
       }
 
       openMailtoDraft({ email, message });
-    } catch (error) {
+    } catch {
       openMailtoDraft({ email, message });
     } finally {
       setSendingMiniContact(false);

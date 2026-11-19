@@ -37,7 +37,7 @@ This README focuses on the DMS runtime plus its separate, visualization-only **A
 - [Driving Sessions and Alert Logs](#driving-sessions-and-alert-logs)
 - [Frontend Routes (DMS)](#frontend-routes-dms)
 - [Model Training](#model-training)
-- [Assets Not Committed to Git](#assets-not-committed-to-git)
+- [Model and Data Assets](#model-and-data-assets)
 - [Security Notes](#security-notes)
 - [Acknowledgments](#acknowledgments)
 
@@ -313,6 +313,12 @@ Identity and driving-session routes require `Authorization: Bearer <token>`. To 
 Telegram, create a code from the authenticated UI/API and send `/bind <binding_code>`
 to the bot. Raw bearer tokens and one-time codes are never stored in the database.
 
+The protected frontend routes validate the browser session with `/api/auth/me` on
+load and when the tab regains focus; the presence of a local token alone is not an
+authorization decision. Admins can create a short-lived session and issue a one-time
+driver code at `/dms/admin/enrollment`. The bootstrap secret and admin bearer are kept
+only in page memory and must never be placed in `.env` values exposed through `VITE_*`.
+
 ---
 
 ## Socket.IO (Real-time)
@@ -351,10 +357,11 @@ stateDiagram-v2
 
 | Route | Purpose |
 |------|---------|
-| `/test3` | Extended DMS dashboard (REST + Socket + voice + session panel) |
-| `/test4` | Hand detection screen |
-| `/test5` | Face/identity-focused monitor screen |
+| `/test3` | Protected extended DMS dashboard (REST + Socket + voice + session panel) |
+| `/test4` | Protected hand detection screen with explicit camera consent |
+| `/test5` | Protected enrollment and server-backed face identity screen |
 | `/adas-simulation` | Protected ADAS road-video simulation and canvas overlay |
+| `/dms/admin/enrollment` | Admin authentication and one-time driver-code issuance |
 | `/verifypro` | Verify flow testing |
 
 ---
@@ -367,11 +374,17 @@ stateDiagram-v2
 
 ---
 
-## Assets Not Committed to Git
+## Model and Data Assets
 
-- `driver_training/models/` model weights (`.pkl`, `.pt`, ...)
-- Large dataset directories
-- Large generated CSVs and YOLO artifacts
+The repository currently tracks the runtime artifacts `landmark_model.pkl`,
+`hand_model.pkl`, and `phone_yolo.onnx`. It also tracks the primary landmark and
+smoking CSV files used by the training scripts. These files make a fresh clone
+more reproducible, but they account for most of the repository size and should
+be reviewed before publishing or changing the model supply chain.
+
+Other generated model weights (`.pt`, additional `.pkl`/`.onnx` files), large
+dataset directories, and ad-hoc training outputs remain excluded by
+`.gitignore` unless explicitly allow-listed.
 
 ---
 
@@ -381,6 +394,10 @@ stateDiagram-v2
 - Use environment variables for production secrets.
 - Restrict CORS and secure webhook endpoints in deployment.
 - Use non-default MySQL credentials with limited privileges.
+- Face matching does not currently include validated liveness/PAD. It must not be
+  described as spoof-resistant or used alone to authorize a protected driving session.
+- Browser camera routes require an explicit Start action, never request microphone
+  access, and release their tracks when stopped or unmounted.
 
 ---
 

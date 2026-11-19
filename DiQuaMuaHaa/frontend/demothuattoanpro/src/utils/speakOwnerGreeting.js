@@ -11,7 +11,7 @@ export function speakOwnerGreeting(displayName) {
 
   try {
     synth.cancel();
-  } catch (_) {
+  } catch {
     /* ignore */
   }
 
@@ -29,7 +29,7 @@ export function speakOwnerGreeting(displayName) {
 
   try {
     synth.speak(u);
-  } catch (_) {
+  } catch {
     /* ignore */
   }
 }

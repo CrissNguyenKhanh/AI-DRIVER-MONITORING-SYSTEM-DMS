@@ -9,10 +9,11 @@ npm-debug.log*
 yarn-error.log*
 DiQuaMuaHaa/backend/dataset/
 DiQuaMuaHaa/backend/driver_training/dataset/
-# Giữ model nặng / tạm ngoài git; chỉ track 2 file nhỏ dùng API cloud (train từ CSV trong repo)
+# Chỉ allow-list ba runtime model đã được kiểm thử; các artifact sinh thêm vẫn để ngoài Git.
 DiQuaMuaHaa/backend/driver_training/models/*
 !DiQuaMuaHaa/backend/driver_training/models/landmark_model.pkl
 !DiQuaMuaHaa/backend/driver_training/models/hand_model.pkl
+!DiQuaMuaHaa/backend/driver_training/models/phone_yolo.onnx
 DiQuaMuaHaa/backend/driver_training/runs/
 # GitHub max file size 100 MB — regenerate locally from Kaggle pipeline
 DiQuaMuaHaa/backend/driver_training/collect/data/landmarks_kaggle.csv

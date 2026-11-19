@@ -156,7 +156,6 @@ function DectionHand() {
       onError: setErrorMsg,
     });
     cameraRef.current = camera;
-    camera.start();
     return () => {
       camera.dispose();
       cameraRef.current = null;

@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { useEffect, useState } from "react";
 import QuickAppsMenu from "./QuickAppsMenu";
 import OtoLiveMapPanel, { DMS_OTO_MAP_OPEN_EVENT } from "./OtoLiveMapPanel";

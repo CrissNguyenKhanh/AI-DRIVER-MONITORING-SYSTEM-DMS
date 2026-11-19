@@ -1,0 +1,83 @@
+.dms-auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(circle at top, #0b2634, #02070d 62%);
+  color: #e8f7f2;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.dms-auth-card {
+  width: min(100%, 560px);
+  padding: clamp(20px, 5vw, 34px);
+  border: 1px solid rgba(45, 212, 191, 0.35);
+  border-radius: 18px;
+  background: rgba(3, 15, 24, 0.96);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.dms-auth-card h1,
+.dms-auth-card h2 { margin: 0 0 10px; }
+.dms-auth-card p { color: #a9c8c1; line-height: 1.55; }
+.dms-auth-steps { margin: 18px 0; padding-left: 22px; color: #cce7e0; }
+.dms-auth-steps li { margin: 8px 0; }
+.dms-auth-field { display: grid; gap: 7px; margin: 14px 0; }
+.dms-auth-field span { color: #b7d9d1; font-size: 0.88rem; font-weight: 700; }
+.dms-auth-input-row { display: flex; gap: 8px; }
+.dms-auth-field input {
+  min-width: 0;
+  width: 100%;
+  padding: 12px 13px;
+  border: 1px solid #31596a;
+  border-radius: 9px;
+  background: #07141d;
+  color: #f0fffb;
+  font: inherit;
+}
+.dms-auth-field input:focus { outline: 2px solid #2dd4bf; outline-offset: 2px; }
+.dms-auth-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.dms-auth-button {
+  border: 1px solid #2dd4bf;
+  border-radius: 9px;
+  padding: 10px 15px;
+  background: #0d4d4a;
+  color: #eafffa;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+.dms-auth-button.secondary { background: transparent; color: #9ce8dc; }
+.dms-auth-button:disabled { cursor: wait; opacity: 0.55; }
+.dms-auth-status { margin-top: 14px; padding: 11px 13px; border-radius: 9px; }
+.dms-auth-status.error { background: #35151b; color: #ffb5bf; }
+.dms-auth-status.success { background: #0d332a; color: #a7f3d0; }
+.dms-auth-status.info { background: #102b3c; color: #bae6fd; }
+.dms-auth-link { color: #67e8f9; }
+.dms-session-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  background: #05131b;
+  border-bottom: 1px solid #174554;
+  color: #b8dcd5;
+  font: 600 13px/1.4 Inter, system-ui, sans-serif;
+}
+.dms-admin-code {
+  overflow-wrap: anywhere;
+  padding: 14px;
+  border: 1px dashed #facc15;
+  border-radius: 10px;
+  background: #211d08;
+  color: #fef08a;
+  font: 700 0.95rem/1.5 ui-monospace, monospace;
+}
+
+@media (max-width: 600px) {
+  .dms-auth-shell { padding: 12px; place-items: start center; }
+  .dms-auth-card { margin-top: 12px; }
+  .dms-auth-input-row { flex-direction: column; }
+  .dms-session-bar { align-items: flex-start; flex-direction: column; }
+}

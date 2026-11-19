@@ -6,7 +6,11 @@ import OwnerVerifyGate from "../systeamdetectface/OwnerVerifyGate";
 import TelegramOwnerRejectOverlay from "../systeamdetectface/TelegramOwnerRejectOverlay";
 import DriverAuthenticatedWelcome from "../systeamdetectface/DriverAuthenticatedWelcome";
 import { getDmsApiBase } from "../config/apiEndpoints";
-import { dmsAuthHeaders } from "../utils/authApi";
+import {
+  clearDmsAuthSession,
+  dmsAuthHeaders,
+} from "../utils/authApi";
+import { useDmsSessionContext } from "../auth/DmsSessionContext.js";
 import { getWebcamSupportErrorMessage } from "../utils/cameraContext";
 import { createCameraSession } from "../utils/cameraSession.js";
 import { createDmsMetricsChannel } from "../utils/DriverMonitoringAdapter.js";
@@ -35,8 +39,6 @@ const HAND_API_INTERVAL_MS = 1000;
 const HAND_QUICK_CONFIDENCE = 0.75;
 const IDENTITY_BURST_FRAMES = 2;
 const IDENTITY_BURST_GAP_MS = 110;
-const DRIVER_ID_KEY = "driver_owner_id_v1";
-const DEFAULT_DRIVER_ID = "driver_001";
 const HISTORY_SIZE = 10;
 const CONSISTENT_FRAMES = 4;
 const MIN_PROB_FOR_LABEL = 0.6;
@@ -211,7 +213,7 @@ function createAttentionStreamId() {
 // ─────────────────────────────────────────────────────────
 // PhoneFOMOOverlay — đọc từ phoneDetectionRef, vẽ RAF 60fps
 // ─────────────────────────────────────────────────────────
-function PhoneFOMOOverlay({ phoneDetectionRef, landmarksRef, videoRef }) {
+function PhoneFOMOOverlay({ phoneDetectionRef, videoRef }) {
   const canvasRef = useRef(null);
   const smoothBoxRef = useRef(null);
   const pulseRef = useRef(0);
@@ -239,26 +241,6 @@ function PhoneFOMOOverlay({ phoneDetectionRef, landmarksRef, videoRef }) {
 
     function lerp(a, b, t) {
       return a + (b - a) * t;
-    }
-
-    function getFallbackBox(lm, W, H) {
-      if (!lm || !lm.length) return null;
-      const mx = (x) => W - x * W,
-        my = (y) => y * H;
-      const chin = lm[152],
-        lEar = lm[234],
-        rEar = lm[454];
-      if (!chin) return null;
-      const faceW = lEar && rEar ? Math.abs(mx(lEar.x) - mx(rEar.x)) : W * 0.25;
-      const bw = faceW * 0.65,
-        bh = bw * 0.55;
-      return {
-        x: mx(chin.x) - bw / 2,
-        y: my(chin.y) + 8,
-        w: bw,
-        h: bh,
-        fallback: true,
-      };
     }
 
     function drawBrackets(ctx, x, y, w, h, color, size, lw) {
@@ -1220,6 +1202,8 @@ function Head3D({ poseRef }) {
 // ═════════════════════════════════════════════════════════
 export default function DriverMonitorDMS() {
   const navigate = useNavigate();
+  const dmsSession = useDmsSessionContext();
+  const invalidateDmsSession = dmsSession?.invalidate;
   const videoRef = useRef(null);
   const cameraRef = useRef(null);
   const faceMeshRef = useRef(null);
@@ -1284,11 +1268,11 @@ export default function DriverMonitorDMS() {
   const [apiResult, setApiResult] = useState(null);
   const [apiError, setApiError] = useState("");
   const [apiLoading, setApiLoading] = useState(false);
-  const [smokingResult, setSmokingResult] = useState(null);
-  const [smokingError, setSmokingError] = useState("");
-  const [smokingHistory, setSmokingHistory] = useState([]);
+  const smokingResult = null;
+  const smokingError = "";
+  const [, setSmokingHistory] = useState([]);
   const [phoneError, setPhoneError] = useState("");
-  const [phoneHistory, setPhoneHistory] = useState([]);
+  const [, setPhoneHistory] = useState([]);
   const [handApiResult, setHandApiResult] = useState(null);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -1326,11 +1310,13 @@ export default function DriverMonitorDMS() {
   const [phoneAlert, setPhoneAlert] = useState(null);
   const [smokingActive, setSmokingActive] = useState(false); // state để trigger re-render icon
   const [smokingAlert, setSmokingAlert] = useState(null);
-  const [driverId, setDriverId] = useState(DEFAULT_DRIVER_ID);
+  const [driverId, setDriverId] = useState(
+    () => dmsSession?.principal?.driver_id || "",
+  );
   const [identityOwner, setIdentityOwner] = useState(null);
   const [identityHasRegistered, setIdentityHasRegistered] = useState(false);
   const [identitySimilarity, setIdentitySimilarity] = useState(null);
-  const [identityThreshold, setIdentityThreshold] = useState(0.975);
+  const [, setIdentityThreshold] = useState(0.975);
   const [identityError, setIdentityError] = useState("");
   const [identitySamples, setIdentitySamples] = useState(0);
   /** Khi locked: phân biệt màn hình Telegram Reject vs các lý do khác */
@@ -1353,6 +1339,12 @@ export default function DriverMonitorDMS() {
     distraction: 0,
   });
   const [sessionLogOpen, setSessionLogOpen] = useState(false);
+
+  useEffect(() => {
+    if (dmsSession?.principal?.driver_id) {
+      setDriverId(dmsSession.principal.driver_id);
+    }
+  }, [dmsSession?.principal?.driver_id]);
   const [sessionLogLoading, setSessionLogLoading] = useState(false);
   const [sessionLogItems, setSessionLogItems] = useState([]);
 
@@ -1481,7 +1473,7 @@ export default function DriverMonitorDMS() {
         driverId,
       });
       if (ok && data?.sessions) setSessionLogItems(data.sessions);
-    } catch (_) {
+    } catch {
       setSessionLogItems([]);
     } finally {
       setSessionLogLoading(false);
@@ -1513,7 +1505,9 @@ export default function DriverMonitorDMS() {
       g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + dur);
-    } catch (_) {}
+    } catch {
+      /* Web Audio can be unavailable until the browser accepts a user gesture. */
+    }
   }
   function startAlarm(kind = "general") {
     stopAlarm();
@@ -1558,6 +1552,11 @@ export default function DriverMonitorDMS() {
   }
 
   // ── Owner identity gate callbacks (tách riêng khỏi thucmuctest) ──
+  const handleDmsAuthExpired = useCallback(() => {
+    clearDmsAuthSession({ preserveDriver: true });
+    invalidateDmsSession?.("Phiên DMS đã hết hạn hoặc bị thu hồi.");
+  }, [invalidateDmsSession]);
+
   const handleIdentityUnlock = useCallback(
     async (detail) => {
       const verificationGrant = detail?.verification_grant;
@@ -1600,6 +1599,11 @@ export default function DriverMonitorDMS() {
             { headers: dmsAuthHeaders() },
           );
           const d = await r.json();
+          if (r.status === 401 || r.status === 403) {
+            clearDmsAuthSession({ preserveDriver: true });
+            invalidateDmsSession?.("Phiên DMS đã hết hạn hoặc bị thu hồi.");
+            return;
+          }
           if (r.ok && d.driver_id) {
             merged = {
               ...merged,
@@ -1608,7 +1612,7 @@ export default function DriverMonitorDMS() {
               registered_at: merged.registered_at || d.registered_at,
             };
           }
-        } catch (_) {
+        } catch {
           /* ignore */
         }
       }
@@ -1618,7 +1622,7 @@ export default function DriverMonitorDMS() {
       setAuthWelcomeProfile(merged);
       speakOwnerGreeting(merged.registered_name);
     },
-    [driverId],
+    [driverId, invalidateDmsSession],
   );
 
   const handleIdentityLock = useCallback((reason) => {
@@ -1665,13 +1669,6 @@ export default function DriverMonitorDMS() {
 
   useEffect(() => {
     warmSpeechVoices();
-  }, []);
-
-  useEffect(() => {
-    try {
-      const savedId = window.localStorage.getItem(DRIVER_ID_KEY);
-      if (savedId) setDriverId(savedId);
-    } catch (_) {}
   }, []);
 
   // ── WebSocket setup ──────────────────────────────────────
@@ -2153,12 +2150,16 @@ export default function DriverMonitorDMS() {
           if (fm) {
             try {
               await fm.send({ image: vid });
-            } catch (_) {}
+            } catch {
+              /* Skip a failed face frame and continue the bounded render loop. */
+            }
           }
           if (hs) {
             try {
               await hs.send({ image: vid });
-            } catch (_) {}
+            } catch {
+              /* Skip a failed hand frame and continue the bounded render loop. */
+            }
           }
         }
         setFrameCount((f) => f + 1);
@@ -2269,6 +2270,11 @@ export default function DriverMonitorDMS() {
         });
         firstSample = false;
         const data = await response.json();
+        if (response.status === 401 || response.status === 403) {
+          clearDmsAuthSession({ preserveDriver: true });
+          invalidateDmsSession?.("Phiên DMS đã hết hạn hoặc bị thu hồi.");
+          return;
+        }
         if (!response.ok) throw new Error(data?.error || "Attention API failed");
         if (!cancelled) applyMetrics(data);
       } catch (error) {
@@ -2290,7 +2296,7 @@ export default function DriverMonitorDMS() {
       controller.abort();
       clearTimeout(timerId);
     };
-  }, [status]);
+  }, [invalidateDmsSession, status]);
 
   function startWebcam() {
     return cameraRef.current?.start();
@@ -2351,7 +2357,6 @@ export default function DriverMonitorDMS() {
       activeStatus: "auth",
     });
     cameraRef.current = camera;
-    camera.start();
     return () => {
       camera.dispose();
       cameraRef.current = null;
@@ -3201,6 +3206,7 @@ export default function DriverMonitorDMS() {
             lockStreakFrames={ID_AUTH_LOCK_INTRUDER_FRAMES}
             verifyIntervalMs={ID_AUTH_RETRY_INTERVAL_MS}
             decisionTimeoutSec={30}
+            onAuthExpired={handleDmsAuthExpired}
             onUnlock={handleIdentityUnlock}
             onLock={handleIdentityLock}
             onUpdateIdentity={handleUpdateIdentity}
@@ -3228,7 +3234,6 @@ export default function DriverMonitorDMS() {
           {status === "active" && (
             <PhoneFOMOOverlay
               phoneDetectionRef={phoneDetectionRef}
-              landmarksRef={landmarksRef}
               videoRef={videoRef}
             />
           )}

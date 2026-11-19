@@ -12,6 +12,7 @@ class Principal:
     role: str
     driver_id: str | None = None
     session_id: str | None = None
+    expires_at: str | None = None
 
     @property
     def is_admin(self) -> bool:

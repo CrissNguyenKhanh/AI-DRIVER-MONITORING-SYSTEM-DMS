@@ -345,7 +345,7 @@ const PatientStatistics = () => {
 };
 
 // Sub-components để code gọn hơn
-const SummaryCard = ({ icon: Icon, title, value, color, subtext }) => {
+const SummaryCard = ({ icon, title, value, color, subtext }) => {
   const colorClasses = {
     blue: "bg-blue-50 text-blue-600",
     emerald: "bg-emerald-50 text-emerald-600",
@@ -357,7 +357,7 @@ const SummaryCard = ({ icon: Icon, title, value, color, subtext }) => {
     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
       <div className="flex items-center justify-between mb-4">
         <div className={`p-3 rounded-xl ${colorClasses[color]}`}>
-          <Icon className="w-6 h-6" />
+          {React.createElement(icon, { className: "w-6 h-6" })}
         </div>
         <span className="text-xs font-medium text-gray-400 bg-gray-50 px-2 py-1 rounded-full">30 ngày</span>
       </div>

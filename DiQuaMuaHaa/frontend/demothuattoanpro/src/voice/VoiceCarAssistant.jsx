@@ -9,7 +9,6 @@ function getRecognitionCtor() {
 
 export default function VoiceCarAssistant({
   enabled = true,
-  requireWake = true,
   allowCommandWithoutWake = true,
   autoStartWhenEnabled = true,
   speechLang = "en-US",
@@ -155,7 +154,11 @@ export default function VoiceCarAssistant({
   const stopRec = useCallback(() => {
     wantListenRef.current = false;
     syncArmed(false);
-    try { recRef.current?.stop?.(); } catch (_) {}
+    try {
+      recRef.current?.stop?.();
+    } catch {
+      /* Recognition may already be stopped by the browser. */
+    }
     recRef.current = null;
     setListening(false);
   }, [syncArmed]);
@@ -214,7 +217,7 @@ export default function VoiceCarAssistant({
 
     rec.onend = () => {
       if (recRef.current !== rec || !wantListenRef.current) return;
-      try { rec.start(); } catch (_) {
+      try { rec.start(); } catch {
         wantListenRef.current = false;
         setListening(false);
       }

@@ -30,6 +30,9 @@ class AuthBoundaryTests(unittest.TestCase):
             ({"driver_id": "driver-a", "role": "driver",
               "expires_at": datetime.utcnow() - timedelta(seconds=1), "revoked_at": None}, 401),
             ({"driver_id": "driver-a", "role": "driver",
+              "expires_at": datetime.utcnow() + timedelta(hours=1),
+              "revoked_at": datetime.utcnow()}, 401),
+            ({"driver_id": "driver-a", "role": "driver",
               "expires_at": datetime.utcnow() + timedelta(hours=1), "revoked_at": None}, 200),
         ]
         for row, expected in cases:
@@ -41,7 +44,9 @@ class AuthBoundaryTests(unittest.TestCase):
                     )
                 self.assertEqual(response.status_code, expected, response.json)
                 if expected == 200:
-                    self.assertEqual(response.json, {"driver_id": "driver-a", "role": "driver"})
+                    self.assertEqual(response.json["driver_id"], "driver-a")
+                    self.assertEqual(response.json["role"], "driver")
+                    self.assertTrue(response.json["expires_at"])
                 query_args = [call.args for call in cur.execute.call_args_list]
                 self.assertNotIn("test-access-token", str(query_args))
                 self.assertIn(hash_secret("test-access-token"), str(query_args))
@@ -84,21 +89,43 @@ class AuthBoundaryTests(unittest.TestCase):
         self.assertNotIn("opaque-admin-token", executed)
         self.assertIn(hash_secret("opaque-admin-token"), executed)
 
-    def test_enrollment_code_expiry_replay_and_success(self):
-        invalid_rows = [
-            {"driver_id": "driver-a", "purpose": "driver_enrollment",
-             "expires_at": datetime.utcnow() - timedelta(seconds=1), "used_at": None},
-            {"driver_id": "driver-a", "purpose": "driver_enrollment",
-             "expires_at": datetime.utcnow() + timedelta(minutes=5), "used_at": datetime.utcnow()},
+    def test_enrollment_code_errors_are_specific(self):
+        cases = [
+            (None, "driver-a", 401, "invalid_enrollment_code"),
+            ({"driver_id": "driver-a", "purpose": "driver_enrollment",
+              "expires_at": datetime.utcnow() - timedelta(seconds=1), "used_at": None},
+             "driver-a", 410, "enrollment_code_expired"),
+            ({"driver_id": "driver-a", "purpose": "driver_enrollment",
+              "expires_at": datetime.utcnow() + timedelta(minutes=5), "used_at": datetime.utcnow()},
+             "driver-a", 409, "enrollment_code_used"),
+            ({"driver_id": "driver-b", "purpose": "driver_enrollment",
+              "expires_at": datetime.utcnow() + timedelta(minutes=5), "used_at": None},
+             "driver-a", 403, "driver_id_mismatch"),
         ]
-        for row in invalid_rows:
+        for row, driver_id, status, code in cases:
             conn, _cur = self.connection([row])
             with patch.object(api, "get_mysql_conn", return_value=conn):
                 response = self.client.post(
                     "/api/auth/enroll",
-                    json={"driver_id": "driver-a", "enrollment_code": "one-time"},
+                    json={"driver_id": driver_id, "enrollment_code": "one-time"},
                 )
-            self.assertEqual(response.status_code, 401)
+            self.assertEqual(response.status_code, status, response.json)
+            self.assertEqual(response.json["code"], code)
+
+    def test_enrollment_code_replay_race_is_rejected(self):
+        valid = {"driver_id": "driver-a", "purpose": "driver_enrollment",
+                 "expires_at": datetime.utcnow() + timedelta(minutes=5), "used_at": None}
+        conn, cur = self.connection([valid])
+        cur.rowcount = 0
+        with patch.object(api, "get_mysql_conn", return_value=conn):
+            response = self.client.post(
+                "/api/auth/enroll",
+                json={"driver_id": "driver-a", "enrollment_code": "one-time"},
+            )
+        self.assertEqual(response.status_code, 409, response.json)
+        self.assertEqual(response.json["code"], "enrollment_code_replayed")
+
+    def test_enrollment_code_success(self):
 
         valid = {"driver_id": "driver-a", "purpose": "driver_enrollment",
                  "expires_at": datetime.utcnow() + timedelta(minutes=5), "used_at": None}
@@ -154,6 +181,32 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403, response.json)
         self.assertEqual(response.json["code"], "enrollment_grant_required")
         collect.assert_not_called()
+
+    def test_identity_enrollment_and_verification_reject_multiple_faces(self):
+        requests = [
+            (
+                "/api/identity/register",
+                {
+                    "driver_id": "driver-a",
+                    "operation": "initial_enroll",
+                    "enrollment_grant": "approved-grant",
+                    "images": ["a", "b", "c"],
+                },
+            ),
+            (
+                "/api/identity/verify",
+                {"driver_id": "driver-a", "images": ["a", "b"]},
+            ),
+        ]
+        for path, payload in requests:
+            with self.subTest(path=path), self.driver_a(), patch.object(
+                api,
+                "_collect_face_embeddings",
+                side_effect=api.MultipleFacesError("multiple"),
+            ):
+                response = self.client.post(path, json=payload)
+            self.assertEqual(response.status_code, 400, response.json)
+            self.assertEqual(response.json["code"], "multiple_faces")
 
     def test_driver_cannot_direct_bind_or_create_code_for_another_driver(self):
         with self.driver_a():

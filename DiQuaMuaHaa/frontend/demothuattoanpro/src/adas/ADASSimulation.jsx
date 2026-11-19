@@ -12,8 +12,8 @@ import { getDmsApiBase } from "../config/apiEndpoints";
 import {
   clearDmsAuthSession,
   dmsAuthHeaders,
-  getDmsAuthToken,
 } from "../utils/authApi";
+import { useDmsSessionContext } from "../auth/DmsSessionContext.js";
 import {
   ADAS_CAPTURE_MAX_WIDTH,
   decisionLabel,
@@ -163,6 +163,7 @@ function riskClass(level) {
 }
 
 export default function ADASSimulation() {
+  const dmsSession = useDmsSessionContext();
   const videoRef = useRef(null);
   const overlayRef = useRef(null);
   const captureCanvasRef = useRef(null);
@@ -182,7 +183,7 @@ export default function ADASSimulation() {
   const [status, setStatus] = useState("IDLE");
   const [analysis, setAnalysis] = useState(null);
   const [error, setError] = useState("");
-  const hasAuth = Boolean(getDmsAuthToken());
+  const hasAuth = Boolean(dmsSession?.principal);
 
   const stopLoop = useCallback(({ pauseVideo = true } = {}) => {
     runningRef.current = false;
@@ -226,10 +227,11 @@ export default function ADASSimulation() {
       const data = await response.json().catch(() => ({}));
       if (currentRun !== runIdRef.current) return;
       if (response.status === 401) {
-        clearDmsAuthSession();
+        clearDmsAuthSession({ preserveDriver: true });
         setError("DMS authorization expired. Enroll again before running ADAS.");
         setStatus("AUTHORIZATION REQUIRED");
         stopLoop();
+        dmsSession?.invalidate("Phiên DMS đã hết hạn hoặc bị thu hồi.");
         return;
       }
       if (response.status === 429) {
@@ -253,7 +255,7 @@ export default function ADASSimulation() {
         abortRef.current = null;
       }
     }
-  }, [stopLoop]);
+  }, [dmsSession, stopLoop]);
 
   const frameLoop = useCallback(
     (now) => {

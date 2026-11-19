@@ -29,9 +29,15 @@ export function buildSimulationReport(snapshot, normalizedTimeline = [], options
       visitedVirtualLanes: [...snapshot.metrics.visitedLanes],
     },
     provenance: {
-      inputMode: options.inputMode || "OFFLINE_DEMO",
-      driverInput: options.inputMode === "LIVE_DMS" ? "LIVE_DMS_METRICS_ONLY" : "SCRIPTED_SYNTHETIC",
-      roadCoordinates: "KNOWN_VIRTUAL_WORLD",
+      inputMode: options.inputMode || "OFFLINE_SIMULATION",
+      driverInput: options.inputMode === "LIVE_DMS_VIRTUAL_ROAD"
+        ? "LIVE_DMS_METRICS_ONLY"
+        : options.inputMode === "ROAD_VIDEO_ANALYSIS"
+          ? "NOT_USED_ROAD_VIDEO_STREAM"
+          : "SCRIPTED_SYNTHETIC",
+      roadCoordinates: options.inputMode === "ROAD_VIDEO_ANALYSIS"
+        ? "NOT_USED_ROAD_VIDEO_ONLY"
+        : "KNOWN_VIRTUAL_WORLD",
       roadVideoCoordinates: "IMAGE_SPACE_ONLY_NOT_CALIBRATED_TO_METERS",
       containsBiometricImages: false,
       containsCredentials: false,
@@ -39,10 +45,15 @@ export function buildSimulationReport(snapshot, normalizedTimeline = [], options
       productionControlOutput: null,
     },
     availability: options.availability || {},
-    protectedSession: {
-      status: "BLOCKED",
-      reason: "PR_B_SERVER_VERIFICATION_GRANT_NOT_AVAILABLE",
-    },
+    protectedSession: options.inputMode === "LIVE_DMS_VIRTUAL_ROAD"
+      ? {
+          status: "NOT_STARTED",
+          reason: "START_FROM_DMS_WORKFLOW_WITH_ONE_TIME_SERVER_GRANT",
+        }
+      : {
+          status: "NOT_APPLICABLE",
+          reason: "EPHEMERAL_LOCAL_SESSION",
+        },
     timeline: normalizedTimeline,
   });
 }

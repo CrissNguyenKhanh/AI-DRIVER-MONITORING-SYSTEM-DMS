@@ -4,7 +4,7 @@ export class SimulationSessionManager {
     this.session = null;
   }
 
-  start(snapshot, mode = "OFFLINE_DEMO") {
+  start(snapshot, mode = "OFFLINE_SIMULATION") {
     this.session = Object.freeze({
       sessionId: `${mode.toLowerCase()}-${snapshot.scenarioId}-${snapshot.seed}`,
       mode,

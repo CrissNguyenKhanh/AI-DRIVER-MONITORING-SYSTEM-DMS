@@ -71,16 +71,19 @@ export default function OwnerVerifyGate({
   onUnlock,
   onLock,
   onUpdateIdentity,
+  onAuthExpired,
 }) {
   const onUnlockRef = useRef(onUnlock);
   const onLockRef = useRef(onLock);
   const onUpdateRef = useRef(onUpdateIdentity);
+  const onAuthExpiredRef = useRef(onAuthExpired);
 
   useEffect(() => {
     onUnlockRef.current = onUnlock;
     onLockRef.current = onLock;
     onUpdateRef.current = onUpdateIdentity;
-  }, [onUnlock, onLock, onUpdateIdentity]);
+    onAuthExpiredRef.current = onAuthExpired;
+  }, [onAuthExpired, onUnlock, onLock, onUpdateIdentity]);
 
   const intruderStreakRef = useRef(0);
   const ownerStreakRef = useRef(0);
@@ -93,6 +96,28 @@ export default function OwnerVerifyGate({
 
     let cancelled = false;
     let tid = null;
+    let activeController = null;
+
+    async function boundedRequest(request) {
+      const controller = new AbortController();
+      activeController = controller;
+      let timedOut = false;
+      const timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 8_000);
+      try {
+        return await request(controller.signal);
+      } catch (error) {
+        if (timedOut && !cancelled) {
+          throw new Error("Identity server response timed out");
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeoutId);
+        if (activeController === controller) activeController = null;
+      }
+    }
 
     async function verifyOnce() {
       const vid = videoRef?.current;
@@ -101,22 +126,35 @@ export default function OwnerVerifyGate({
       const frames = await captureBurstFrames(vid);
       if (!frames || frames.length === 0) return null;
 
-      const res = await fetch(`${apiBase}/api/identity/verify`, {
-        method: "POST",
-        headers: dmsAuthHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ driver_id: driverId, images: frames }),
-      });
+      const res = await boundedRequest((signal) =>
+        fetch(`${apiBase}/api/identity/verify`, {
+          method: "POST",
+          headers: dmsAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ driver_id: driverId, images: frames }),
+          signal,
+        }),
+      );
 
       const data = await res.json().catch(() => ({}));
-      return { ok: res.ok, data };
+      return { ok: res.ok, status: res.status, data };
     }
 
     async function createDecisionRequest() {
-      return createDrivingAuthorizationChallenge(apiBase, { driverId });
+      return boundedRequest((signal) =>
+        createDrivingAuthorizationChallenge(apiBase, { driverId }, { signal }),
+      );
     }
 
     async function pollDecisionStatus(requestId) {
-      return getDrivingAuthorizationChallenge(apiBase, requestId);
+      return boundedRequest((signal) =>
+        getDrivingAuthorizationChallenge(apiBase, requestId, { signal }),
+      );
+    }
+
+    function handleAuthFailure(result) {
+      if (result?.status !== 401 && result?.status !== 403) return false;
+      onAuthExpiredRef.current?.();
+      return true;
     }
 
     async function loop() {
@@ -127,6 +165,7 @@ export default function OwnerVerifyGate({
         // Tránh mất request_id khi verify nhấp nháy is_owner=true (đã clear pending).
         if (pendingRequestIdRef.current) {
           const stRes = await pollDecisionStatus(pendingRequestIdRef.current);
+          if (handleAuthFailure(stRes)) return;
           if (!stRes.ok || stRes.data?.error) {
             const errMsg = String(stRes.data?.error || "Decision status unavailable");
             if (onUpdateRef.current) {
@@ -219,6 +258,8 @@ export default function OwnerVerifyGate({
           return;
         }
 
+        if (handleAuthFailure(res)) return;
+
         if (!res.ok || res.data?.error) {
           const msg = String(res.data?.error || "Identity verify failed");
           // treat as intruder/unknown -> avoid unlocking
@@ -281,6 +322,7 @@ export default function OwnerVerifyGate({
           if (carState === "auth" && ownerStreakRef.current >= unlockStreakFrames && !lockedStateRef.current) {
             if (!pendingRequestIdRef.current) {
               const reqRes = await createDecisionRequest();
+              if (handleAuthFailure(reqRes)) return;
               if (!reqRes.ok || reqRes.data?.error) {
                 onLockRef.current?.(
                   String(reqRes.data?.error || "Cannot request server authorization"),
@@ -317,6 +359,7 @@ export default function OwnerVerifyGate({
           if (mustEscalate) {
             if (!pendingRequestIdRef.current) {
               const reqRes = await createDecisionRequest();
+              if (handleAuthFailure(reqRes)) return;
               if (!reqRes.ok || reqRes.data?.error) {
                 pendingRequestIdRef.current = null;
                 lockedStateRef.current = false;
@@ -345,7 +388,7 @@ export default function OwnerVerifyGate({
           }
         }
       } catch (e) {
-        if (onUpdateRef.current) {
+        if (!cancelled && e?.name !== "AbortError" && onUpdateRef.current) {
           onUpdateRef.current({
             hasRegistered: false,
             isOwner: false,
@@ -364,6 +407,7 @@ export default function OwnerVerifyGate({
     return () => {
       cancelled = true;
       if (tid) clearTimeout(tid);
+      activeController?.abort();
       pendingVerificationTokenRef.current = null;
     };
   }, [

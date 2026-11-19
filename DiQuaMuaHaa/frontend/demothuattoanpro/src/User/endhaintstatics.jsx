@@ -209,7 +209,7 @@ const EnhancedPatientStatistics = () => {
                       cy="45%"
                       labelLine={false}
                       // Tính toán phần trăm hiển thị
-                      label={({ name, percent }) =>
+                      label={({ percent }) =>
                         `${(percent * 100).toFixed(0)}%`
                       }
                       outerRadius={100}
